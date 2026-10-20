@@ -32,6 +32,75 @@
 # <to> may be "all" or its alias "fleet". Names are CASE-INSENSITIVE: Jarvis, jarvis and JARVIS are
 # one recipient with one read cursor. Display keeps the sender's casing.
 set -euo pipefail
+
+usage() {
+  cat <<'SKMAIL_HELP'
+skmail - the append-only coordination mailbox shared across the chi cluster.
+
+USAGE
+  skmail send <from> <to> <priority> <subject> <body...>
+  skmail read <me> [--summary | --urgent | --limit N | --all]
+                             unread for you, oldest first, capped at ~8 KiB
+  skmail ack  <me> [--before <iso> | --all]
+                             mark read ONLY what your last plain read showed
+  skmail tail [n]            recent traffic between any peers (default 10)
+  skmail adopt               one-off: fold legacy skmail.jsonl and
+                             sync-conflict files into skmail.d/
+  skmail --help | -h | help  this text (also: skmail <command> --help)
+
+ARGUMENTS
+  <from>      YOUR OWN agent name, expanded. Never the literal string SKAGENT.
+              Mailboxes have been written under the identity "SKAGENT" because
+              a shell variable reached the wire unexpanded, and their real
+              author is then unrecoverable.
+  <to>        another agent name, or "all" (alias "fleet"). Case-insensitive:
+              Jarvis, jarvis and JARVIS are one recipient sharing one read
+              cursor. Display keeps the sender casing.
+  <priority>  urgent | normal | fyi. Required, no default.
+              urgent means "stop what you are doing".
+  <subject>   short. Quote it.
+  <body...>   everything after the subject. Quote it.
+
+EXAMPLES
+  Report a verdict to an overseer:
+    skmail send pi-qwen-chiap04-a1b2c3d4 jarvis normal "a1b2c3d4 PASS" \
+      "Card a1b2c3d4 PASS. PR https://github.com/smilinTux/skcapstone/pull/1"
+
+  Announce something the whole fleet needs:
+    skmail send skwork-sweep all fyi "FILE-LOCK CHANGELOG.md" \
+      "Holding CHANGELOG.md for card a1b2c3d4 until its PR merges."
+
+  Read, act, then ack your own box:
+    skmail read jarvis
+    skmail ack  jarvis
+
+  See what everyone has been saying:
+    skmail tail 20
+
+RULES THAT ARE NOT OPTIONAL
+  Use this command. NEVER hand-write a file into skmail.d/ yourself. The reader
+  expects ts, from, to, priority, re and body. Hand-written records invent
+  their own field names (sender, recipient, timestamp, subject) and are
+  rejected as malformed, so the agent you are reporting to never sees them.
+
+  ack only covers what your last plain read showed. Read first, act, then ack.
+  "ack --all" marks everything addressed to you, including unread mail.
+
+STORAGE
+  One file per writer per host: skmail.d/<agent>@<host>.jsonl, because
+  ~/.skcapstone is a Syncthing folder and a single shared file produced a real
+  sync conflict that swallowed a message. Override the directory with SKMAIL_DIR.
+SKMAIL_HELP
+}
+
+# Help and argument checks run BEFORE anything touches the filesystem, so asking
+# for help never creates a mailbox directory.
+case "${1:-}" in
+  -h|--help|help) usage; exit 0 ;;
+esac
+case "${2:-}" in
+  -h|--help) if [ -n "${1:-}" ]; then usage; exit 0; fi ;;
+esac
 COORD="${SKMAIL_DIR:-$HOME/.skcapstone/coordination}"
 BOXDIR="$COORD/skmail.d"
 CUR="$COORD/.skmail-cursor"
@@ -41,12 +110,16 @@ lc() { printf "%s" "$1" | tr "[:upper:]" "[:lower:]"; }
 cmd="${1:-tail}"; shift || true
 case "$cmd" in
   send)
+    if [ "$#" -lt 4 ]; then
+      echo "skmail send: expected <from> <to> <priority> <subject> <body...>, got $# argument(s)" >&2
+      echo >&2; usage >&2; exit 2
+    fi
     from="$1"; to="$2"; prio="$3"; re="$4"; shift 4; body="$*"
     case "$prio" in urgent|normal|fyi) ;; *) echo "priority must be urgent|normal|fyi" >&2; exit 2;; esac
     WRITER="$(dirname "$0")/skmail_writer.py"
     err="$(mktemp)"
-    if ! "${SKMAIL_PYTHON:-python3}" "$WRITER" "$from" "$to" "$prio" "$re" "$body" \
-        --boxdir "$BOXDIR" --host "$(hostname)" >/dev/null 2>"$err"; then
+    if ! "${SKMAIL_PYTHON:-python3}" "$WRITER" --boxdir "$BOXDIR" --host "$(hostname)" \
+        -- "$from" "$to" "$prio" "$re" "$body" >/dev/null 2>"$err"; then
       # Self-heal (cards fda425ac / 4a3d1119): a recurring cross-host defect
       # appends foreign records straight into another writer's file, blocking
       # all canonical appends for that writer. Quarantine them into their
@@ -54,8 +127,8 @@ case "$cmd" in
       if grep -q "writer identity does not match" "$err"; then
         "${SKMAIL_PYTHON:-python3}" "$WRITER" "$from" --quarantine \
           --boxdir "$BOXDIR" --host "$(hostname)" >/dev/null
-        "${SKMAIL_PYTHON:-python3}" "$WRITER" "$from" "$to" "$prio" "$re" "$body" \
-          --boxdir "$BOXDIR" --host "$(hostname)" >/dev/null
+        "${SKMAIL_PYTHON:-python3}" "$WRITER" --boxdir "$BOXDIR" --host "$(hostname)" \
+          -- "$from" "$to" "$prio" "$re" "$body" >/dev/null
       else
         cat "$err" >&2; rm -f "$err"; exit 1
       fi
@@ -65,7 +138,9 @@ case "$cmd" in
     ;;
   read|ack|tail)
     me="${1:-}"
-    [ "$cmd" != "tail" ] && [ -z "$me" ] && { echo "usage: skmail $cmd <me> [flags]" >&2; exit 2; }
+    [ "$cmd" != "tail" ] && [ -z "$me" ] && {
+      echo "skmail $cmd: needs your own agent name, e.g. skmail $cmd jarvis" >&2
+      echo >&2; usage >&2; exit 2; }
     SKM_N="${1:-10}"
     [ "$cmd" != "tail" ] && shift
     SKM_ARGS="$*" SKM_MAXB="${SKMAIL_READ_MAX_BYTES:-8192}" SKM_LOG="$COORD/.skmail-ack-before.log" \
@@ -368,5 +443,5 @@ for p in srcs:
 print("legacy files renamed to *.adopted, nothing deleted")
 '
     ;;
-  *) echo "usage: skmail {send|read|ack|tail|adopt}" >&2; exit 2 ;;
+  *) echo "skmail: unknown command '$cmd'" >&2; echo >&2; usage >&2; exit 2 ;;
 esac
