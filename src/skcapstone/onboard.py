@@ -1239,7 +1239,8 @@ def _step_shell_profile(home_path: Path, agent_name: str, agent_slug: str) -> bo
     """Write SKCAPSTONE profile environment variables to ~/.bashrc.
 
     Asks the user whether to set this agent as the default profile.
-    Appends SKCAPSTONE_HOME, SKCAPSTONE_AGENT, and PATH entries.
+    Appends SKCAPSTONE_HOME, SKCAPSTONE_AGENT, PATH, and the telemetry
+    opt-out exports (see telemetry_optout).
 
     Args:
         home_path: Agent home directory.
@@ -1250,6 +1251,8 @@ def _step_shell_profile(home_path: Path, agent_name: str, agent_slug: str) -> bo
         True if profile was written, False if skipped.
     """
     import os as _os
+
+    from .telemetry_optout import bashrc_exports
 
     bashrc = Path.home() / ".bashrc"
     marker = "# --- SKCapstone profile ---"
@@ -1292,6 +1295,7 @@ def _step_shell_profile(home_path: Path, agent_name: str, agent_slug: str) -> bo
         f'export SKCAPSTONE_HOME="{home_path}"\n'
         f'export SKCAPSTONE_AGENT="{agent_slug}"\n'
         f'export PATH="$HOME/.skenv/bin:$PATH"\n'
+        f"{bashrc_exports()}"
         f"{marker}\n"
     )
 

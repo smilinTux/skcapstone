@@ -1,0 +1,1 @@
+`skcapstone register` and `upgrade` now apply two host profile defaults: third-party telemetry opt-out (HyperFrames: host-local `environment.d` file, `~/.hyperframes/config.json`, `~/.bashrc` profile block) and agent skill links via `skskills.agent_links` when the installed skskills provides it. `SKCAPSTONE_PROFILE_DEFAULTS=0` skips both; the test suite sets it.
