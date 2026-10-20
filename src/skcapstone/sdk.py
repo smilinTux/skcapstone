@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -293,6 +294,7 @@ def register_service(
     readiness: bool = False,
     expected_json: Optional[dict] = None,
     user_agent: Optional[str] = None,
+    vantage_point: Optional[str] = None,
 ) -> str:
     """Advertise a service to skcapstone's discovery registry.
 
@@ -310,6 +312,8 @@ def register_service(
         readiness: Require observed 2xx, without redirects.
         expected_json: Optional exact top-level scalar readiness assertions.
         user_agent: Explicit readiness client identifier (never a credential).
+        vantage_point: Host that owns the probe, or ``any`` for a remotely
+            reachable endpoint. Defaults to the registering host.
 
     Returns:
         Path to the written registry entry, as a string.
@@ -326,6 +330,8 @@ def register_service(
         "name": name,
         "health_url": health_url,
         "pid_file": pid_file,
+        "vantage_point": vantage_point or socket.gethostname(),
+        "registered_on": socket.gethostname(),
         "registered_by": _agent_name(),
         "registered_at": datetime.now(timezone.utc).isoformat(),
     }
