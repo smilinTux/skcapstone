@@ -157,10 +157,37 @@ _CRITERION_RE = re.compile(r"(?:criterion\s*[=:]\s*)?\bac\s*[=:]\s*\d+", re.IGNO
 #: The worker brief already asks for this: "Say what you attempted, so the next
 #: attempt does not re-pay your discovery." 7% complied. Asking has not worked for
 #: any convention on this board; enforcing at the write path has.
-_RESUME_RE = re.compile(
-    r"\b(attempt\w*|tried|reproduc\w*|verified|checked|ran|examined|inspected|"
-    r"to resume|to unblock|next step|next attempt|required to resume|needs?\s+\w+|"
-    r"re-?run|retry|once\b|after\b|when\b)\b",
+#: The brief asks for what was attempted AND what the next agent should do first;
+#: either is accepted, because the measured gap is that neither is ever said. What
+#: is NOT accepted is a stray connective. The first version of this rule matched any
+#: "once", "after", "when", "ran", "checked" or "needs <word>", so "blocked once the
+#: sun rises" and "needs work" passed as a handover. Connectives now count only next
+#: to an action (resume, retry, proceed, unblock), or via the explicit keys
+#: (`attempted=`, `resume=`).
+_ATTEMPT_RE = re.compile(
+    r"\b(attempt\w*|tried|reproduc\w*|examined|inspected|verified|"
+    r"probed|investigated)\b|\battempted\s*[=:]\s*\S",
+    re.IGNORECASE,
+)
+_NEXT_STEP_RE = re.compile(
+    r"\b(to\s+resume|to\s+unblock|next\s+step|next\s+attempt|next\s+agent|"
+    r"required\s+to\s+resume|resume\s+(?:with|by|once|after|when|from)|"
+    r"unblock(?:ed)?\s+(?:once|after|when|by)|"
+    r"(?:retry|re-?run|proceed|continue)\b[^.;\n]{0,40}\b(?:once|after|when|with|from)|"
+    r"(?:once|after|when)\b[^.;\n]{0,60}\b(?:retry|re-?run|resume|proceed|continue|unblock))"
+    r"|\bresume\s*[=:]\s*\S",
+    re.IGNORECASE,
+)
+
+#: A verdict that says the card is obsolete or superseded has nothing to hand over:
+#: there is no work to resume. Recognised ONLY in the `reason=` field, not in free
+#: prose, so a worker cannot dodge the handover by mentioning the word. It still
+#: has to pass the category and referent rules, so the superseding card is named.
+#: This is the canonical shape the board's own obsolete closures use:
+#:     BLOCKED blocked_on=card referent=card:<id> reason=obsolete-<why>
+_OBSOLETE_RE = re.compile(
+    r"\breason\s*[=:]\s*[\"']?(obsolete|superseded|duplicate|"
+    r"already[-_ ]?(?:done|landed|satisfied|merged))",
     re.IGNORECASE,
 )
 
@@ -175,14 +202,20 @@ _RESUME_RE = re.compile(
 _WORK_LOCATION_RE = re.compile(
     r"\b(branch|commit\s+[0-9a-f]{7,}|bundle|worktree|pull/\d+|\bPR\b|"
     r"no_pr|no\s+pr|no\s+repository\s+change|no\s+branch|nothing\s+produced|"
-    r"produced\s+no|no\s+artifact|no\s+candidate|work_location\s*[=:]\s*none)\b",
+    r"produced\s+no|no\s+artifact|no\s+candidate)\b|work_location\s*[=:]\s*\S",
     re.IGNORECASE,
 )
 
 
 def states_how_to_resume(value: str) -> bool:
     """True when a refusal says what was tried or what to do next."""
-    return bool(_RESUME_RE.search(str(value or "")))
+    text = str(value or "")
+    return bool(_ATTEMPT_RE.search(text)) or bool(_NEXT_STEP_RE.search(text))
+
+
+def is_obsolete_verdict(value: str) -> bool:
+    """True when the verdict closes the card as obsolete or superseded."""
+    return bool(_OBSOLETE_RE.search(str(value or "")))
 
 
 def states_where_the_work_is(value: str) -> bool:
@@ -373,14 +406,18 @@ def validate_blocked_verdict(key: str, value: str) -> None:
     # exactly when knowing what was already attempted is worth most.
     #
     # Measured effect of the exemption on the live board: 16 of 183 refusals.
-    if category == "dependency":
+    if category == "dependency" or is_obsolete_verdict(text):
         return
     if not states_how_to_resume(text):
         raise ValueError(
             "a BLOCKED verdict must leave a warm handover. Say what you ATTEMPTED "
             "and what the next agent should do first, so the next attempt does not "
-            "re-pay your discovery. Measured 2026-08-28: 0 of 198 blocked cards "
-            "said how to resume, so every successor started from nothing."
+            "re-pay your discovery. Format: BLOCKED blocked_on=<category> "
+            "referent=<referent> attempted=<what you tried> resume=<what to do first> "
+            "work_location=<branch, commit, bundle, PR or none>. Closing an obsolete "
+            "card? Use reason=obsolete-<why> and no handover is needed. Measured "
+            "2026-08-28: 0 of 198 blocked cards said how to resume, so every successor "
+            "started from nothing."
         )
     if not states_where_the_work_is(text):
         raise ValueError(

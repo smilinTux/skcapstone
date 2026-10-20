@@ -10,6 +10,7 @@ import pytest
 from skcapstone.blocked_verdict import (
     blocked_on_referent,
     is_blocked_verdict,
+    is_obsolete_verdict,
     is_outcome_key,
     states_a_contradiction,
     states_how_to_resume,
@@ -128,7 +129,7 @@ def test_the_real_018bf488_verdict_passes():
 def test_prose_before_the_referent_is_fine():
     validate_blocked_verdict(
         "verdict",
-        "BLOCKED after a full read of the coordination board and 14049 CardStore "
+        "BLOCKED. Inspected the coordination board and 14049 CardStore "
         "records, no AC1-compliant authorization exists, so blocked_on=human "
         "referent=approval:9acf44e2-database-lifecycle. No mutation performed, and "
         "no repository change, so no PR.",
@@ -356,3 +357,129 @@ def test_dependency_exemption_does_not_leak_to_other_categories():
     # Same referent shape as the exempt form, but a non-dependency category.
     with pytest.raises(ValueError):
         validate_blocked_verdict("verdict", "BLOCKED blocked_on=card referent=card:04b218cd")
+
+
+# --- live formats, obsolete shape, loose-word negatives (5c0a0001 review fix) -----
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "BLOCKED blocked_on=card referent=card:16bbc6fe reason=obsolete-superseded-by-main",
+        "BLOCKED blocked_on=card referent=card:16bbc6fe reason=superseded",
+        "BLOCKED blocked_on=card referent=card:16bbc6fe reason=already-landed in main",
+        "BLOCKED blocked_on=card referent=inc-0e190b2f reason=duplicate",
+        'BLOCKED blocked_on=card referent=card:16bbc6fe reason="obsolete"',
+    ],
+)
+def test_obsolete_and_superseded_closures_need_no_handover(value):
+    assert is_obsolete_verdict(value)
+    validate_blocked_verdict("verdict", value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # the word in free prose is not the reason= field
+        "BLOCKED blocked_on=human referent=approval:x-y this is obsolete maybe",
+        "BLOCKED blocked_on=human referent=approval:x-y reason=waiting",
+        "BLOCKED blocked_on=human referent=approval:x-y",
+    ],
+)
+def test_obsolete_exemption_is_not_a_prose_escape_hatch(value):
+    assert not is_obsolete_verdict(value)
+    with pytest.raises(ValueError, match="warm handover"):
+        validate_blocked_verdict("verdict", value)
+
+
+def test_obsolete_still_needs_a_real_referent():
+    with pytest.raises(ValueError, match="referent"):
+        validate_blocked_verdict("verdict", "BLOCKED blocked_on=card reason=obsolete-x")
+    with pytest.raises(ValueError):
+        validate_blocked_verdict("verdict", "BLOCKED reason=obsolete-x")
+
+
+# Each format the fleet briefs tell a worker to write, filled in as instructed.
+_BRIEF_FORMATS = [
+    # production_brief.py and production_hosted_review_brief.py
+    "BLOCKED blocked_on=capability referent=git-author-identity "
+    "attempted=ran git commit and git config user.name, both empty "
+    "resume=set GIT_AUTHOR_NAME and GIT_AUTHOR_EMAIL then rerun the commit "
+    "work_location=none "
+    "no git author identity on this host",
+    "BLOCKED blocked_on=human referent=approval:custody-path "
+    "attempted=read the custody policy resume=ask the owner to approve "
+    "work_location=branch fix/x-y",
+    "BLOCKED blocked_on=capability referent=ci:28 "
+    "attempted=inspected the run resume=rerun when CI is available "
+    "work_location=none missing CI",
+    # production_cursor_worker.py
+    "BLOCKED blocked_on=card referent=card:16bbc6fe attempted=tried the install "
+    "resume=amend ac:2 first work_location=none AC2 requires install while rails "
+    "prohibit deploy",
+]
+
+
+@pytest.mark.parametrize("value", _BRIEF_FORMATS)
+def test_every_brief_format_is_accepted(value):
+    validate_blocked_verdict("verdict", value)
+
+
+def test_brief_text_teaches_the_accepted_format():
+    from skcapstone.fleet import (
+        production_brief,
+        production_cursor_worker,
+        production_hosted_review_brief,
+    )
+
+    for mod in (production_brief, production_hosted_review_brief):
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert "attempted=<what you tried>" in src, mod.__name__
+        assert "resume=<what the next agent does first>" in src, mod.__name__
+        assert "work_location=<" in src, mod.__name__
+    cursor_src = open(production_cursor_worker.__file__, encoding="utf-8").read()
+    assert "work_location=<" in cursor_src
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "BLOCKED blocked_on=human referent=approval:x-y blocked once the sun rises",
+        "BLOCKED blocked_on=human referent=approval:x-y it needs work after lunch no PR",
+        "BLOCKED blocked_on=human referent=approval:x-y when asked, ran away. no PR",
+        "BLOCKED blocked_on=capability referent=gpu needs more. no repository change",
+    ],
+)
+def test_stray_connectives_are_not_a_handover(value):
+    assert not states_how_to_resume(value)
+    with pytest.raises(ValueError, match="warm handover"):
+        validate_blocked_verdict("verdict", value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "resume once the approval lands",
+        "retry after the gateway is back",
+        "to resume, run the migration first",
+        "Attempted the read",
+        "attempted=read resume=none",
+        "unblock when card:16bbc6fe is merged",
+    ],
+)
+def test_genuine_resume_statements_count(value):
+    assert states_how_to_resume(value)
+
+
+def test_bare_blocked_and_bare_category_still_refused():
+    with pytest.raises(ValueError):
+        validate_blocked_verdict("verdict", "BLOCKED")
+    with pytest.raises(ValueError):
+        validate_blocked_verdict("verdict", "BLOCKED blocked_on=human")
+    with pytest.raises(ValueError):
+        validate_blocked_verdict("verdict", "BLOCKED blocked_on=human referent=approval:x-y")
+
+
+def test_work_location_key_with_a_value_counts():
+    assert states_where_the_work_is("work_location=fix/lane-x")
+    assert not states_where_the_work_is("work_location=")
