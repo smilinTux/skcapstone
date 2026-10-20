@@ -57,7 +57,7 @@ if [ "$IS_SERVICE_HOST" = true ] && [ "$CURRENT_VENV" = "$SHARED_VENV" ]; then
     if [ "$EDITABLE" = 1 ]; then
         # Check for bypass
         if [ "${SKIP_EDITABLE_GUARD:-0}" = "1" ]; then
-            echo "WARNING: Skipping editable install guard (SKIP_EDITABLE_GUINT=1)" >&2
+            echo "WARNING: Skipping editable install guard (SKIP_EDITABLE_GUARD=1)" >&2
             echo "Please ensure this is justified and documented." >&2
         else
             cat >&2 <<'EOF'

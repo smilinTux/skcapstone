@@ -16,6 +16,7 @@ The pattern: an editable install makes a mutable, unversioned directory
 load-bearing for a running service, and nothing detects it until the
 service breaks.
 """
+
 from __future__ import annotations
 
 import os
@@ -118,6 +119,9 @@ def _is_service_host() -> bool:
     return False
 
 
+is_service_host = _is_service_host
+
+
 def check_shared_interpreter() -> list[dict]:
     """Check if the current interpreter is a shared one.
 
@@ -135,7 +139,9 @@ def check_shared_interpreter() -> list[dict]:
     return shared
 
 
-def block_editable_install(*, target_path: Path | None = None) -> Literal["allow", "block", "warn"]:
+def block_editable_install(
+    *, target_path: Path | None = None
+) -> Literal["allow", "block", "warn"]:
     """Check if an editable install should be blocked.
 
     This is called before pip install -e to enforce the policy:
