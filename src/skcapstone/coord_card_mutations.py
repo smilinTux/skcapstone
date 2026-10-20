@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from .card import CardEvent, CardEventLog
 
-_CARD_ID = re.compile(r"[0-9a-f]{8}")
-
 
 def require_card_id(card_id: object) -> str:
-    """Return ``card_id`` if it is exactly eight lowercase hex characters, else ValueError."""
-    if not isinstance(card_id, str) or _CARD_ID.fullmatch(card_id) is None:
-        raise ValueError("task_id must be exactly eight lowercase hexadecimal characters")
+    """Return ``card_id`` if it has the shape ``coord create`` accepts, else ValueError.
+
+    Reuses the create path's own pattern (optional three-letter kind prefix, then hex and
+    hyphens, uppercase hex allowed, at most 64 chars) so live cards such as ``inc-e2ec1a1a``,
+    ``rev-ff58cdd5`` and ``7a0c01`` stay annotatable. Garbage such as ``POOL_IDS|x`` is refused.
+    """
+    from .cli._validators import _TASK_ID_RE
+
+    if (
+        not isinstance(card_id, str)
+        or not 0 < len(card_id) <= 64
+        or _TASK_ID_RE.fullmatch(card_id) is None
+    ):
+        raise ValueError(
+            "task_id must be a card id: optional three-letter kind prefix (inc-), "
+            "then hex digits and hyphens, at most 64 characters"
+        )
     return card_id
 
 
