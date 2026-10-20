@@ -54,9 +54,7 @@ def test_service_is_not_probed_from_wrong_vantage(home: Path, monkeypatch) -> No
 
     monkeypatch.setattr(service_health, "_http_check", recording_http_check)
 
-    row = next(
-        r for r in service_health.check_all_services() if r["name"] == "remote-only"
-    )
+    row = next(r for r in service_health.check_all_services() if r["name"] == "remote-only")
 
     assert row["status"] == "unknown"
     assert row["endpoint"] == "https://service.example/health"
@@ -78,3 +76,31 @@ def test_builtin_name_not_duplicated_by_registry(home: Path):
     sdk.register_service("skcapstone daemon", pid_file=str(home / "d.pid"))
     names = [r["name"] for r in service_health.check_all_services()]
     assert names.count("skcapstone daemon") == 1
+
+
+def test_any_vantage_is_probed_everywhere(home: Path, monkeypatch) -> None:
+    sdk.register_service("anywhere", health_url="https://service.example/h", vantage_point="any")
+    calls: list[str] = []
+
+    def fake_http_check(name: str, *args, **kwargs):
+        calls.append(name)
+        return {"name": name, "status": "up", "latency_ms": 1, "version": None, "error": None}
+
+    monkeypatch.setattr(service_health, "_http_check", fake_http_check)
+    row = next(r for r in service_health.check_all_services() if r["name"] == "anywhere")
+    assert "anywhere" in calls
+    assert row["status"] == "up" and row["vantage_point"] == "any"
+
+
+def test_default_local_qdrant_is_probed_only_from_this_host(home: Path, monkeypatch) -> None:
+    for var in ("SKMEMORY_SKVECTOR_URL", "SKMEMORY_SKVECTOR_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("SKMEMORY_SKVECTOR_VANTAGE_POINT", "chiap99")
+    monkeypatch.setattr(service_health, "_load_agent_yaml", lambda *a, **k: {})
+    monkeypatch.setattr(
+        service_health, "_http_check", lambda name, *a, **k: {"name": name, "status": "up"}
+    )
+    row = next(r for r in service_health.check_all_services() if r["name"].startswith("skvector"))
+    assert row["status"] == "unknown"
+    assert row["endpoint"] == "http://localhost:6333/healthz"
+    assert row["vantage_point"] == "chiap99"

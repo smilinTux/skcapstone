@@ -437,9 +437,13 @@ def check_all_services() -> list[dict[str, Any]]:
             # operator already decommissioned, filing a false incident per sweep.
             qdrant_base = "disabled"
     if not qdrant_base:
-        qdrant_base = "https://skvector.nativeassetmanagement.com"
+        qdrant_base = "http://localhost:6333"
     if not qdrant_vantage:
-        qdrant_vantage = _ANY_VANTAGE
+        qdrant_vantage = (
+            socket.gethostname()
+            if any(h in qdrant_base for h in ("//localhost", "//127.0.0.1"))
+            else _ANY_VANTAGE
+        )
     if qdrant_base.lower() != "disabled":
         qdrant_url = qdrant_base.rstrip("/") + "/healthz"
         qdrant_headers: dict[str, str] = {}
@@ -450,9 +454,7 @@ def check_all_services() -> list[dict[str, Any]]:
                 "skvector (Qdrant)",
                 qdrant_url,
                 qdrant_vantage,
-                lambda: _http_check(
-                    "skvector (Qdrant)", qdrant_url, headers=qdrant_headers
-                ),
+                lambda: _http_check("skvector (Qdrant)", qdrant_url, headers=qdrant_headers),
             )
         )
 
@@ -485,7 +487,9 @@ def check_all_services() -> list[dict[str, Any]]:
     if not graph_port_str:
         graph_port_str = "6379"
     if not graph_vantage:
-        graph_vantage = socket.gethostname() if graph_host in {"localhost", "127.0.0.1"} else _ANY_VANTAGE
+        graph_vantage = (
+            socket.gethostname() if graph_host in {"localhost", "127.0.0.1"} else _ANY_VANTAGE
+        )
     if graph_host.lower() != "disabled":
         graph_port = int(graph_port_str)
         graph_endpoint = f"tcp://{graph_host}:{graph_port}"
@@ -619,8 +623,10 @@ def check_all_services() -> list[dict[str, Any]]:
         health_url = entry.get("health_url")
         pid_file = entry.get("pid_file")
         vantage_point = entry.get("vantage_point") or entry.get("registered_on")
-        endpoint = str(health_url).rstrip("/") if health_url else (
-            f"pid://{Path(pid_file).expanduser()}" if pid_file else None
+        endpoint = (
+            str(health_url).rstrip("/")
+            if health_url
+            else (f"pid://{Path(pid_file).expanduser()}" if pid_file else None)
         )
         if endpoint is None or not vantage_point:
             results.append(
@@ -767,8 +773,7 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
         probed_from = service_result.get("probed_from") or socket.gethostname()
         vantage_point = service_result.get("vantage_point") or "undeclared"
         probe_evidence = (
-            f"address={endpoint}; probed_from={probed_from}; "
-            f"declared_vantage={vantage_point}"
+            f"address={endpoint}; probed_from={probed_from}; " f"declared_vantage={vantage_point}"
         )
         failure_class = _failure_class(service_result.get("error"))
         mgr = ITILManager(os.path.expanduser(SHARED_ROOT))
@@ -821,7 +826,7 @@ def _auto_resolve_recovered_service(service_result: dict[str, Any]) -> None:
                 new_status="resolved",
                 note=(
                     f"Service {svc_name} recovered; address="
-                    f"{service_result.get('endpoint') or service_result.get('url') or 'undeclared'}; "
+                    f"{service_result.get('endpoint') or service_result.get('url') or 'n/a'}; "
                     f"probed_from={service_result.get('probed_from') or socket.gethostname()}; "
                     f"declared_vantage={service_result.get('vantage_point') or 'undeclared'}"
                 ),
