@@ -129,3 +129,49 @@ def test_wrapper_bypass_variable_only_exact_one(tmp_path):
         tmp_path, "chiap04", ["install", "-e", "."], {"SKIP_EDITABLE_GUARD": "true"}
     )
     assert bad.returncode == 1
+
+
+def _symlinked_env(tmp_path: Path, host: str = "chiap04"):
+    home = tmp_path / "home"
+    skbin = home / ".skenv" / "bin"
+    skbin.mkdir(parents=True, exist_ok=True)
+    (skbin / "python").write_text("#!/bin/sh\n")
+    (skbin / "python").chmod(0o755)
+    real = tmp_path / "realbin"
+    real.mkdir()
+    (real / "pip").write_text('#!/bin/sh\necho "REALPIP $*"\n')
+    (real / "pip").chmod(0o755)
+    local = home / ".local" / "bin"
+    local.mkdir(parents=True)
+    (local / "pip").symlink_to(WRAPPER)
+    env = {
+        "PATH": f"{skbin}:{local}:{real}:/usr/bin:/bin",
+        "HOME": str(home),
+        "HOSTNAME": host,
+    }
+    return local / "pip", env
+
+
+def test_wrapper_symlinked_as_pip_does_not_recurse(tmp_path):
+    pip, env = _symlinked_env(tmp_path)
+    r = subprocess.run(
+        [str(pip), "--version"], env=env, capture_output=True, text=True, timeout=10
+    )
+    assert r.returncode == 0 and "REALPIP --version" in r.stdout
+
+
+def test_wrapper_symlinked_still_blocks_install_editable(tmp_path):
+    pip, env = _symlinked_env(tmp_path)
+    r = subprocess.run(
+        [str(pip), "install", "-e", "."], env=env, capture_output=True, text=True, timeout=10
+    )
+    assert r.returncode == 1 and "BLOCKED" in r.stderr
+
+
+def test_wrapper_does_not_block_read_only_editable_flag(tmp_path):
+    pip, env = _symlinked_env(tmp_path)
+    r = subprocess.run(
+        [str(pip), "list", "-e"], env=env, capture_output=True, text=True, timeout=10
+    )
+    assert r.returncode == 0 and "REALPIP list -e" in r.stdout
+

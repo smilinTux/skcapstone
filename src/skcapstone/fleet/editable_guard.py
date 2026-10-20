@@ -122,7 +122,7 @@ def _is_service_host() -> bool:
 is_service_host = _is_service_host
 
 
-def check_shared_interpreter() -> list[dict]:
+def check_shared_interpreter() -> list[Path]:
     """Check if the current interpreter is a shared one.
 
     Returns:
@@ -131,7 +131,7 @@ def check_shared_interpreter() -> list[dict]:
     """
     current_exe = Path(sys.executable).resolve()
 
-    shared = []
+    shared: list[Path] = []
     for shared_path in SHARED_INTERPRETERS:
         if shared_path in current_exe.parents or shared_path == current_exe.parent:
             shared.append(shared_path)

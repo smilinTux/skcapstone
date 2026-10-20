@@ -19,6 +19,24 @@ SHARED_VENV="$HOME/.skenv"
 # Service hostnames (must match Python module)
 SERVICE_HOSTS="chiap01|chiap02|chiap03|chiap04|chiap08|chiwk11|chiwk13"
 
+# Resolve the real pip by absolute path, skipping this wrapper (it is
+# normally symlinked as ~/.local/bin/pip, so `env pip` would recurse forever).
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+real_pip() {
+    local dir cand
+    local IFS=:
+    for dir in $PATH; do
+        [ -n "$dir" ] || continue
+        cand="$dir/pip"
+        if [ -x "$cand" ] && [ -f "$cand" ] && [ "$(readlink -f "$cand")" != "$SELF" ]; then
+            printf '%s\n' "$cand"
+            return 0
+        fi
+    done
+    echo "pip-editable-guard: no real pip found on PATH besides this wrapper" >&2
+    return 127
+}
+
 # Get current hostname
 HOSTNAME="${HOSTNAME:-$(hostname)}"
 
@@ -36,14 +54,21 @@ elif [[ "$(which python)" == "$SHARED_VENV"* ]]; then
     CURRENT_VENV="$SHARED_VENV"
 else
     # Not using a known venv, allow everything
-    exec /usr/bin/env pip "$@"
+    exec "$(real_pip)" "$@"
 fi
 
 # Check if we're in the shared venv on a service host
 if [ "$IS_SERVICE_HOST" = true ] && [ "$CURRENT_VENV" = "$SHARED_VENV" ]; then
     # Check for editable install
     EDITABLE=0
+    # Only `pip install` can create an editable install; `-e` on read-only
+    # commands (e.g. `pip list -e`) must keep working.
+    SUBCMD=""
     for arg in "$@"; do
+        case "$arg" in -*) ;; *) SUBCMD="$arg"; break ;; esac
+    done
+    for arg in "$@"; do
+        [ "$SUBCMD" = "install" ] || break
         case "$arg" in
             -e|--editable)
                 EDITABLE=1
@@ -82,4 +107,4 @@ EOF
 fi
 
 # Pass through to real pip
-exec /usr/bin/env pip "$@"
+exec "$(real_pip)" "$@"
