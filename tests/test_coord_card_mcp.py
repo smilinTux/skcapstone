@@ -69,23 +69,23 @@ async def test_describe_handler_requires_a_field(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_label_handler_adds_and_removes(tmp_path, monkeypatch):
     monkeypatch.setattr(coord_card_tools, "_shared_root", lambda: tmp_path)
-    _seed(tmp_path, "mcp00003")
+    _seed(tmp_path, "abc00003")
 
     add = await coord_card_tools._handle_coord_label(
-        {"task_id": "mcp00003", "label": "urgent", "agent": "lumina"}
+        {"task_id": "abc00003", "label": "urgent", "agent": "lumina"}
     )
     assert _parse(add)["action"] == "add_label"
-    card = next(c for c in KanbanBoard(tmp_path).cards() if c.id == "mcp00003")
+    card = next(c for c in KanbanBoard(tmp_path).cards() if c.id == "abc00003")
     assert "urgent" in card.labels
 
     rem = await coord_card_tools._handle_coord_label(
-        {"task_id": "mcp00003", "label": "urgent", "remove": True, "agent": "lumina"}
+        {"task_id": "abc00003", "label": "urgent", "remove": True, "agent": "lumina"}
     )
     assert _parse(rem)["action"] == "remove_label"
-    card = next(c for c in KanbanBoard(tmp_path).cards() if c.id == "mcp00003")
+    card = next(c for c in KanbanBoard(tmp_path).cards() if c.id == "abc00003")
     assert "urgent" not in card.labels
 
-    events = [e for e in CardEventLog(tmp_path).read_all() if e.card_id == "mcp00003"]
+    events = [e for e in CardEventLog(tmp_path).read_all() if e.card_id == "abc00003"]
     assert [e.action for e in events] == ["add_label", "remove_label"]
     assert all(e.writer == "lumina" for e in events)
 
@@ -93,10 +93,10 @@ async def test_label_handler_adds_and_removes(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_link_handler_attaches_a_link(tmp_path, monkeypatch):
     monkeypatch.setattr(coord_card_tools, "_shared_root", lambda: tmp_path)
-    _seed(tmp_path, "mcp00004")
+    _seed(tmp_path, "abc00004")
     result = await coord_card_tools._handle_coord_link(
         {
-            "task_id": "mcp00004",
+            "task_id": "abc00004",
             "key": "pr",
             "value": "https://example.test/pr/1",
             "agent": "lumina",
@@ -104,13 +104,13 @@ async def test_link_handler_attaches_a_link(tmp_path, monkeypatch):
     )
     assert _parse(result)["linked"] is True
 
-    events = [e for e in CardEventLog(tmp_path).read_all() if e.card_id == "mcp00004"]
+    events = [e for e in CardEventLog(tmp_path).read_all() if e.card_id == "abc00004"]
     assert len(events) == 1
     assert events[0].action == "link"
     assert events[0].link_key == "pr"
     assert events[0].link_value == "https://example.test/pr/1"
 
-    card = next(c for c in KanbanBoard(tmp_path).cards() if c.id == "mcp00004")
+    card = next(c for c in KanbanBoard(tmp_path).cards() if c.id == "abc00004")
     assert card.links["pr"] == "https://example.test/pr/1"
 
 
