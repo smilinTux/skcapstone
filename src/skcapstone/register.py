@@ -21,21 +21,9 @@ from skmemory.register import detect_environments, register_mcp, register_packag
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
-def _get_skgit_env() -> Optional[dict]:
-    """Read skgit token from config file if available."""
-    token_path = Path.home() / ".config" / "skgit" / "token"
-    try:
-        token = token_path.read_text().strip()
-    except (FileNotFoundError, PermissionError):
-        token = ""
-
-    if not token:
-        return None
-
-    return {
-        "GITEA_HOST": "https://skgit.skstack01.douno.it",
-        "GITEA_ACCESS_TOKEN": token,
-    }
+def _get_skgit_env() -> None:
+    """Never serialize the host-local skgit credential into client config."""
+    return None
 
 
 # ── SK* package registry ─────────────────────────────────────────────────────
@@ -317,18 +305,21 @@ def register_all(
         "packages": {},
     }
 
-    # Wire the Codex AGENTS.md bootstrap (agent context loader + profile)
-    # whenever Codex is a registered environment, so a fresh install gets the
-    # SK agent context setup out of the box.
+    # Wire the Codex bootstrap and declarative MCP policy whenever Codex is a
+    # target. The reconciliation owns only SK-managed entries and preserves all
+    # unrelated user configuration.
     results["codex_setup"] = {"action": "skip", "reason": "codex not detected"}
     if "codex" in environments:
-        from .codex_setup import check_codex_setup, ensure_codex_setup
+        from .codex_setup import check_codex_setup, ensure_codex_setup, resolve_default_agent
+        from .mcp_policy import reconcile_codex_config
 
+        agent = resolve_default_agent()
+        results["codex_mcp"] = reconcile_codex_config(agent=agent, dry_run=dry_run)
         if dry_run:
             results["codex_setup"] = {"action": "dry-run"}
         else:
             _, detail = check_codex_setup()
-            actions = ensure_codex_setup()
+            actions = ensure_codex_setup(agent_name=agent)
             status = "created" if "missing" in detail else "exists"
             results["codex_setup"] = {
                 "action": "updated" if actions else status,
@@ -353,8 +344,12 @@ def register_all(
         name = pkg["name"]
         skill_md = find_skill_md(name, workspace)
         package_environments = environments
+        if name in {"skcapstone", "skmemory"}:
+            # Codex entries are rendered by the SKCapstone policy above so the
+            # host overlay, timeouts, approval policy, and drift report agree.
+            package_environments = [env for env in package_environments if env != "codex"]
         if "pi" in environments and name not in {"skcapstone", "skmemory"}:
-            package_environments = [env for env in environments if env != "pi"]
+            package_environments = [env for env in package_environments if env != "pi"]
 
         if skill_md is None and not dry_run:
             results["packages"][name] = {

@@ -41,6 +41,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from . import mcp_tools
+from .mcp_policy import load_host_policy, stdio_process_slot
 from .mcp_tools._helpers import (
     _error_response,
     _get_agent_name,
@@ -99,9 +100,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 
 def main() -> None:
-    """Run the MCP server on stdio transport."""
+    """Run one bounded MCP stdio child for the lifetime of the transport."""
     logging.basicConfig(level=logging.WARNING, format="%(name)s: %(message)s")
-    asyncio.run(_run_server())
+    with stdio_process_slot("skcapstone", policy=load_host_policy()):
+        asyncio.run(_run_server())
 
 
 async def _run_server() -> None:
