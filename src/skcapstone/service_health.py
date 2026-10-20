@@ -775,7 +775,7 @@ def _create_incident_for_down_service(service_result: dict[str, Any]) -> None:
         probed_from = service_result.get("probed_from") or socket.gethostname()
         vantage_point = service_result.get("vantage_point") or "undeclared"
         probe_evidence = (
-            f"address={endpoint}; probed_from={probed_from}; " f"declared_vantage={vantage_point}"
+            f"address={endpoint}; probed_from={probed_from}; declared_vantage={vantage_point}"
         )
         failure_class = _failure_class(service_result.get("error"))
         mgr = ITILManager(os.path.expanduser(SHARED_ROOT))
