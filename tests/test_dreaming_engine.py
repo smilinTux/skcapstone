@@ -2,8 +2,9 @@
 the repetition guard (keyword overlap + dedup gate), and the OpenAI-compatible
 `_call_ollama` path. These are pure/mocked - no network, no daemon."""
 
-import pytest
 import json
+
+import pytest
 
 from skcapstone.dreaming import (
     DreamingConfig,
