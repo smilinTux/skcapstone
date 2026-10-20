@@ -2,10 +2,9 @@
 
 import json
 import os
+import signal
 import time
 from types import SimpleNamespace
-
-import pytest
 
 from skcapstone.fleet import production_resources as resources
 
@@ -187,7 +186,6 @@ def test_forged_unit_name_does_not_displace_another_unit(tmp_path, monkeypatch):
     assert units["skfleet-builder-bbbbbbbb.service"]["reserved_memory_max"] >= 3 * 1024**3
 
 
-@pytest.mark.timeout(10)
 def test_fifo_launch_json_neither_hangs_nor_uncharges(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     _launch(tmp_path, "ffffffff", "local")
@@ -195,7 +193,13 @@ def test_fifo_launch_json_neither_hangs_nor_uncharges(tmp_path, monkeypatch):
     path.unlink()
     os.mkfifo(path)
     _open_up(tmp_path, "ffffffff")
-    (unit,) = resources.active_resource_units(tmp_path)
+    # A blocking open would hang forever: fail the test after 10 s instead.
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError("hung on FIFO")))
+    signal.alarm(10)
+    try:
+        (unit,) = resources.active_resource_units(tmp_path)
+    finally:
+        signal.alarm(0)
     assert unit["reserved_memory_max"] == resources.UNTRUSTED_LAUNCH_MEMORY_BYTES
 
 
