@@ -124,8 +124,8 @@ def test_process_ceiling_refuses_duplicate_and_reuses_released_slot(tmp_path: Pa
         {"tool_timeout_sec": None},
         {"approval_policy": ["never"]},
         {"approval_policy": "yolo"},
-        {"max_stdio_processes": 0},
-        {"max_stdio_processes": 33},
+        {"max_stdio_processes": -1},
+        {"max_stdio_processes": 257},
         {"startup_timeout_sec": 30, "tool_timeout_sec": 10},
         {"Api_Key_Token": "x"},
         {"session_cookie": "x"},
@@ -164,3 +164,106 @@ def test_register_never_serializes_the_skgit_token(tmp_path: Path, monkeypatch) 
     token.write_text("super-secret", encoding="utf-8")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     assert register._get_skgit_env() is None
+
+
+# Structure of chiap08's real ~/.codex/config.toml, values redacted: policy "never",
+# a host wrapper command + args, and separate [mcp_servers.<name>.env] subtables.
+CHIAP08_SHAPE = """\
+model = "m"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+[projects."/home/u/work"]
+trust_level = "trusted"
+
+[mcp_servers.skmemory]
+command = "/home/u/bin/sk-mcp-env"
+args = ["/home/u/.skenv/bin/skmemory-mcp"]
+startup_timeout_sec = 30
+
+[mcp_servers.skmemory.env]
+SKAGENT = "a"
+SKCAPSTONE_AGENT = "a"
+SKMEMORY_AGENT = "a"
+
+[mcp_servers.skcapstone]
+command = "/home/u/bin/sk-mcp-env"
+args = ["/home/u/.skenv/bin/skcapstone-mcp"]
+startup_timeout_sec = 30
+
+[mcp_servers.skcapstone.env]
+SKAGENT = "a"
+
+[mcp_servers.skcomms]
+command = "x"
+
+[mcp_servers.skcomms.env]
+SKAGENT = "a"
+
+[tui]
+status_line_use_colors = true
+"""
+
+
+def test_host_shaped_config_with_env_subtables_stays_valid_and_untouched() -> None:
+    out = render_codex_config(CHIAP08_SHAPE, MCPPolicy(), home=Path("/h"), agent="jarvis")
+    parsed = tomllib.loads(out)  # must still parse (the original defect)
+    orig = tomllib.loads(CHIAP08_SHAPE)
+    assert parsed["approval_policy"] == "never"
+    for name in ("skcapstone", "skmemory"):
+        e, o = parsed["mcp_servers"][name], orig["mcp_servers"][name]
+        assert e["command"] == o["command"] == "/home/u/bin/sk-mcp-env"
+        assert e["args"] == o["args"]
+        assert e["env"] == o["env"]  # subtable preserved, not replaced by inline env
+        assert e["startup_timeout_sec"] == 30  # host value kept
+        assert e["tool_timeout_sec"] == 120  # missing key filled
+    assert parsed["mcp_servers"]["skcomms"] == orig["mcp_servers"]["skcomms"]
+    assert parsed["projects"] == orig["projects"] and parsed["tui"] == orig["tui"]
+    assert render_codex_config(out, MCPPolicy(), home=Path("/h"), agent="jarvis") == out
+
+
+def test_existing_approval_policy_is_never_changed_even_by_overlay_default() -> None:
+    for existing in ("never", "untrusted", "on-failure"):
+        out = render_codex_config(
+            f'approval_policy = "{existing}"\n',
+            MCPPolicy(approval_policy="on-request"),
+            home=Path("/h"),
+            agent="a",
+        )
+        assert tomllib.loads(out)["approval_policy"] == existing
+
+
+def test_unparseable_existing_config_is_returned_unchanged() -> None:
+    broken = "model = [unclosed\n[mcp_servers.skmemory\n"
+    assert render_codex_config(broken, MCPPolicy(), home=Path("/h"), agent="a") == broken
+
+
+def test_default_process_ceiling_is_unlimited(tmp_path: Path) -> None:
+    assert MCPPolicy().max_stdio_processes == 0
+    slots = []
+    with stdio_process_slot("t", policy=MCPPolicy(), runtime_dir=tmp_path) as a:
+        with stdio_process_slot("t", policy=MCPPolicy(), runtime_dir=tmp_path) as b:
+            slots = [a, b]
+    assert slots == [-1, -1]
+    assert not (tmp_path / "skcapstone-mcp-slots").exists()
+
+
+@pytest.mark.parametrize("mode,body", [(0o600, "{not json"), (0o640, "{}"), (0o600, "[1]")])
+def test_launch_path_degrades_to_defaults_on_bad_overlay(
+    tmp_path: Path, mode: int, body: str
+) -> None:
+    from skcapstone.mcp_policy import load_host_policy_safe
+
+    overlay = tmp_path / "mcp-host.json"
+    overlay.write_text(body, encoding="utf-8")
+    overlay.chmod(mode)
+    assert load_host_policy_safe(overlay) == MCPPolicy()
+
+
+def test_unusable_slot_dir_does_not_crash_launch(tmp_path: Path) -> None:
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    with stdio_process_slot(
+        "t", policy=MCPPolicy(max_stdio_processes=2), runtime_dir=blocker
+    ) as slot:
+        assert slot == -1

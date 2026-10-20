@@ -19,8 +19,10 @@ use absolute executables from `~/.skenv/bin`, start the two default servers
 eagerly where supported, and pass through the selected agent environment.
 
 `skcapstone register --env codex` is the declarative reconciliation entry
-point. It owns only `approval_policy` and the `skcapstone` and `skmemory` MCP
-tables, preserving unrelated user configuration. A dry run reports
+point. It only fills in what is missing: `approval_policy` (never changed once set)
+and the `skcapstone` and `skmemory` MCP tables (an existing table, its command,
+its `.env` subtable and every other key are left untouched; only absent
+timeout keys are added). An unparseable config is left unchanged. A dry run reports
 `would-create`, `would-update`, or `exists` without writing. Host-specific,
 non-secret overrides may be placed in mode `0600`
 `~/.config/skcapstone/mcp-host.json` using only these fields:
@@ -30,16 +32,19 @@ non-secret overrides may be placed in mode `0600`
   "approval_policy": "on-request",
   "startup_timeout_sec": 20,
   "tool_timeout_sec": 120,
-  "max_stdio_processes": 4
+  "max_stdio_processes": 0
 }
 ```
 
-Secret-shaped or unknown overlay fields are rejected. Credentials must come
+Secret-shaped or unknown overlay fields are rejected by `register`; the MCP
+server launch path logs a warning and falls back to defaults instead of
+crashing. Credentials must come
 from a host-local keyring or process environment and are never rendered into
 Codex configuration. The default approval policy is `on-request`; generated
-loaders still default `SK_CODEX_YOLO` to `1` (see SOP section 6). Each `skcapstone-mcp` child holds a
-host-local advisory slot for its lifetime and refuses starts beyond the
-configured ceiling. Slots are released by the operating system when a child
+loaders still default `SK_CODEX_YOLO` to `1` (see SOP section 6). With `max_stdio_processes` greater than 0, each `skcapstone-mcp` child holds a
+host-local advisory slot for its lifetime and refuses starts beyond that
+ceiling; the default 0 means no ceiling (live load is 20+ children on a
+workstation, so size it per host). Slots are released by the operating system when a child
 exits, including abnormal exit.
 
 Authentication caches, session databases, client caches and logs, and MCP
