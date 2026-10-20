@@ -778,8 +778,68 @@ EXITED_WITHOUT_OUTCOME = "worker exited without outcome; clean base released"
 AUTHORITY_RELEASED = "claim released by authority before evidence"
 
 
+# Dispatch-side refusals that happen before any claim, unit or worker exists.
+# Each is raised by this module while preparing an offer (source checkout,
+# workspace binding, card re-fold) and written as a terminal status with no
+# execution identity. None of them is a worker verdict about the card's work.
+PRECLAIM_DISPATCH_ERRORS = frozenset(
+    {
+        "exact source reconstruction failed",
+        "existing workspace does not match exact source binding",
+        "offered card changed after dispatch request",
+        "offered card is no longer foldable",
+    }
+)
+# Execution identity a status carries once a worker was claimed or launched.
+EXECUTION_IDENTITY_KEYS = (
+    "owner",
+    "claim_revision",
+    "pid",
+    "pid_start_ticks",
+    "unit",
+    "invocation",
+    "admission_contract",
+    "admission_terminal",
+    "exit_code",
+    "outcome_event",
+)
+# A pre-claim failure is retried only after it has stood this long, so a source
+# that keeps failing costs one new generation per window, not one per cycle.
+PRECLAIM_RETRY_COOLOFF_SECONDS = 6 * 3600
+
+
+def _unworked_dispatch_terminal(request: dict, status: dict) -> bool:
+    """True for a terminal that records a dispatch that never ran any work.
+
+    Discriminates on execution identity, not on state or completion: a status
+    with an owner, claim, process, unit, invocation, exit code or outcome event
+    is a real worker verdict (or custody) and stays charged. Only a
+    failed/blocked status for this exact request, carrying one of the
+    dispatch-side pre-claim errors and none of that identity, is forgiven, and
+    only after a cool-off. Ten cards sat parked for 11+ days behind such
+    terminals (0cc00002).
+    """
+    if (
+        status.get("request_id") != request.get("request_id")
+        or status.get("state") not in {"failed", "blocked"}
+        or status.get("error") not in PRECLAIM_DISPATCH_ERRORS
+        or status.get("claim_released") is True
+        or any(status.get(key) is not None for key in EXECUTION_IDENTITY_KEYS)
+    ):
+        return False
+    try:
+        beat = datetime.strptime(status["heartbeat_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (_now() - beat).total_seconds() >= PRECLAIM_RETRY_COOLOFF_SECONDS
+
+
 def _unclaimed_expired_offer(request: dict, status: dict) -> bool:
     """Retry only a node-proven refusal that never acquired source custody."""
+    if _unworked_dispatch_terminal(request, status):
+        return True
     if (
         status.get("request_id") == request.get("request_id")
         and status.get("state") == "blocked"

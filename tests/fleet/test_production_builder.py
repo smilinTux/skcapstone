@@ -887,3 +887,77 @@ def test_cursor_offer_uses_only_chiap08_and_preserves_claim_binding(
         )
         is None
     )
+
+
+def _preclaim_status(paths, first, **extra):
+    base = {"attempt": 2, "claim_released": False, "error": "exact source reconstruction failed"}
+    return builder._write_status(
+        paths,
+        first["node"],
+        first,
+        extra.pop("state", "failed"),
+        **{**base, **extra},
+    )
+
+
+def _aged(monkeypatch, hours):
+    real = builder._now
+    monkeypatch.setattr(
+        builder, "_now", lambda: real() + __import__("datetime").timedelta(hours=hours)
+    )
+
+
+@pytest.mark.parametrize(
+    "state,error",
+    [
+        ("failed", "exact source reconstruction failed"),
+        ("failed", "existing workspace does not match exact source binding"),
+        ("blocked", "offered card changed after dispatch request"),
+    ],
+)
+def test_stale_unworked_dispatch_terminal_is_forgiven(
+    paths, production_setup, monkeypatch, state, error
+):
+    labels = ["sk-m", "source-only"]
+    first = builder.offer(paths, _card(), labels, writer=production_setup.writer)
+    _preclaim_status(paths, first, state=state, error=error)
+    # Fresh terminal: still parked (cool-off), so a failing source is not hot-looped.
+    assert builder.offer(paths, _card(), labels, writer=production_setup.writer) is None
+    _aged(monkeypatch, 24 * 11)
+    second = builder.offer(paths, _card(), labels, writer=production_setup.writer)
+    assert second is not None and second["request_id"] != first["request_id"]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"owner": "pi-glm-builder-x"},
+        {"claim_revision": "a" * 32},
+        {"exit_code": 1},
+        {"outcome_event": "typed-event"},
+        {"unit": "skfleet-builder-x.service"},
+        {"invocation": "b" * 32},
+        {"pid": 4242},
+        {"claim_released": True},
+        {"error": "worker verdict: BLOCKED blocked_on=human"},
+        {"state": "awaiting-review"},
+        {"state": "completed"},
+    ],
+)
+def test_real_worker_verdicts_stay_charged_however_old(
+    paths, production_setup, monkeypatch, extra
+):
+    labels = ["sk-m", "source-only"]
+    first = builder.offer(paths, _card(), labels, writer=production_setup.writer)
+    _preclaim_status(paths, first, **extra)
+    _aged(monkeypatch, 24 * 30)
+    assert builder.offer(paths, _card(), labels, writer=production_setup.writer) is None
+
+
+def test_other_generations_terminal_does_not_forgive(paths, production_setup, monkeypatch):
+    first = builder.offer(paths, _card(), ["sk-m", "source-only"], writer=production_setup.writer)
+    status = _preclaim_status(paths, first)
+    _aged(monkeypatch, 24 * 11)
+    assert builder._unclaimed_expired_offer({**first, "request_id": "f" * 64}, status) is False
+    bad = {k: v for k, v in status.items() if k != "heartbeat_at"}
+    assert builder._unclaimed_expired_offer(first, bad) is False
