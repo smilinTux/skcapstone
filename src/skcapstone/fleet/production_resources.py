@@ -1,7 +1,11 @@
 """Memory admission based on live node resources and actual worker cgroups."""
 
+import json
+import logging
+import os
 import re
 import socket
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -51,6 +55,36 @@ def successful_terminal_absent(state):
 
 
 LAUNCH_EXPIRY_GRACE_SECONDS = 900
+UNTRUSTED_LAUNCH_MEMORY_BYTES = 3 * 1024**3
+UNTRUSTED_LAUNCH_EXPIRY_SECONDS = 24 * 3600
+UNTRUSTED_LAUNCH_MAX_BYTES = 1 << 20
+_log = logging.getLogger(__name__)
+
+
+def _untrusted_memory(path):
+    """Charge for a launch.json whose directory failed the privacy check.
+
+    Nothing in such a file is trusted: its own fields may only RAISE the charge
+    above the default, never lower it, and never choose the unit, host or
+    expiry. The read cannot block (a FIFO or device is not a regular file) and
+    does not follow symlinks; any failure charges the default.
+    """
+    own = 0
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            info = os.fstat(fd)
+            if stat.S_ISREG(info.st_mode) and info.st_size <= UNTRUSTED_LAUNCH_MAX_BYTES:
+                with os.fdopen(fd, "rb", closefd=False) as stream:
+                    value = json.loads(stream.read(UNTRUSTED_LAUNCH_MAX_BYTES))
+                own = value["production"]["resources"]["memory_max_bytes"]
+        finally:
+            os.close(fd)
+    except (OSError, ValueError, KeyError, TypeError):
+        own = 0
+    if type(own) is not int:
+        own = 0
+    return max(own, UNTRUSTED_LAUNCH_MEMORY_BYTES)
 
 
 def _local_launch(home, host, launch):
@@ -103,6 +137,7 @@ def active_resource_units(home=None):
         if line.strip()
     }
     # A durable launch intent reserves memory even before systemd acknowledges it.
+    from .production_test_plan import TestEvidenceError
     from .production_tests import read_json
 
     home = Path(home) if home is not None else Path.home() / ".skcapstone"
@@ -110,7 +145,25 @@ def active_resource_units(home=None):
     for path in (home / "fleet/test-runs").glob("*/launch.json"):
         if (path.parent / "terminal.json").exists():
             continue
-        launch = read_json(path)
+        try:
+            launch = read_json(path)
+        except TestEvidenceError:
+            # One non-private entry (e.g. mode 755 from Syncthing) must not abort
+            # admission for the whole host, and must not be trusted either: it is
+            # charged under a name derived from its directory (never its own
+            # `unit`), on every host, at no less than the default, until it is a
+            # day old. It can only ever add to a reservation (0cc00003).
+            if time.time() - path.lstat().st_mtime > UNTRUSTED_LAUNCH_EXPIRY_SECONDS:
+                continue
+            _log.warning("charging non-private test-run evidence conservatively: %s", path.parent)
+            row = units.setdefault(
+                f"skfleet-builder-{path.parent.name}.service",
+                {"unit": f"skfleet-builder-{path.parent.name}.service"},
+            )
+            row["reserved_memory_max"] = max(
+                row.get("reserved_memory_max", 0), _untrusted_memory(path)
+            )
+            continue
         unit = launch["unit"]
         if unit in units:
             pass  # Live here: always charged.
