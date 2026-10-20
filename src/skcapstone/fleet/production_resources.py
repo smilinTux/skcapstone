@@ -2,8 +2,10 @@
 
 import json
 import logging
+import os
 import re
 import socket
+import stat
 import subprocess
 import time
 from pathlib import Path
@@ -54,33 +56,35 @@ def successful_terminal_absent(state):
 
 LAUNCH_EXPIRY_GRACE_SECONDS = 900
 UNTRUSTED_LAUNCH_MEMORY_BYTES = 3 * 1024**3
+UNTRUSTED_LAUNCH_EXPIRY_SECONDS = 24 * 3600
+UNTRUSTED_LAUNCH_MAX_BYTES = 1 << 20
 _log = logging.getLogger(__name__)
 
 
-def _untrusted_launch(path):
-    """Best-effort parse of a launch.json whose directory failed the privacy check.
+def _untrusted_memory(path):
+    """Charge for a launch.json whose directory failed the privacy check.
 
-    The result is used only to decide how much to CHARGE (and whether an old
-    entry has expired), never to authorize anything.
+    Nothing in such a file is trusted: its own fields may only RAISE the charge
+    above the default, never lower it, and never choose the unit, host or
+    expiry. The read cannot block (a FIFO or device is not a regular file) and
+    does not follow symlinks; any failure charges the default.
     """
-    name = path.parent.name
+    own = 0
     try:
-        with open(path, "rb") as stream:
-            value = json.loads(stream.read(1 << 20))
-    except (OSError, ValueError):
-        value = None
-    launch = value if isinstance(value, dict) else {}
-    if not isinstance(launch.get("unit"), str) or not launch["unit"]:
-        launch["unit"] = f"skfleet-builder-{name}.service"
-    return launch
-
-
-def _launch_memory(launch):
-    try:
-        memory = int(launch["production"]["resources"]["memory_max_bytes"])
-    except (KeyError, TypeError, ValueError):
-        return UNTRUSTED_LAUNCH_MEMORY_BYTES
-    return memory if memory > 0 else UNTRUSTED_LAUNCH_MEMORY_BYTES
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            info = os.fstat(fd)
+            if stat.S_ISREG(info.st_mode) and info.st_size <= UNTRUSTED_LAUNCH_MAX_BYTES:
+                with os.fdopen(fd, "rb", closefd=False) as stream:
+                    value = json.loads(stream.read(UNTRUSTED_LAUNCH_MAX_BYTES))
+                own = value["production"]["resources"]["memory_max_bytes"]
+        finally:
+            os.close(fd)
+    except (OSError, ValueError, KeyError, TypeError):
+        own = 0
+    if type(own) is not int:
+        own = 0
+    return max(own, UNTRUSTED_LAUNCH_MEMORY_BYTES)
 
 
 def _local_launch(home, host, launch):
@@ -141,14 +145,25 @@ def active_resource_units(home=None):
     for path in (home / "fleet/test-runs").glob("*/launch.json"):
         if (path.parent / "terminal.json").exists():
             continue
-        trusted = True
         try:
             launch = read_json(path)
         except TestEvidenceError:
             # One non-private entry (e.g. mode 755 from Syncthing) must not abort
-            # admission for the whole host. Expired entries are skipped below;
-            # a live one is charged conservatively and reported (0cc00003).
-            trusted, launch = False, _untrusted_launch(path)
+            # admission for the whole host, and must not be trusted either: it is
+            # charged under a name derived from its directory (never its own
+            # `unit`), on every host, at no less than the default, until it is a
+            # day old. It can only ever add to a reservation (0cc00003).
+            if time.time() - path.lstat().st_mtime > UNTRUSTED_LAUNCH_EXPIRY_SECONDS:
+                continue
+            _log.warning("charging non-private test-run evidence conservatively: %s", path.parent)
+            row = units.setdefault(
+                f"skfleet-builder-{path.parent.name}.service",
+                {"unit": f"skfleet-builder-{path.parent.name}.service"},
+            )
+            row["reserved_memory_max"] = max(
+                row.get("reserved_memory_max", 0), _untrusted_memory(path)
+            )
+            continue
         unit = launch["unit"]
         if unit in units:
             pass  # Live here: always charged.
@@ -158,13 +173,9 @@ def active_resource_units(home=None):
             # terminal.json stayed charged forever: af5b07b0 (17:55Z) held 3 GiB
             # on chiap01-04 for five hours (2026-10-10).
             continue
-        if not trusted:
-            _log.warning("charging non-private test-run evidence conservatively: %s", path.parent)
-        units.setdefault(unit, {"unit": unit})["reserved_memory_max"] = (
-            launch["production"]["resources"]["memory_max_bytes"]
-            if trusted
-            else _launch_memory(launch)
-        )
+        units.setdefault(unit, {"unit": unit})["reserved_memory_max"] = launch["production"][
+            "resources"
+        ]["memory_max_bytes"]
     return list(units.values())
 
 

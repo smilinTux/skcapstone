@@ -5,6 +5,8 @@ import os
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from skcapstone.fleet import production_resources as resources
 
 RESOURCES = {"memory_max_bytes": 3 * 1024**3, "runtime_max_seconds": 3600}
@@ -60,7 +62,7 @@ def _open_up(tmp_path, name):
 def test_non_private_expired_dir_is_skipped(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
     _launch(tmp_path, "aaaaaaaa", "local")
-    _launch(tmp_path, "cccccccc", "local", age=3600 + 2000)
+    _launch(tmp_path, "cccccccc", "local", age=2 * 86400)
     _open_up(tmp_path, "cccccccc")
     units = resources.active_resource_units(tmp_path)
     assert [u["unit"] for u in units] == ["skfleet-builder-aaaaaaaa.service"]
@@ -117,3 +119,94 @@ def test_non_private_live_dir_charges_conservatively_in_occupancy(tmp_path, monk
         d.chmod(0o700)
     rows = admission._occupancy(root, tmp_path, strict_terminal=True)
     assert [r["unit"] for r in rows] == ["skfleet-builder-eeeeeeee.service"]
+
+
+def _forge(tmp_path, name, **fields):
+    path = tmp_path / "fleet/test-runs" / name / "launch.json"
+    data = json.loads(path.read_text())
+    data.update(fields)
+    path.write_text(json.dumps(data))
+    _open_up(tmp_path, name)
+    return path
+
+
+def test_forged_tiny_memory_is_charged_at_least_default(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _launch(tmp_path, "aaaaaaaa", "local")
+    _forge(tmp_path, "aaaaaaaa", production={"resources": {"memory_max_bytes": 1}})
+    (unit,) = resources.active_resource_units(tmp_path)
+    assert unit["reserved_memory_max"] >= 3 * 1024**3
+
+
+def test_forged_larger_memory_only_raises_the_charge(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _launch(tmp_path, "aaaaaaaa", "local")
+    _forge(tmp_path, "aaaaaaaa", production={"resources": {"memory_max_bytes": 9 * 1024**3}})
+    (unit,) = resources.active_resource_units(tmp_path)
+    assert unit["reserved_memory_max"] == 9 * 1024**3
+
+
+def test_forged_runtime_and_foreign_marker_do_not_uncharge(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _launch(tmp_path, "aaaaaaaa", "local", age=7200)
+    _forge(
+        tmp_path,
+        "aaaaaaaa",
+        production={"resources": {"memory_max_bytes": 1, "runtime_max_seconds": 1}},
+        service_argv=["--setenv=SKFLEET_ADMISSION_ID=elsewhere"],
+    )
+    (unit,) = resources.active_resource_units(tmp_path)
+    assert unit["reserved_memory_max"] >= 3 * 1024**3
+
+
+def test_forged_unit_name_does_not_displace_another_unit(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    live = "skfleet-builder-live0001.service"
+    monkeypatch.setattr(
+        resources.subprocess,
+        "run",
+        lambda *_a, **_k: SimpleNamespace(
+            stdout=live + " loaded active running x\n", returncode=0
+        ),
+    )
+    _launch(tmp_path, "live0001", "local")
+    big = 6 * 1024**3
+    (tmp_path / "fleet/test-runs/live0001/launch.json").write_text(
+        json.dumps(
+            {
+                "unit": live,
+                "service_argv": [],
+                "production": {"resources": {**RESOURCES, "memory_max_bytes": big}},
+            }
+        )
+    )
+    _launch(tmp_path, "bbbbbbbb", "local")
+    _forge(tmp_path, "bbbbbbbb", unit=live, production={"resources": {"memory_max_bytes": 1}})
+    units = {u["unit"]: u for u in resources.active_resource_units(tmp_path)}
+    assert units[live]["reserved_memory_max"] == big
+    assert units["skfleet-builder-bbbbbbbb.service"]["reserved_memory_max"] >= 3 * 1024**3
+
+
+@pytest.mark.timeout(10)
+def test_fifo_launch_json_neither_hangs_nor_uncharges(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _launch(tmp_path, "ffffffff", "local")
+    path = tmp_path / "fleet/test-runs/ffffffff/launch.json"
+    path.unlink()
+    os.mkfifo(path)
+    _open_up(tmp_path, "ffffffff")
+    (unit,) = resources.active_resource_units(tmp_path)
+    assert unit["reserved_memory_max"] == resources.UNTRUSTED_LAUNCH_MEMORY_BYTES
+
+
+def test_symlinked_launch_json_is_not_followed(tmp_path, monkeypatch):
+    _setup(tmp_path, monkeypatch)
+    _launch(tmp_path, "ffffffff", "local")
+    path = tmp_path / "fleet/test-runs/ffffffff/launch.json"
+    target = tmp_path / "elsewhere.json"
+    target.write_text(json.dumps({"production": {"resources": {"memory_max_bytes": 9 * 1024**3}}}))
+    path.unlink()
+    path.symlink_to(target)
+    _open_up(tmp_path, "ffffffff")
+    (unit,) = resources.active_resource_units(tmp_path)
+    assert unit["reserved_memory_max"] == resources.UNTRUSTED_LAUNCH_MEMORY_BYTES
