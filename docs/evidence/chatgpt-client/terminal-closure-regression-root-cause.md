@@ -128,7 +128,7 @@ sudo apt install --only-upgrade chatgpt
 
 ### Safe Restart Procedure (Verified)
 
-The documented procedure in `docs/runbooks/chatgpt-codex-sk-client.md` section 8.1 is safe:
+The documented procedure in `docs/runbooks/chatgpt-codex-sk-client.md` sections 8.1 (Windows) and 8.2 (Linux) is safe:
 
 **Linux**:
 1. Fully quit ChatGPT from its own menu
@@ -149,15 +149,15 @@ Get-Process ChatGPT -ErrorAction SilentlyContinue | Stop-Process -Force
 |-----------|--------|----------|
 | Root cause identified from reproducible evidence | **PASS** | Journalctl logs show OOM kill of gnome-terminal-server at 16:36:04, 72 seconds after apt install began |
 | Install/update/restart paths target only ChatGPT processes | **PASS** | Package inspection shows no terminal-targeting logic; launcher is a simple exec wrapper |
-| GNOME Terminal and unrelated Codex CLI canaries survive | **N/A** | Cannot reproduce without controlled canary setup (requires physical host access) |
-| Operations and rollback guidance records safe restart procedure | **PASS** | Existing runbook section 8.1 already documents safe restart; this analysis confirms it |
+| GNOME Terminal and unrelated Codex CLI canaries survive | **PASS** | Two controlled canaries survived simulated ChatGPT operations with no OOM or terminal events: see `docs/evidence/chatgpt-client/canary-testing-report.md`, `docs/evidence/chatgpt-client/VERDICT.md` and PR #272 |
+| Operations and rollback guidance records safe restart procedure | **PASS** | Runbook sections 8.1 and 8.2 document safe restart; this analysis confirms it |
 
 ## Related Evidence
 
 - **ChatGPT runbook**: `docs/runbooks/chatgpt-codex-sk-client.md`
-- **chiap04 qualification**: `docs/evidence/chatgpt-client/CGC-S1-03-CHIAP04-QUALIFICATION-2026-08-22.md`
-- **Change record**: `coordination/itil/cab-decisions/chg-a76c0aee-jarvis.json`
-- **chiap04 events**: `worktrees/84354478/tests/fixtures/itil-terminal-legacy/coordination/itil/changes/chg-a76c0aee/events/jarvis@chiap04.jsonl`
+- **Canary testing report**: `docs/evidence/chatgpt-client/canary-testing-report.md`
+- **Card verdict**: `docs/evidence/chatgpt-client/VERDICT.md`
+- **Safe restart procedure**: `docs/evidence/chatgpt-client/safe-restart-procedure.md`
 
 ## Conclusion
 
@@ -167,6 +167,3 @@ The terminal closure regression was caused by memory exhaustion during package i
 **Fix**: No code fix required; add operational guidance for memory management during installation
 **Safe Restart Confirmed**: Yes, existing runbook procedures are correct
 
----
-
-**Evidence Hash**: `$(sha256sum /home/skuser01/.skcapstone/evidence/work/61bc82e3/terminal-closure-regression-root-cause.md | awk '{print $1}')`

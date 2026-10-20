@@ -91,7 +91,7 @@ ps aux | grep -E 'gnome-terminal|vte-spawn' | awk '{print $2, $4, $11}' | sort -
 # Close from GUI: right-click terminal window → Close
 
 # 4. Verify sufficient free memory (recommended: 2GB+)
-free -h | grep '^Mem:' | awk '{if ($4 < 2000000) print "WARNING: Low memory"}'
+free -m | awk '/^Mem:/ {if ($7 < 2048) print "WARNING: Low memory (" $7 " MiB available)"}'
 ```
 
 ### Installation Procedure
@@ -138,14 +138,12 @@ if (Compare-Object $terminalPidsBefore $terminalPidsAfter) {
 }
 ```
 
-### Safe Update Procedure (Windows)
+### Update Procedure (Windows)
 
-```powershell
-# Update WSL packages INSIDE WSL
-wsl -d Ubuntu -- bash -c 'sudo apt update && sudo apt install --only-upgrade chatgpt'
-
-# Restart ChatGPT from Windows using the safe procedure above
-```
+The Windows app is a Microsoft Store package. Update it from the Microsoft Store
+(Library, Get updates), not from inside WSL: the Linux `chatgpt` apt package is a
+different product and does not update the Windows app. Then restart ChatGPT with
+the safe PowerShell procedure above.
 
 ## Rollback Procedure
 
@@ -162,14 +160,11 @@ sudo apt install chatgpt=<previous_version>
 sudo apt install /path/to/chatgpt_<previous_version>_amd64.deb
 ```
 
-### Windows/WSL Rollback
+### Windows Rollback
 
-```powershell
-# Rollback INSIDE WSL
-wsl -d Ubuntu -- bash -c 'sudo apt install chatgpt=<previous_version>'
-
-# Restart ChatGPT using safe PowerShell procedure
-```
+The Store does not offer an in-place rollback. To go back, uninstall the app and
+reinstall the previously approved package version under an approved change
+window, then restart with the safe PowerShell procedure above.
 
 ## Canary Testing Procedure
 
@@ -280,12 +275,11 @@ watch -n 1 'free -h && echo "---" && ps aux | grep -E "chatgpt|gnome-terminal" |
 
 ## References
 
-- Root cause analysis: `evidence/work/61bc82e3/terminal-closure-regression-root-cause.md`
+- Root cause analysis: `docs/evidence/chatgpt-client/terminal-closure-regression-root-cause.md`
 - Main runbook: `docs/runbooks/chatgpt-codex-sk-client.md`
-- chiap04 qualification: `docs/evidence/chatgpt-client/CGC-S1-03-CHIAP04-QUALIFICATION-2026-08-22.md`
+- Card verdict: `docs/evidence/chatgpt-client/VERDICT.md`
 
 ---
 
 **Document Version**: 1.0
 **Last Updated**: 2026-08-28
-**Evidence Hash**: $(sha256sum /home/skuser01/.skcapstone/evidence/work/61bc82e3/safe-restart-procedure.md | awk '{print $1}')

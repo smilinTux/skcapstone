@@ -265,7 +265,7 @@ ps aux | grep -E 'gnome-terminal|vte-spawn' | awk '{print $2, $4, $11}' | sort -
 
 If available memory is less than 2GB, close non-essential terminal windows
 from the GUI before proceeding. This prevents OOM killer events during
-package installation. See [section 8.1](#81-restart-only-the-windows-app) for
+package installation. See [section 8.2](#82-restart-the-linux-app-and-oom-root-cause) for
 details on the root cause analysis.
 
 Download the matching package from the official OpenAI page. For Ubuntu or
@@ -708,7 +708,7 @@ if (Compare-Object $terminalPidsBefore $terminalPidsAfter) {
 }
 ```
 
-#### Linux safe restart
+### 8.2 Restart the Linux app and OOM root cause
 
 On Linux, fully quit ChatGPT from its own menu (File → Quit or Ctrl+Q) and
 reopen `chatgpt`. Do not use a broad process pattern that can match
@@ -743,7 +743,7 @@ with high memory usage from multiple terminal sessions (5.7GB peak from
 package itself contains no logic to target or terminate terminals. Full
 analysis: `docs/evidence/chatgpt-client/terminal-closure-regression-root-cause.md`
 
-### 8.2 Dependency-aware SK update
+### 8.3 Dependency-aware SK update
 
 Perform package refreshes under an approved change window. Preserve agent
 state and take the normal SKCapstone backup before an estate-wide update.
@@ -774,7 +774,7 @@ a tested downgrade path; do not describe uninstall/reinstall as rollback. A
 rollback claim requires a separately exercised, version-pinned procedure or an
 explicit finding that the Store channel does not expose the prior version.
 
-### 8.3 Configuration rollback
+### 8.4 Configuration rollback
 
 Restore only the files captured before the change:
 
