@@ -459,7 +459,10 @@ def test_explained_terminal_verdict_resolves_without_review_work(tmp_path, verdi
     assert out["review_work_recommendations"] == []
 
 
-@pytest.mark.parametrize("verdict", ["PASSED", "FAILURE", "BLOCKEDISH", "PASS_FOR_REVIEW", "PASSWORD", "NOT PASS", 1, True])
+@pytest.mark.parametrize(
+    "verdict",
+    ["PASSED", "FAILURE", "BLOCKEDISH", "PASS_FOR_REVIEW", "PASSWORD", "NOT PASS", 1, True],
+)
 def test_malformed_terminal_prefix_fails_closed(tmp_path, verdict):
     _home(tmp_path, "a1b2c3d4", "e5f6a7b8")
     cards = [
