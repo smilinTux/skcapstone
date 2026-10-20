@@ -164,9 +164,7 @@ class TestProviderOutageIsNotADream:
         memory.mkdir(parents=True)
         config = DreamingConfig()
         config.enabled = True
-        engine = DreamingEngine(
-            home=tmp_path, config=config, consciousness_loop=None, agent_name="lumina"
-        )
+        engine = DreamingEngine(home=tmp_path, config=config, consciousness_loop=None)
         monkeypatch.setattr(engine, "is_idle", lambda: True)
         monkeypatch.setattr(engine, "cooldown_remaining", lambda: 0.0)
         monkeypatch.setattr(engine, "_should_force_diversity", lambda: False)
@@ -224,6 +222,8 @@ class TestProviderOutageIsNotADream:
 class TestAnchorSeedsNeverStallDreaming:
     def _engine(self, tmp_path, monkeypatch, agent_env):
         monkeypatch.setenv("SKCAPSTONE_AGENT", agent_env)
+        # Construction now refuses an unresolvable agent; tests that need the
+        # blank-agent state set engine._agent_name after construction.
         return DreamingEngine(home=tmp_path, config=DreamingConfig(), agent_name="lumina")
 
     def test_blank_agent_env_does_not_forward_empty_agent_id(self, tmp_path, monkeypatch):
