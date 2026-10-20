@@ -166,16 +166,34 @@ def test_matching_source_head_is_accepted(tmp_path):
 
 
 def test_private_exclusion_requires_repository_key(tmp_path):
-    result = MODULE.reconcile([pr(SKGIT_REPOSITORY)], [], tmp_path, {"7": "legacy exclusion"})
-    assert result["coverage"]["excluded"] == 0
-    result = MODULE.reconcile(
-        [pr(GITHUB), pr(SKGIT_REPOSITORY)],
-        [],
-        tmp_path,
-        {f"{SKGIT_REPOSITORY}#7": "explicit exclusion"},
-    )
+    # The bare-number legacy map can no longer exclude anything.
+    with pytest.raises(ValueError, match="structured"):
+        MODULE.reconcile([pr(SKGIT_REPOSITORY)], [], tmp_path, {"7": "legacy exclusion"})
+    with pytest.raises(ValueError, match="structured"):
+        MODULE.reconcile(
+            [pr(SKGIT_REPOSITORY)], [], tmp_path, {f"{SKGIT_REPOSITORY}#7": "legacy reason"}
+        )
+    exclusion = {
+        "schema": "skfleet.link-lineage-exclusion/v1",
+        "records": [
+            {
+                "repository": SKGIT_REPOSITORY,
+                "pr": 7,
+                "head_sha": HEAD,
+                "base_sha": "b" * 40,
+                "owner": "link",
+                "reason": "explicit exclusion",
+                "classification": "unmanaged",
+                "source_evidence_sha256": "c" * 64,
+                "expires_at": "2099-01-01T00:00:00+00:00",
+            }
+        ],
+    }
+    result = MODULE.reconcile([pr(GITHUB), pr(SKGIT_REPOSITORY)], [], tmp_path, exclusion)
     assert result["coverage"]["excluded"] == 1
     assert result["coverage"]["unresolved"] == 1
+    excluded = [d for d in result["diagnostics"] if d["classification"] == "excluded"]
+    assert [d["repository"] for d in excluded] == [SKGIT_REPOSITORY]
 
 
 def test_lineage_fetch_uses_same_forge_selector(monkeypatch):
