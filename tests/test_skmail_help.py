@@ -9,14 +9,15 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).parents[1] / "src" / "skcapstone" / "fleet" / "skmail" / "skmail"
+# Redirected to the installed console script by tests/skmail_installation.py.
+SCRIPT = Path(__file__).parents[1] / "scripts" / "fleet" / "skmail"
 
 
 def _run(coord: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["SKMAIL_DIR"] = str(coord)
     return subprocess.run(
-        ["bash", str(SCRIPT), *args], capture_output=True, text=True, env=env, check=False
+        [str(SCRIPT), *args], capture_output=True, text=True, env=env, check=False
     )
 
 
@@ -58,12 +59,21 @@ def test_bad_priority_still_rejected(tmp_path: Path) -> None:
     assert not list((tmp_path / "skmail.d").glob("*.jsonl"))
 
 
-def test_help_flag_as_message_body_is_sent_not_treated_as_help(tmp_path: Path) -> None:
-    """Only the first argument after the command can ask for help, never the body."""
-    result = _run(tmp_path, "send", "alice", "bob", "normal", "re", "--help")
+@pytest.mark.parametrize("text", ["--help", "-h", "--boxdir /etc", "-x foo"])
+def test_dash_prefixed_subject_and_body_are_delivered_not_parsed_as_options(
+    tmp_path: Path, text: str
+) -> None:
+    """Only the first argument after the command can ask for help, never the message.
+
+    Before this change a body or subject starting with "-" was parsed by the writer as
+    an option, nothing was written, and skmail still printed "sent to ...".
+    """
+    result = _run(tmp_path, "send", "alice", "bob", "normal", text, text)
     assert result.returncode == 0, result.stderr
     box = next((tmp_path / "skmail.d").glob("alice@*.jsonl"))
-    assert json.loads(box.read_text().splitlines()[-1])["body"] == "--help"
+    record = json.loads(box.read_text().splitlines()[-1])
+    assert record["body"] == text
+    assert record["re"] == text
 
 
 def test_normal_send_and_tail_unchanged(tmp_path: Path) -> None:
