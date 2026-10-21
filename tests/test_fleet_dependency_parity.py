@@ -82,9 +82,9 @@ def test_ci_installs_with_the_constraints_file():
         text = (ROOT / path).read_text()
         assert "-c deploy/fleet-constraints.txt" in text, path
     for path in (".github/workflows/pytest.yml", ".github/actions/test-env/action.yml"):
-        assert (
-            "skcoord @ git+" not in (ROOT / path).read_text()
-        ), "CI must not overlay an unreleased skcoord; test the version production runs"
+        assert "skcoord @ git+" not in (ROOT / path).read_text(), (
+            "CI must not overlay an unreleased skcoord; test the version production runs"
+        )
 
 
 def _skcoord_imports():
