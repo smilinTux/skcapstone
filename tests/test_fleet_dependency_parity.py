@@ -82,9 +82,9 @@ def test_ci_installs_with_the_constraints_file():
         text = (ROOT / path).read_text()
         assert "-c deploy/fleet-constraints.txt" in text, path
     for path in (".github/workflows/pytest.yml", ".github/actions/test-env/action.yml"):
-        assert "skcoord @ git+" not in (ROOT / path).read_text(), (
-            "CI must not overlay an unreleased skcoord; test the version production runs"
-        )
+        assert (
+            "skcoord @ git+" not in (ROOT / path).read_text()
+        ), "CI must not overlay an unreleased skcoord; test the version production runs"
 
 
 def _skcoord_imports():
@@ -209,9 +209,9 @@ class TestSkwhisperTracked:
         ]
         pin = next((p for p in pins if p.startswith("skwhisper==")), None)
         assert pin, "skwhisper must be pinned in fleet-constraints.txt"
-        assert Version(pin.split("==", 1)[1]) >= Version("0.6.2"), (
-            f"{pin} is below the 0.6.2 every chi host runs: the rollout would downgrade them"
-        )
+        assert Version(pin.split("==", 1)[1]) >= Version(
+            "0.6.2"
+        ), f"{pin} is below the 0.6.2 every chi host runs: the rollout would downgrade them"
 
     def test_skmemory_pin_matches_what_the_fleet_runs(self):
         """The pin is what rollout installs; a stale pin reverts a deployed fix."""
