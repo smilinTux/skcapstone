@@ -17,9 +17,19 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+#: Sovereign packages whose installed version is reported against the index.
+#:
+#: ``skwhisper`` is tracked here even though the index lags badly: every chi host
+#: runs 0.6.2 built from the smilinTux/skwhisper repo while the index still
+#: carries 0.1.0, because that repo has no publish workflow. That is safe to
+#: report because the comparison below is ``installed >= latest``, so a host
+#: AHEAD of the index reads as up to date rather than as needing an "upgrade"
+#: that would silently downgrade it. Omitting it was why a stale subconscious
+#: layer on a node went unnoticed (chiap10 whisper.md was 17 days old, 2026-10-20).
 ECOSYSTEM_PACKAGES = [
     "skmemory",
     "skcapstone",
+    "skwhisper",
     "capauth",
     "sksecurity",
     "skcomms",

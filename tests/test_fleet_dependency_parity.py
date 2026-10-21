@@ -150,3 +150,43 @@ def test_parity_script_runs_by_path_without_package_import():
     assert result.returncode in (0, 3), result.stderr
     if result.returncode == 3:
         assert "DEPENDENCY_DRIFT" in result.stderr
+
+
+class TestSkwhisperTracked:
+    """skwhisper must be reported, and must never be pinned below what hosts run.
+
+    Added 2026-10-20: skwhisper was absent from ECOSYSTEM_PACKAGES, so a node
+    whose subconscious daemon had been off for 17 days reported nothing at all.
+    It is deliberately NOT in fleet-constraints.txt, because the index carries
+    only 0.1.0 while every host runs 0.6.2 from git: a pin would either make
+    resolution impossible or downgrade the fleet.
+    """
+
+    def test_skwhisper_is_tracked_by_version_check(self):
+        from skcapstone.version_check import ECOSYSTEM_PACKAGES
+
+        assert "skwhisper" in ECOSYSTEM_PACKAGES
+
+    def test_skwhisper_is_not_pinned_while_index_lags(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "deploy" / "fleet-constraints.txt").read_text(encoding="utf-8")
+        pins = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        assert not any(p.startswith("skwhisper==") for p in pins), (
+            "skwhisper pinned in fleet-constraints.txt: only do this once 0.6.2+ "
+            "is on the index, or the rollout will downgrade or fail to resolve"
+        )
+        assert "skwhisper" in text, "the reason skwhisper is unpinned must stay documented"
+
+    def test_skmemory_pin_matches_what_the_fleet_runs(self):
+        """The pin is what rollout installs; a stale pin reverts a deployed fix."""
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "deploy" / "fleet-constraints.txt").read_text(encoding="utf-8")
+        assert "skmemory==0.11.67" in text
