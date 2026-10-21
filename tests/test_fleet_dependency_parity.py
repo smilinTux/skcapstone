@@ -19,7 +19,7 @@ from skcapstone.fleet.staged_rollout import _DEPLOY_STEPS, _ROLLBACK_STEPS
 ROOT = Path(__file__).resolve().parents[1]
 CONSTRAINTS = ROOT / "deploy" / "fleet-constraints.txt"
 # skskills is intentionally unpinned: production runs a git build the CI index lacks.
-SK_RUNTIME = ("skcoord", "skmemory", "cloud9")
+SK_RUNTIME = ("skcoord", "skmemory", "cloud9", "skwhisper")
 
 
 def _pins():
@@ -27,8 +27,26 @@ def _pins():
 
 
 def _project_requirements():
+    """Base AND optional dependencies.
+
+    CI and rollout both install with `-c deploy/fleet-constraints.txt` against
+    `.[all,dev]`, so an optional dependency is just as much "what production
+    runs" as a base one. Reading only `project.dependencies` made the constraints
+    file unable to pin an optional dep at all: adding `skwhisper==0.6.2` (which
+    the `consciousness` and `all` extras depend on) failed
+    `test_every_pyproject_sk_dependency_is_constrained` as "a package pyproject
+    does not depend on", which was simply untrue.
+    """
     config = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    return [Requirement(r) for r in config["project"]["dependencies"]]
+    reqs = [Requirement(r) for r in config["project"]["dependencies"]]
+    for extra_reqs in (config["project"].get("optional-dependencies") or {}).values():
+        for raw in extra_reqs:
+            # Skip direct-reference requirements (`pkg @ git+...`); they are not
+            # index-resolvable and are never pinned here.
+            if "@" in raw and "://" in raw:
+                continue
+            reqs.append(Requirement(raw))
+    return reqs
 
 
 def test_constraints_are_exact_pins_for_every_sk_runtime_dependency():
@@ -157,9 +175,14 @@ class TestSkwhisperTracked:
 
     Added 2026-10-20: skwhisper was absent from ECOSYSTEM_PACKAGES, so a node
     whose subconscious daemon had been off for 17 days reported nothing at all.
-    It is deliberately NOT in fleet-constraints.txt, because the index carries
-    only 0.1.0 while every host runs 0.6.2 from git: a pin would either make
-    resolution impossible or downgrade the fleet.
+
+    It was also deliberately UNPINNED at first, because the index carried only
+    0.1.0 while every host ran 0.6.2 from git, so a pin would either have been
+    unresolvable or would have downgraded the fleet. smilinTux/skwhisper#1 added
+    the missing publish workflow and a PyPI Trusted Publisher was configured, so
+    0.6.2 reached the index and the pin now matches what the fleet runs. These
+    tests moved with that: the pin is now REQUIRED, and required to be >= what
+    the hosts run.
     """
 
     def test_skwhisper_is_tracked_by_version_check(self):
@@ -167,8 +190,15 @@ class TestSkwhisperTracked:
 
         assert "skwhisper" in ECOSYSTEM_PACKAGES
 
-    def test_skwhisper_is_not_pinned_while_index_lags(self):
+    def test_skwhisper_is_pinned_to_what_the_fleet_runs(self):
+        """Now that the index has 0.6.2, the pin must exist and must not go backwards.
+
+        A pin below what the hosts run would make the rollout DOWNGRADE every
+        node's subconscious layer, which is the failure this guards against.
+        """
         from pathlib import Path
+
+        from packaging.version import Version
 
         root = Path(__file__).resolve().parents[1]
         text = (root / "deploy" / "fleet-constraints.txt").read_text(encoding="utf-8")
@@ -177,11 +207,11 @@ class TestSkwhisperTracked:
             for line in text.splitlines()
             if line.strip() and not line.strip().startswith("#")
         ]
-        assert not any(p.startswith("skwhisper==") for p in pins), (
-            "skwhisper pinned in fleet-constraints.txt: only do this once 0.6.2+ "
-            "is on the index, or the rollout will downgrade or fail to resolve"
+        pin = next((p for p in pins if p.startswith("skwhisper==")), None)
+        assert pin, "skwhisper must be pinned in fleet-constraints.txt"
+        assert Version(pin.split("==", 1)[1]) >= Version("0.6.2"), (
+            f"{pin} is below the 0.6.2 every chi host runs: the rollout would downgrade them"
         )
-        assert "skwhisper" in text, "the reason skwhisper is unpinned must stay documented"
 
     def test_skmemory_pin_matches_what_the_fleet_runs(self):
         """The pin is what rollout installs; a stale pin reverts a deployed fix."""
@@ -189,4 +219,4 @@ class TestSkwhisperTracked:
 
         root = Path(__file__).resolve().parents[1]
         text = (root / "deploy" / "fleet-constraints.txt").read_text(encoding="utf-8")
-        assert "skmemory==0.11.67" in text
+        assert "skmemory==0.11.68" in text

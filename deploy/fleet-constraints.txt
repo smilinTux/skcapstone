@@ -14,16 +14,17 @@
 # pin makes resolution impossible. Pin skskills here once 0.2.0 is published to
 # the index.
 #
-# skwhisper is deliberately NOT pinned for the same reason: every chi host runs
-# 0.6.2 built from the smilinTux/skwhisper repo (tag v0.6.2), but the index only
-# carries 0.1.0, because that repo has no publish workflow at all. Pinning 0.6.2
-# would make resolution impossible, and pinning 0.1.0 would DOWNGRADE every host.
-# Add the pin once skwhisper publishes 0.6.2+ to the index.
+# skwhisper IS pinned as of 2026-10-20. It could not be until then: the index
+# carried only 0.1.0 while every chi host ran 0.6.2 from git, because that repo
+# had no publish workflow at all. smilinTux/skwhisper#1 added one and a PyPI
+# Trusted Publisher was configured, so 0.6.2 is now on the index and the pin
+# matches what the fleet actually runs.
 #
 # Rules: exact `==` pins only. A pyproject floor must never exceed its pin
 # (tests/test_fleet_dependency_parity.py). To bump, see
 # docs/fleet/DEPLOY-FROM-MAIN.md "Bumping a fleet dependency": the upstream
 # release ships first, then the pin moves in the same PR as the code needing it.
 skcoord==0.1.88
-skmemory==0.11.67
+skmemory==0.11.68
 cloud9==1.2.4
+skwhisper==0.6.2
