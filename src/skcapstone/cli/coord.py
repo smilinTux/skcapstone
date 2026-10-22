@@ -775,6 +775,10 @@ def register_coord_commands(main: click.Group) -> None:
     )
     @click.option("--agent", required=True, help="Audited release actor.")
     @click.option(
+        "--recovery-receipt", type=click.Path(path_type=Path),
+        help="Private operator-confirmed recovery receipt with exact claim and custody hashes.",
+    )
+    @click.option(
         "--abandon-reason",
         default=None,
         help=(
@@ -785,7 +789,9 @@ def register_coord_commands(main: click.Group) -> None:
         ),
     )
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def coord_release_claim(task_id, owner, expected_claim_revision, agent, abandon_reason, home):
+    def coord_release_claim(
+        task_id, owner, expected_claim_revision, agent, abandon_reason, home, recovery_receipt
+    ):
         """Release one exact claim generation without completing the task."""
         import uuid
 
@@ -812,6 +818,14 @@ def register_coord_commands(main: click.Group) -> None:
         board = Board(home_path)
         try:
             with _board_mutation_lock(home_path), card_mutation_lock(home_path, task_id):
+                recovery_fields = {}
+                if recovery_receipt is not None:
+                    from ..claim_recovery import recovery_evidence
+
+                    recovery_fields = recovery_evidence(
+                        recovery_receipt, card=task_id, owner=owner,
+                        revision=expected_claim_revision, actor=agent,
+                    )
                 current_revision = current_claim_precondition(home_path, task_id, owner)
                 current_card = CardStore(home_path).fold(task_id)
                 restore_review = bool(
@@ -853,6 +867,7 @@ def register_coord_commands(main: click.Group) -> None:
                         expected_claim_revision=expected_claim_revision,
                         transition_id=uuid.uuid4().hex,
                         abandon_reason=abandon_reason,
+                        **recovery_fields,
                     )
                     if restore_review:
                         CardStore(home_path).append_event(task_id, "move", agent, column="review")
@@ -866,8 +881,8 @@ def register_coord_commands(main: click.Group) -> None:
                     if owner_projection.current_task == task_id:
                         owner_projection.current_task = None
                     board.save_agent(owner_projection)
-                changed = True
-        except ValueError as exc:
+                changed = current_revision is not None
+        except (ValueError, OSError) as exc:
             raise click.ClickException(str(exc)) from None
         outcome = "Released" if changed else "Already released"
         console.print(f"\n  [green]{outcome} claim on {task_id} owned by {owner}.[/]\n")

@@ -182,6 +182,34 @@ cleanup. Never transfer an existing Jarvis claim by editing owner projections.
 
 ## Step 4: Do the Work
 
+### GitHub governs production changes
+
+Operator direction on 2026-10-03 prohibits hand-installs into chiap08's
+`~/.skenv` site-packages or `~/.skenv/bin` until explicitly lifted. Use a GitHub
+branch, PR to `smilinTux/skcapstone` main, green CI, independent review, merge,
+then normal deployment from main. Older installation cards do not override
+this direction. Preserve installed local-only commits unchanged under GitHub
+`publish/...` branches. Publishing source is not permission to merge or deploy.
+Coordinate overlapping files with the existing lane before integration.
+
+### Preserve a usable continuation
+
+Before executing work, link a private handoff record from the exact card with
+its owner/claim revision, host, native process or unit/invocation handle,
+workspace, source head/tree, evidence directory and next action. Refresh it
+before stopping or compaction. A claim, stale heartbeat, or queued mailbox
+message is not proof of a live worker.
+
+When the operator confirms workers are stopped and directs takeover, record
+that confirmation, preserve partial source/evidence, and recover exact claims
+through the existing native controller. Do not ask for the same authorization
+again or wait indefinitely for replies from stopped workers. Unknown process
+state without such direction remains a reason to gather evidence, not to steal
+a claim. Follow [the stopped-worker recovery examples](docs/fleet/production-pi-workers.md#stopped-worker-recovery).
+
+Never bulk clear claims or silently reuse old execution receipts under a new
+claim generation. Keep producer, reviewer and publisher attribution distinct.
+
 Follow the project conventions:
 - Python 3.11+, PEP 8, type hints, black formatting
 - Pydantic for data models

@@ -173,6 +173,62 @@ unsafe-path refusals still apply. Supporting a path does not qualify a card:
 its exact contract and required checks still need operator qualification,
 independent review and exact-candidate test receipts before completion.
 
+## Stopped-worker recovery
+
+Link a private handoff record to each card before execution. Include exact
+owner/claim revision, host, process handle or native unit/invocation, workspace,
+source head/tree, dirty paths, evidence hashes, completed step and next command.
+Update it before worker shutdown and the second compaction. A private file
+without a card link is not a discoverable handoff.
+
+Classify current execution before acting:
+
+| Evidence | Action |
+| --- | --- |
+| Exact process is live | Poll its handle; observation timeout is not termination. |
+| Exact process is terminal | Preserve source and receipts, then use the native lifecycle. |
+| Operator explicitly confirms workers stopped and authorizes takeover | Record the exact statement and affected claims, preserve custody, and perform revision-fenced recovery. Do not invent a process observation or request the same permission again. |
+| Only stale timestamps, claims or old projections are available | Investigate the launch record. Do not infer termination or keep sending duplicate mail. |
+
+A queued follow-up is not a resumed worker. Verify a recipient handle before
+describing work as running. One notice per surviving card is enough unless
+the blocker or evidence changes. Never count repeated status reports as work.
+
+The operator's explicit stopped-worker direction supplies recovery authority;
+it does not establish product acceptance, release a claim by itself, authorize
+destruction of partial source, or bypass dependencies and independent review.
+Preserve the old workspace, dirty changes, private evidence and successful
+executions. Verify ownership, regular files, no symlinks and private modes
+before linking the hashed custody receipt. Use one card at a time:
+
+```bash
+skcapstone coord show "$card_id" --json
+skcapstone coord link "$card_id" operator_recovery "$receipt_path" --agent "$controller"
+skcapstone coord release-claim "$card_id" --owner "$previous_owner" \
+  --expected-claim-revision "$previous_revision" --agent "$controller" \
+  --abandon-reason error
+skcapstone coord claim "$card_id" --agent "$controller"
+skcapstone coord show "$card_id" --json
+```
+
+Populate variables from fresh canonical state and the verified receipt. Stop
+on each failure or changed owner/revision. `error` is appropriate for interrupted
+work; choose the truthful supported reason. `not-abandoned` means a durable
+finish. If the new claim fails after release, inspect current state before
+retrying and never overwrite a intervening owner. No direct CardStore edits.
+
+The new claim has a new revision. Keep old admissions, review attribution and
+execution receipts under their original generation. Reconcile retained native
+custody before publication or fresh execution; never patch a receipt to make
+it match. If tests passed but publication failed, diagnose the publication
+using the original invocation before deciding a rerun is necessary.
+
+For partial installations, compare actual imported module paths and file
+hashes on every host. Editable installs can differ from wheel locations.
+Keep successful host receipts and apply only the remaining reviewed changes.
+Preserve qualified host-specific guards, including physical memory limits.
+Resume the existing coordinator only after actual runtime qualification.
+
 Keep ownership while review or evidence custody is pending. Release only the
 exact owned claim after verified worker termination and the native lifecycle
 allows it. Do not bulk rename Jarvis-owned cards: audit each current claim,

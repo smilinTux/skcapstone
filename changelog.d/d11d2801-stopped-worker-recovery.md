@@ -1,0 +1,1 @@
+- Add optional exact-claim operator recovery receipts to `coord release-claim`. Validate stopped-worker confirmation and private hashed custody before mutation, retain receipt attribution in the release event, and report replay as already released. Document durable handoffs and recovery without blind retries.
