@@ -16,12 +16,20 @@
 # agents on the SAME host can still share one writer file.
 #
 #   skmail send <from> <to> <priority> <re> <body...>
-#   skmail read <me>          unread for me, oldest first, capped at ~8 KiB
-#                             (SKMAIL_READ_MAX_BYTES); says how many remain
+#   skmail read <me>          unread ACTIONABLE mail (urgent+normal), oldest
+#                             first, capped at ~8 KiB (SKMAIL_READ_MAX_BYTES);
+#                             says how many remain. `fyi` is hidden here: see
+#                             --fyi / --include-fyi.
 #   skmail read <me> --summary    counts by sender and subject (does not arm ack)
 #   skmail read <me> --urgent     urgent only (does not arm ack)
+#   skmail read <me> --fyi        fyi only (does not arm ack)
+#   skmail read <me> --include-fyi  every priority, as read used to behave
 #   skmail read <me> --limit N    at most N messages;  --all  no cap
 #   skmail ack  <me>          mark read ONLY what the last plain read showed
+#                             ALWAYS do this once you have acted on the mail.
+#                             Reading does not mark anything read, by design, so
+#                             a read you never ack leaves the mail unread for
+#                             ever and the next reader inherits the pile.
 #   skmail ack  <me> --before <iso>   deliberately skip a backlog (logged)
 #   skmail ack  <me> --all    mark everything addressed to you as read
 #   skmail tail [n]           recent traffic, any peer
@@ -384,7 +392,38 @@ if flag("--summary"):
     for re_, c in Counter(r["re"] for _, r in unread).most_common(15): print("  %5d  %s" % (c, re_[:90]))
     print("(summary only: this view does not arm ack)")
     raise SystemExit(0)
-view = [(stamp, r) for stamp, r in unread if r["priority"] == "urgent"] if flag("--urgent") else unread
+# PRIORITY FILTER (2026-10-22). `fyi` exists precisely for traffic nobody has to
+# act on, but read showed it anyway, so presence telemetry drowned real mail:
+# the lumina inbox was 506 unread of which 496 were SEAT-HELLO lifecycle pings
+# (206 from `link` alone) and the three messages that mattered sat behind them,
+# unreachable past the 8 KiB cap. Nothing reads a SEAT-HELLO; it is write-only.
+# So the default view is the ACTIONABLE classes, and `(N new)` counts those,
+# which also stops every seat reporting hundreds of phantom new messages through
+# seat_mail.poll_mail(). The fyi records are still kept (this log is append-only
+# and they are real history) and still readable via --fyi / --include-fyi.
+#
+# Hiding them does NOT strand them: the read cursor is a TIMESTAMP, so acking
+# through a newer actionable message implicitly clears older fyi behind it.
+if flag("--urgent"):
+    view = [(stamp, r) for stamp, r in unread if r["priority"] == "urgent"]
+elif flag("--fyi"):
+    view = [(stamp, r) for stamp, r in unread if r["priority"] == "fyi"]
+elif flag("--include-fyi"):
+    view = unread
+else:
+    # Legacy presence telemetry is suppressed by SUBJECT as well as priority.
+    # The 496 SEAT-HELLO records already in the log were written as `normal`
+    # before the sender was corrected, and this log is append-only by design, so
+    # they can never be re-classified. Matching the subject is the only way to
+    # clear a backlog that already exists. Future ones arrive as `fyi` and are
+    # caught by the priority rule above; this clause ages out on its own.
+    view = [
+        (stamp, r)
+        for stamp, r in unread
+        if r["priority"] != "fyi" and not str(r.get("re") or "").startswith("SEAT-HELLO-")
+    ]
+# Counts reported below follow the chosen view, not the raw backlog.
+unread_shown_class = view
 limit = int(opt("--limit")) if opt("--limit") and opt("--limit").isdigit() else None
 maxb = None if flag("--all") else int(os.environ.get("SKM_MAXB", "8192"))
 out, used, shown = [], 0, []
@@ -397,16 +436,30 @@ for i, (stamp, record) in enumerate(view):
     out.append(block); used += len(block.encode()); shown.append((stamp, record))
 for block in out: print(block)
 rest = len(view) - len(shown)
-if flag("--urgent") or flag("--summary"):
-    print("(%d urgent shown, %d more urgent, %d unread in total; filtered view, does not arm ack)" % (len(shown), rest, len(unread)))
+if flag("--urgent") or flag("--fyi") or flag("--summary"):
+    label = "urgent" if flag("--urgent") else "fyi"
+    print("(%d %s shown, %d more %s, %d unread in total; filtered view, does not arm ack)" % (len(shown), label, rest, label, len(unread)))
 elif shown:
     open(shown_path, "w", encoding="utf-8").write(shown[-1][1]["ts"])
+    # ALWAYS tell the reader to ack, not only when a backlog remains. This hint
+    # used to be inside `if rest:`, so a read that showed the whole inbox (the
+    # normal case for a healthy mailbox) printed no instruction at all, and the
+    # cursor never advanced. That is why nothing was ever acked by anyone: the
+    # tool only asked in the one case where the job was NOT finished. Mail then
+    # accumulated until the backlog itself became the problem.
     if rest:
-        print("(%d shown, %d more unread: act on these, skmail ack %s, then skmail read %s again)" % (len(shown), rest, me, me))
+        print("(%d shown, %d more unread: act on these, then `skmail ack %s` and `skmail read %s` again)"
+              % (len(shown), rest, me, me))
+    else:
+        print("(%d shown, that is all of it: act on these, then `skmail ack %s` to mark them read)"
+              % (len(shown), me))
     # Always end with "(N new)", N = TOTAL unread. seat_mail.py parses exactly this
     # line with a regex anchored at line end, so any other final line would make
     # every seat silently report zero new mail.
-    print("(%d new)" % len(unread))
+    # Same format: seat_mail._NEW_COUNT is anchored at line end on "(N new)",
+    # so the shape must not change. N is now the ACTIONABLE unread count, which
+    # is what a seat should react to.
+    print("(%d new)" % len(unread_shown_class))
 else:
     try: os.remove(shown_path)
     except OSError: pass

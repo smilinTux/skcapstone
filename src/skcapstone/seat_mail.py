@@ -105,7 +105,15 @@ def startup_hello(home: Path, seat: str, *, host: str | None = None) -> bool:
                 "send",
                 seat,
                 "all",
-                "normal",
+                # `fyi`, not `normal`: this is presence telemetry that nothing
+                # reads. Sent as `normal` it drowned real mail, because every
+                # seat start broadcasts one to `all` forever in an append-only
+                # log. One inbox held 506 unread of which 496 were these (206
+                # from a single seat), and the messages that mattered sat behind
+                # them past the 8 KiB read cap. `fyi` is the priority this was
+                # always meant to use, and `skmail read` now hides it by default
+                # while keeping it available via --fyi.
+                "fyi",
                 f"SEAT-HELLO-{seat}",
                 f"seat={seat} host={local_host} lifecycle_presence=started mailbox_poll=enabled",
             ]
