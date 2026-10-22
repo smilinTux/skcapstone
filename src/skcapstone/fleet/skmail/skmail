@@ -26,6 +26,10 @@
 #   skmail read <me> --include-fyi  every priority, as read used to behave
 #   skmail read <me> --limit N    at most N messages;  --all  no cap
 #   skmail ack  <me>          mark read ONLY what the last plain read showed
+#                             ALWAYS do this once you have acted on the mail.
+#                             Reading does not mark anything read, by design, so
+#                             a read you never ack leaves the mail unread for
+#                             ever and the next reader inherits the pile.
 #   skmail ack  <me> --before <iso>   deliberately skip a backlog (logged)
 #   skmail ack  <me> --all    mark everything addressed to you as read
 #   skmail tail [n]           recent traffic, any peer
@@ -437,8 +441,18 @@ if flag("--urgent") or flag("--fyi") or flag("--summary"):
     print("(%d %s shown, %d more %s, %d unread in total; filtered view, does not arm ack)" % (len(shown), label, rest, label, len(unread)))
 elif shown:
     open(shown_path, "w", encoding="utf-8").write(shown[-1][1]["ts"])
+    # ALWAYS tell the reader to ack, not only when a backlog remains. This hint
+    # used to be inside `if rest:`, so a read that showed the whole inbox (the
+    # normal case for a healthy mailbox) printed no instruction at all, and the
+    # cursor never advanced. That is why nothing was ever acked by anyone: the
+    # tool only asked in the one case where the job was NOT finished. Mail then
+    # accumulated until the backlog itself became the problem.
     if rest:
-        print("(%d shown, %d more unread: act on these, skmail ack %s, then skmail read %s again)" % (len(shown), rest, me, me))
+        print("(%d shown, %d more unread: act on these, then `skmail ack %s` and `skmail read %s` again)"
+              % (len(shown), rest, me, me))
+    else:
+        print("(%d shown, that is all of it: act on these, then `skmail ack %s` to mark them read)"
+              % (len(shown), me))
     # Always end with "(N new)", N = TOTAL unread. seat_mail.py parses exactly this
     # line with a regex anchored at line end, so any other final line would make
     # every seat silently report zero new mail.

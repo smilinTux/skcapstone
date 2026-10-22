@@ -124,3 +124,25 @@ def test_seat_hello_is_sent_as_fyi_not_normal() -> None:
     body = source[source.index("def startup_hello") : source.index("def poll_mail")]
     assert '"fyi"' in body, "SEAT-HELLO must be sent at fyi priority"
     assert '"normal"' not in body, "SEAT-HELLO must no longer be sent at normal priority"
+
+
+def test_read_always_tells_you_to_ack(tmp_path: Path) -> None:
+    """The reason nothing was ever acked by anyone.
+
+    The ack hint used to live inside `if rest:`, so a read that showed the whole
+    inbox printed no instruction at all. The tool only asked in the one case
+    where the job was not finished, so mail accumulated until the backlog itself
+    became the problem.
+    """
+    out = _read(tmp_path, "lumina", [_rec(REAL, "one real message")])
+    assert "skmail ack lumina" in out, "a read that showed everything must still ask for an ack"
+    assert out.rstrip().endswith("(1 new)"), "the parsed count line must stay last"
+
+
+def test_read_with_a_backlog_still_says_read_again(tmp_path: Path) -> None:
+    records = [
+        _rec(f"2026-10-22T0{h}:00:00+00:00", f"message {h}" * 400) for h in range(1, 9)
+    ]
+    out = _read(tmp_path, "lumina", records)
+    assert "more unread" in out and "skmail ack lumina" in out
+    assert "read lumina" in out
