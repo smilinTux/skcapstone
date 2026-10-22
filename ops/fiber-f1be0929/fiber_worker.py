@@ -17,6 +17,7 @@ import urllib.parse
 from fiber_admission import Refused, card_fingerprint, read_claim, prepare_worktree, placement_allowed
 import fiber_sandbox
 import fiber_test_environment
+import fiber_bundle
 from fiber_gateway_bridge import gateway_socket
 
 ROUTES = {'deepseek': ('skgw-deepseek', 'deepseek-flash'),
@@ -51,15 +52,12 @@ def validate(request):
     if job.get('host') != 'auto' and not placement_allowed(job, job.get('host')):
         raise Refused('stage-placement')
     fiber_test_environment.select(job)
+    fiber_bundle.select(job)
     return job, receipt
 
 
-def source_binding(row):
-    """Normalize the existing metadata/link contract across installed versions.
-
-    Older node libraries read metadata only. Never discard conflicting links
-    to make that older parser accept a different source.
-    """
+def source_binding(row, *, review=False):
+    """Resolve exact source without discarding conflicting metadata or links."""
     from skcapstone.fleet.builder_dispatch import _source
     binding = {}
     for key in ('repository', 'base_ref', 'base_revision'):
@@ -76,7 +74,24 @@ def source_binding(row):
         if len(set(values)) > 1:
             raise Refused('conflicting-source-binding')
         binding[key] = values[0] if values else ''
-    return _source({'meta': binding})
+    original = _source({'meta': binding})
+    if not review:
+        return original
+    # Preserve the historical base in CardStore; review its typed candidate.
+    patterns = {'link_head_revision': '[0-9a-f]{40}', 'link_source_card': '[0-9a-f]{8}',
+                'producer_identity': '[a-z][a-z0-9-]{0,95}',
+                'candidate_evidence_sha256': '[0-9a-f]{64}'}
+    pins = {}
+    for key, pattern in patterns.items():
+        values = [(row.get(container) or {})[key] for container in ('meta', 'links')
+                  if key in (row.get(container) or {})]
+        if not values or any(not isinstance(value, str) or not re.fullmatch(pattern, value)
+                             for value in values):
+            raise Refused('invalid-review-binding:' + key)
+        if len(set(values)) != 1:
+            raise Refused('conflicting-review-binding:' + key)
+        pins[key] = values[0]
+    return original[0], original[1], pins['link_head_revision']
 
 
 def verify_source(row, job):
@@ -85,6 +100,12 @@ def verify_source(row, job):
     if 'work_class' in job and re.findall(r'\[(S|M|L|XL)\]', row.get('title', '')) != [job['work_class']]:
         raise Refused('work-class-mismatch')
     labels = set(row.get('labels') or [])
+    if job.get('stage') not in {'implementation', 'review', 'tests'}:
+        raise Refused('invalid-stage')
+    review_marked = ('review' in labels or re.search(r'\[(?:RE-?REVIEW|REVIEW)\]', row.get('title', ''), re.I)
+                     or any('link_head_revision' in (row.get(key) or {}) for key in ('meta', 'links')))
+    if review_marked and job['stage'] != 'review':
+        raise Refused('review-stage-required')
     if 'source-only' not in labels or labels.intersection({'local-only', 'no-egress', 'sovereign-only', 'qwen-only'}):
         raise Refused('source-lane-policy')
     if (row.get('meta') or {}).get('matter_id'):
@@ -92,8 +113,9 @@ def verify_source(row, job):
     for label, family in [('codex-only', 'codex'), ('glm-only', 'zai')]:
         if label in labels and job['provider'] != family:
             raise Refused('provider-affinity')
-    if source_binding(row) != (job['repository'], job['base_ref'], job['base_revision']):
+    if source_binding(row, review=job.get('stage') == 'review') != (job['repository'], job['base_ref'], job['base_revision']):
         raise Refused('source-binding-changed')
+    fiber_bundle.verify_binding(row, job)
 
 
 def check_catalog(job):
@@ -107,12 +129,7 @@ def check_catalog(job):
 
 
 def verify_claim(request, *, authority_only=False, wait_seconds=0):
-    """Wait only for replica visibility; authority revocation fails immediately.
-
-    The start adapter may validate authority alone before creating a tracked
-    waiting service. Actual execution always requires both copies to agree
-    before workspace creation or model work. No replicated state is written.
-    """
+    """Start checks authority; execution checks both. Only replica reads wait."""
     job = request['job']
     claim = request.get('claim', {})
     revision = claim.get('revision')
@@ -121,7 +138,6 @@ def verify_claim(request, *, authority_only=False, wait_seconds=0):
     if type(wait_seconds) is not int or not 0 <= wait_seconds <= 300:
         raise Refused('invalid-claim-wait')
     deadline = time.monotonic() + wait_seconds
-
     def authority_read(argv, **kwargs):
         kwargs['timeout'] = min(kwargs.get('timeout', 10), 10)
         command = ['env', 'SKAGENT=' + job['owner'], 'SKCAPSTONE_AGENT=' + job['owner'],
@@ -279,12 +295,7 @@ def read_unit(receipt):
 
 
 def environment_plan(job):
-    """Qualify a requested environment before any claim or workspace action.
-
-    Absent selector keeps the current stdlib-only path. A present selector
-    must resolve to a ready operator artifact bound to the exact repository;
-    failure refuses here, before model execution or claim mutation.
-    """
+    """Require a ready repository-bound artifact, or stdlib when unselected."""
     selector = fiber_test_environment.select(job)
     if selector is None:
         return None
@@ -373,6 +384,7 @@ def execute(request):
             git('init', '--bare', '--quiet', str(cache))
             git('-C', str(cache), 'remote', 'add', 'origin', job['repository'])
         verify_cache_origin(cache, job['repository'], git)
+        fiber_bundle.import_source(cache, job, DATA, git, ensure_commit)
         ensure_commit(cache, job['base_revision'], git)
         fiber_sandbox.private_clone(cache, workspace, 'work/fiber-' + job['card'] + '-' + receipt['token'][:8], job['base_revision'], git)
     runtime = workspace / '.fiber-runtime'
@@ -382,25 +394,7 @@ def execute(request):
     git('-C', str(workspace), 'config', 'user.name', job['owner'])
     git('-C', str(workspace), 'config', 'user.email', job['owner'] + '@source.invalid')
     (workspace / '.git/info/exclude').write_text('.fiber-runtime/\n')
-    prompt = (
-        f"Work only card {job['card']} as {job['owner']}. The dispatcher already claimed it. "
-        f"The trusted controller verified owner and exact revision {row['meta']['_claim_revision']}. "
-        "Read the immutable controller-provided card snapshot /run/fleet/card.json. "
-        "Read AGENTS.md, the assigned TDD, current criteria and dependencies before task actions. "
-        "If any binding or claim differs, STOP and report BLOCKED. "
-        "After every file write run ls. After any authorized commit run git rev-parse HEAD and echo its hash. "
-        "Stop immediately if tool output looks wrong. After the second compaction write .handoff.md, finish the current step and stop. "
-        "No push, application deployment, external legal actions, or HammerTime Inbox access. Commit only if the card explicitly requests it. "
-        "Use only /work. You have no host privileges, SSH, Docker socket, direct provider access or coordination credentials. "
-        "Do not attempt to obtain them. If dependencies or tools are unavailable, report BLOCKED, not a workaround. "
-        "Tests must use task-owned databases and outputs, port 0 or an isolated dynamic port, and simulation mode. "
-        "Use exact artifact paths in card links; never search the entire filesystem or unrelated workspaces. "
-        "Never touch another task's processes, claims, workspaces, databases, or ports. "
-        f"Write exact completion evidence to docs/evidence/agents/{job['card']}/COMPLETION-EVIDENCE.md. "
-        "Board operations are performed only by the trusted controller outside the sandbox. "
-        "Write your proposed outcome and evidence in the worktree; the controller records execution, not acceptance. "
-        "Never mark a producer card complete on its own review or fabricate checks. Report files, exact tests/results, limitations, and verified artifacts, then stop."
-    )
+    prompt = fiber_sandbox.task_prompt(job, row)
     command = [fiber_sandbox.NODE, fiber_sandbox.PI_CLI,
                '--no-approve', '--no-extensions', '--name', job['owner'],
                '--provider', job['pi_provider'], '--model', job['model'], '--thinking', 'off',

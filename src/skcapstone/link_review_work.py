@@ -244,6 +244,23 @@ def reconcile_review_work(
         reviewer = dict(item["reviewer_candidates"][0])
         reviewer_identity = str(reviewer["identity"])
         source_owner = str(item["source_owner"])
+        # The guarded dispatcher supplies these exact native outcome bindings.
+        # Legacy Link manifests retain their existing identity and behavior.
+        guarded = bool(item.get("source_revision"))
+        if guarded:
+            expected_meta.update(
+                {
+                    key: item[key]
+                    for key in (
+                        "source_revision",
+                        "producer_identity",
+                        "candidate_evidence_sha256",
+                        "candidate_path",
+                        "candidate_tree",
+                        "candidate_ref",
+                    )
+                }
+            )
         if created:
             try:
                 store.create(
@@ -256,13 +273,35 @@ def reconcile_review_work(
                         description=(
                             f"Producer identity: {source_owner}. "
                             f"Candidate evidence sha256={evidence_sha256}."
+                            + (
+                                f" Candidate evidence: {item['candidate_path']}. "
+                                f"Candidate commit: {head_revision}. "
+                                f"Candidate tree: {item['candidate_tree']}. "
+                                f"Candidate ref: {item['candidate_ref']}. "
+                                "In the checked-out source, verify the same report bytes at "
+                                f"docs/evidence/agents/{source_card}/COMPLETION-EVIDENCE.md. "
+                                "Review only; do not implement or modify the producer's source. "
+                                "Local-only review-evidence commit permitted; no push. "
+                                "Original producer contract (review context, not implementation "
+                                f"authority): {source.description}"
+                                if guarded
+                                else ""
+                            )
                         ),
                         created_by="link",
                         created_at=source.created_at,
                         acceptance_criteria=[
                             f"Review source card {source_card} at exact head {head_revision}.",
                             "Return a terminal PASS, FAIL, or BLOCKED verdict with evidence.",
-                        ],
+                        ]
+                        + (
+                            [
+                                f"Verify producer criterion: {criterion}"
+                                for criterion in source.acceptance_criteria
+                            ]
+                            if guarded
+                            else []
+                        ),
                         initial_labels=[
                             "review",
                             "seat-seraph",
@@ -279,6 +318,9 @@ def reconcile_review_work(
             created_card = store.fold(card_id)
             if created_card is not None:
                 _cards_by_key[key] = [created_card]
+        if created or (guarded and existing.owner is None and existing.status.value == "backlog"):
+            # A lost create acknowledgement must finish the same initial events,
+            # never mint another card or move an already claimed review backward.
             store.append_event(
                 card_id,
                 "link",

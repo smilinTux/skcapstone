@@ -28,8 +28,32 @@ def job(card='1234abcd'):
 
 
 class AdmissionTest(unittest.TestCase):
-    def test_current_instruction_limit_is_nine_not_provider_entitlement(self):
-        self.assertEqual(module.ESTATE_CAP, 9)
+    def test_latest_human_mandated_limit_is_twelve(self):
+        self.assertEqual(module.ESTATE_CAP, 12)
+        self.assertEqual(module.SPACING, 75)
+
+    def test_twelfth_admitted_thirteenth_refused_including_reservation(self):
+        truth = snapshot()
+        truth['workers'] = [{'key': f'legacy:{i}', 'host': 'chiap08',
+                             'provider': 'codex'} for i in range(11)]
+        task = dict(job(), host='auto')
+        self.assertEqual(module.select_host(self.db, task, truth, now=1000), 'chiap02')
+        self.reserve(truth=truth)
+        truth['observed_at'] = 1075
+        with self.assertRaisesRegex(module.Refused, 'estate-capacity'):
+            self.reserve(job('1234abce'), truth, now=1075)
+        with self.assertRaisesRegex(module.Refused, 'estate-capacity'):
+            module.select_host(self.db, task, truth, now=1075)
+
+    def test_provider_caps_and_unknown_occupancy_still_refuse_below_estate_cap(self):
+        for provider, cap in [('deepseek', 3), ('zai', 5), ('codex', 2)]:
+            truth = snapshot()
+            truth['providers'][provider] = {'ready': True, 'cap': cap}
+            truth['workers'] = [{'key': f'provider:{i}', 'host': 'chiap08',
+                                 'provider': provider} for i in range(cap - 1)]
+            truth['workers'].append({'key': 'unknown', 'host': 'chiap08', 'provider': None})
+            with self.subTest(provider=provider), self.assertRaisesRegex(module.Refused, 'provider-capacity'):
+                self.reserve(dict(job(), provider=provider), truth)
 
     def test_placement_spreads_work_and_counts_pending_reservations(self):
         truth = snapshot()

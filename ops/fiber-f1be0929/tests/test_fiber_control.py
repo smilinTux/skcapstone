@@ -14,6 +14,30 @@ from test_fiber_admission import job, snapshot
 
 
 class ControlTest(unittest.TestCase):
+    def test_describe_review_binds_candidate_and_worker_rechecks_same_source(self):
+        row = {'id': '1234abcd', 'title': '[S][REVIEW] fixture', 'labels': ['source-only'],
+               'meta': {'repository': 'https://example.invalid/repo.git', 'base_ref': 'main',
+                        'base_revision': 'a' * 40, 'link_head_revision': 'b' * 40,
+                        'link_source_card': 'abcdef12', 'producer_identity': 'pi-producer',
+                        'candidate_evidence_sha256': 'c' * 64}}
+        with patch.object(control, 'cards', return_value={'1234abcd': row}):
+            task = control.describe('1234abcd', 'review', 'zai', producer_family='deepseek')
+        self.assertEqual(task['base_revision'], 'b' * 40)
+        control.verify_source(row, task)
+        row['meta']['link_head_revision'] = 'd' * 40
+        with self.assertRaisesRegex(Refused, 'task-contract-changed'):
+            control.verify_source(row, task)
+        for variant in ('missing', 'conflicting'):
+            row['meta']['link_head_revision'] = 'b' * 40
+            row['links'] = {}
+            if variant == 'missing':
+                del row['meta']['link_head_revision']
+            else:
+                row['links']['link_head_revision'] = 'c' * 40
+            with patch.object(control, 'cards', return_value={'1234abcd': row}), \
+                 self.subTest(variant=variant), self.assertRaises(Refused):
+                control.describe('1234abcd', 'review', 'zai', producer_family='deepseek')
+
     def test_chiwk12_execution_uses_the_migrated_worker_account(self):
         request = {'job': dict(job(), host='chiwk12')}
         with patch.object(control.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '{}', '')) as run:
@@ -182,8 +206,9 @@ class ControlTest(unittest.TestCase):
         row = {'owner': 'fiber-test', 'meta': {'_claim_revision': 'a' * 32}}
         with patch.object(control.socket, 'gethostname', return_value='chiap08'), \
              patch.object(control, 'claim_for_worker', return_value=row) as claim, \
-             patch.object(control, 'verify_source'), patch.object(control, 'remote', return_value={'state': 'running'}) as remote:
+             patch.object(control, 'verify_refill_request') as verify, patch.object(control, 'remote', return_value={'state': 'running'}) as remote:
             control.launch_claimed(task, {'token': 'b' * 32})
+            verify.assert_called_once_with(row, task)
             claim.assert_called_once_with(task['card'], task['owner'])
             self.assertEqual(remote.call_args.args[1]['claim'],
                              {'authority': 'chiap08', 'owner': 'fiber-test', 'revision': 'a' * 32})
@@ -193,9 +218,38 @@ class ControlTest(unittest.TestCase):
                 control.launch_claimed(task, {'token': 'c' * 32})
             remote.assert_not_called()
 
+    def test_post_claim_verification_failure_never_launches(self):
+        with patch.object(control.socket, 'gethostname', return_value='chiap08'), \
+             patch.object(control, 'claim_for_worker', return_value={}), \
+             patch.object(control, 'verify_refill_request', side_effect=Refused('lifecycle-source-superseded')), \
+             patch.object(control, 'remote') as remote:
+            with self.assertRaisesRegex(Refused, 'source-superseded'):
+                control.launch_claimed(dict(job(), owner='fiber-test'), {'token': 'b' * 32})
+            remote.assert_not_called()
+
+    def test_candidate_and_bundle_transports_use_only_fixed_programs(self):
+        for mode, program in [('candidate', 'fiber_candidate.py --bundle'), ('bundle', 'fiber_bundle.py')]:
+            request = {'job': dict(job(), host='ziowk01'), 'bundle': {'sha256': 'a' * 64, 'bundle_b64': 'YWJj'}}
+            with patch.object(control.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '{}', '')) as run:
+                control.remote(mode, request)
+            self.assertTrue(run.call_args.args[0][-1].endswith('/.local/lib/skfleet-fiber/' + program))
+            self.assertEqual(json.loads(run.call_args.kwargs['input']), request['bundle'] if mode == 'bundle' else request)
+
+    def test_bundle_transfer_requires_exact_storage_acknowledgement(self):
+        task = dict(job(), source_bundle={'sha256': 'a' * 64})
+        with patch.object(control.fiber_bundle, 'select', return_value=task['source_bundle']), \
+             patch.object(control.fiber_bundle, '_directory'), \
+             patch.object(control.fiber_bundle, 'read_blob', return_value=b'abc'), \
+             patch.object(control, 'remote', return_value={'state': 'stored', 'sha256': 'a' * 64, 'bytes': 3}) as remote:
+            control.stage_bundle(task)
+            self.assertEqual(remote.call_args.args[1]['bundle']['bundle_b64'], 'YWJj')
+            remote.return_value['bytes'] = 2
+            with self.assertRaisesRegex(Refused, 'transfer-unverified'):
+                control.stage_bundle(task)
+
     def test_full_estate_does_not_probe_models(self):
         truth = snapshot()
-        truth['workers'] = [{'key': str(i)} for i in range(12)]
+        truth['workers'] = [{'key': str(i)} for i in range(control.ESTATE_CAP)]
         with patch.object(control, 'collect', return_value=truth), patch.object(control, 'qualify_route') as probe:
             with self.assertRaisesRegex(Refused, 'estate-capacity'):
                 control.observation(job())

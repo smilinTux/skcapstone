@@ -16,7 +16,9 @@ import sqlite3
 import subprocess
 import uuid
 
-ESTATE_CAP = 9
+# Restored to the latest human-mandated ceiling; preserve later placement fixes.
+# Temporary canary 2c5ac908 is not authority to exceed this production limit.
+ESTATE_CAP = 12
 SPACING = 75
 PLACEMENT = {'implementation': ('chiap02', 2), 'review': ('chiap03', 1),
              'tests': ('chiap04', 1)}
@@ -39,6 +41,8 @@ def card_fingerprint(row):
     material['dependencies'] = sorted(row.get('dependencies') or [])
     material['meta'] = {key: value for key, value in (row.get('meta') or {}).items() if not key.startswith('_claim')}
     material['links'] = {key: (row.get('links') or {}).get(key) for key in ['repository', 'base_ref', 'base_revision', 'assigned_tdd']}
+    if 'tdd_custody' in (row.get('links') or {}):
+        material['links']['tdd_custody'] = row['links']['tdd_custody']
     return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 

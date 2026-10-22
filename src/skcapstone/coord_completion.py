@@ -246,7 +246,76 @@ def _commit_evidence_problem(home: Path, task_id: str) -> str | None:
     return None
 
 
-def complete_coord_task(home: Path, agent_name: str, task_id: str):
+def owned_revision_guard(home: Path, agent_name: str, task_id: str, revision: str, claim: str):
+    """Return a native completion precondition for one exact owned generation."""
+    from .card_store import CardStore
+    from .seraph_review_cardstore import LiveCardStoreGateway
+
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{64}", revision):
+        raise ValueError("guarded completion source revision invalid")
+    if not isinstance(claim, str) or not re.fullmatch(r"[0-9a-f]{32}", claim):
+        raise ValueError("guarded completion claim revision invalid")
+
+    def verify():
+        """Refuse even an already-completed card; caller reconciles lost replies."""
+        card = CardStore(home).fold(task_id)
+        if (
+            card is None
+            or card.owner != agent_name
+            or card.meta.get("_claim_revision") != claim
+            or card.meta.get("claim_conflicts")
+            or card.archived
+            or card.status.value not in {"ready", "doing", "review"}
+        ):
+            raise ValueError("guarded completion claim changed")
+        if LiveCardStoreGateway(home).read_card(task_id).revision != revision:
+            raise ValueError("guarded completion source changed")
+
+    return verify
+
+
+def reviewed_source_guard(home, source_id, review_id, revision, stack):
+    """Lock and verify the exact completed review during source completion."""
+    from .card_store import CardStore, card_mutation_lock
+    from .review_verdict import validate_review_completion
+    from .seraph_review_cardstore import LiveCardStoreGateway, _binding
+
+    if source_id == review_id or not re.fullmatch(r"[0-9a-f]{8}", str(review_id)):
+        raise ValueError("guarded completion review identity invalid")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(revision)):
+        raise ValueError("guarded completion review revision invalid")
+
+    def verify():
+        """Called only after Board holds its global and source-card locks."""
+        stack.enter_context(card_mutation_lock(home, review_id))
+        gateway = LiveCardStoreGateway(home)
+        source, review = gateway.read_card(source_id), gateway.read_card(review_id)
+        row = CardStore(home).fold(review_id)
+        if (
+            review.revision != revision
+            or review.status != "done"
+            or review.verdict != "PASS"
+            or row.owner is not None
+            or row.archived
+            or row.meta.get("claim_conflicts")
+            or review.unresolved_review
+            or _binding(row, "link_source_card") != source_id
+            or source.verdict != "PASS"
+            or source.head_sha != review.head_sha
+            or not source.head_sha
+            or not source.candidate_evidence_sha256
+            or source.candidate_evidence_sha256 != review.candidate_evidence_sha256
+            or source.producer_identity != review.producer_identity
+        ):
+            raise ValueError("guarded completion independent review changed")
+        validate_review_completion(review_id, row.title, home)
+
+    return verify
+
+
+def complete_coord_task(
+    home: Path, agent_name: str, task_id: str, *, precondition=None, mutation_precondition=None
+):
     """Validate governed review completion, then perform the board mutation.
 
     A card with outstanding exit_gates is not completed. An await_gates
@@ -278,6 +347,10 @@ def complete_coord_task(home: Path, agent_name: str, task_id: str):
     from .review_verdict import validate_review_completion
 
     home_path = Path(home).expanduser()
+    if mutation_precondition is not None and precondition is None:
+        raise ValueError("guarded completion mutation guard requires ownership guard")
+    if precondition is not None:
+        precondition()
     title = ""
     core = home_path / "cards" / task_id / "core.json"
     if core.exists():
@@ -317,7 +390,23 @@ def complete_coord_task(home: Path, agent_name: str, task_id: str):
             ],
         )
 
-    return Board(home_path).complete_task(agent_name, task_id)
+    if precondition is None:
+        return Board(home_path).complete_task(agent_name, task_id)
+
+    def guarded_mutation():
+        """Repeat exact ownership and existing gates under the native locks."""
+        precondition()
+        if mutation_precondition is not None:
+            mutation_precondition()
+        validate_review_completion(task_id, title, home_path)
+        if outstanding_gates(home_path, task_id) or _commit_evidence_problem(home_path, task_id):
+            raise ValueError("guarded completion gates changed")
+
+    result = Board(home_path).complete_task(agent_name, task_id, precondition=guarded_mutation)
+    completed = CardStore(home_path).fold(task_id)
+    if completed is None or completed.status.value != "done" or completed.owner is not None:
+        raise ValueError("guarded completion native readback failed")
+    return result
 
 
 def move_coord_task(

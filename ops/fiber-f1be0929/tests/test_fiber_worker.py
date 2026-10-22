@@ -225,6 +225,61 @@ class WorkerTest(unittest.TestCase):
         with self.assertRaisesRegex(Refused, 'conflicting-source-binding'):
             worker.source_binding({'meta': conflict, 'links': binding})
 
+    def review_row(self):
+        item = request()['job']
+        return {'title': '[S][REVIEW] exact candidate', 'labels': ['source-only'],
+                'meta': {**{key: item[key] for key in ['repository', 'base_ref', 'base_revision']},
+                         'link_head_revision': 'c' * 40, 'link_source_card': 'abcdef12',
+                         'producer_identity': 'pi-producer', 'candidate_evidence_sha256': 'd' * 64},
+                'links': {}}
+
+    def test_review_uses_candidate_without_mutating_historical_base(self):
+        import copy
+        row = self.review_row()
+        before = copy.deepcopy(row)
+        self.assertEqual(worker.source_binding(row, review=True)[2], 'c' * 40)
+        self.assertEqual(worker.source_binding(row)[2], 'b' * 40)
+        self.assertEqual(row, before)
+        row['links'] = row.pop('meta')
+        self.assertEqual(worker.source_binding(row, review=True)[2], 'c' * 40)
+
+    def test_review_refuses_missing_malformed_and_conflicting_typed_fields(self):
+        for field in ('link_head_revision', 'link_source_card', 'producer_identity', 'candidate_evidence_sha256'):
+            for bad in (None, '', 123, [], 'not a valid pin!'):
+                row = self.review_row()
+                row['meta'][field] = bad
+                with self.subTest(field=field, bad=bad), self.assertRaises(Refused):
+                    worker.source_binding(row, review=True)
+            row = self.review_row()
+            row['links'][field] = {'link_head_revision': 'e' * 40, 'link_source_card': 'abcdef13',
+                                    'producer_identity': 'pi-other', 'candidate_evidence_sha256': 'e' * 64}[field]
+            with self.subTest(field=field), self.assertRaisesRegex(Refused, 'conflicting-review-binding'):
+                worker.source_binding(row, review=True)
+        row = self.review_row()
+        row['links']['base_revision'] = 'a' * 40
+        with self.assertRaisesRegex(Refused, 'conflicting-source-binding'):
+            worker.source_binding(row, review=True)
+
+    def test_review_verification_refuses_old_base_and_preserves_source_lane(self):
+        row = self.review_row()
+        item = dict(request()['job'], stage='review', card_fingerprint=worker.card_fingerprint(row))
+        with self.assertRaisesRegex(Refused, 'source-binding-changed'):
+            worker.verify_source(row, item)
+        item['base_revision'] = 'c' * 40
+        worker.verify_source(row, item)
+        for labels in ([], ['source-only', 'local-only']):
+            row['labels'] = labels
+            item['card_fingerprint'] = worker.card_fingerprint(row)
+            with self.assertRaisesRegex(Refused, 'source-lane-policy'):
+                worker.verify_source(row, item)
+
+    def test_review_cannot_be_admitted_as_implementation_or_without_stage(self):
+        row = self.review_row()
+        for stage in (None, 'implementation', 'tests', 'invalid'):
+            item = dict(request()['job'], stage=stage, card_fingerprint=worker.card_fingerprint(row))
+            with self.subTest(stage=stage), self.assertRaises(Refused):
+                worker.verify_source(row, item)
+
     def test_binding_and_route_validation(self):
         self.assertEqual(worker.validate(request())[0]['card'], '1234abcd')
         for section, field, value in [('receipt', 'token', '../bad'),

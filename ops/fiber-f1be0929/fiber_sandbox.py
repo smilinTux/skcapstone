@@ -141,6 +141,45 @@ def environment_probe(workspace, control, pi_root, test_environment, *, timeout=
     return True
 
 
+def review_prompt(job):
+    """Describe the evidence-only review proposal contract inside the sandbox."""
+    if job['stage'] != 'review':
+        return ''
+    return (
+        f" Also write docs/evidence/agents/{job['card']}/REVIEW-DECISION.json with exactly these fields: "
+        f'{{"schema":"skfleet.review-proposal/v1","card":"{job["card"]}",'
+        f'"source_head":"{job["base_revision"]}","verdict":"PASS|FAIL|BLOCKED",'
+        '"evidence_sha256":"SHA256 of your COMPLETION-EVIDENCE.md bytes"}. '
+        "Choose exactly one verdict. The report must explain findings and exact tests, including any omissions. "
+        f"Do not modify source or tests: your only committed changes may be under docs/evidence/agents/{job['card']}/. "
+        "The JSON is a proposal only; controller verification and native completion gates still apply."
+    )
+
+
+def task_prompt(job, row):
+    """Keep the existing worker boundary plus explicit review-only artifacts."""
+    return (
+        f"Work only card {job['card']} as {job['owner']}. The dispatcher already claimed it. "
+        f"The trusted controller verified owner and exact revision {row['meta']['_claim_revision']}. "
+        f"Your exact workspace source revision is {job['base_revision']}; a review uses its candidate head, not its historical base. "
+        "Read the immutable controller-provided card snapshot /run/fleet/card.json. "
+        "Read AGENTS.md, the assigned TDD, current criteria and dependencies before task actions. "
+        "If any binding or claim differs, STOP and report BLOCKED. "
+        "After every file write run ls. After any authorized commit run git rev-parse HEAD and echo its hash. "
+        "Stop immediately if tool output looks wrong. After the second compaction write .handoff.md, finish the current step and stop. "
+        "No push, application deployment, external legal actions, or HammerTime Inbox access. Commit only if the card explicitly requests it. "
+        "Use only /work. You have no host privileges, SSH, Docker socket, direct provider access or coordination credentials. "
+        "Do not attempt to obtain them. If dependencies or tools are unavailable, report BLOCKED, not a workaround. "
+        "Tests must use task-owned databases and outputs, port 0 or an isolated dynamic port, and simulation mode. "
+        "Use exact artifact paths in card links; never search the entire filesystem or unrelated workspaces. "
+        "Never touch another task's processes, claims, workspaces, databases, or ports. "
+        f"Write exact completion evidence to docs/evidence/agents/{job['card']}/COMPLETION-EVIDENCE.md. "
+        "Board operations are performed only by the trusted controller outside the sandbox. "
+        "Write your proposed outcome and evidence in the worktree; the controller records execution, not acceptance. "
+        "Never mark a producer card complete on its own review or fabricate checks. Report files, exact tests/results, limitations, and verified artifacts, then stop."
+    ) + review_prompt(job)
+
+
 def probe():
     """Require namespaces and actual isolated Pi startup before admission."""
     result = subprocess.run(['/usr/bin/bwrap', '--unshare-all', '--unshare-user', '--disable-userns',

@@ -42,8 +42,30 @@ def footer_provider(text):
     return family if family and provider in {'skgateway', 'skgw-' + family} else None
 
 
+def codex_mode(command_line: bytes) -> str:
+    """Recognize complete maintenance argv; keep unknown input counted."""
+    arguments = command_line.split(b'\0')
+    terminated = bool(command_line) and arguments[-1] == b''
+    if terminated:
+        arguments.pop()
+    if not terminated or arguments[0].rsplit(b'/', 1)[-1] != b'codex':
+        return 'unknown'
+    if len(arguments) == 4 and arguments[1:] == [b'app-server', b'daemon', b'pid-update-loop']:
+        return 'daemon-pid-updater'
+    # Ambiguous maintenance forms must not enter app-server parent deduplication.
+    if b'pid-update-loop' in arguments[:5] or arguments[1:3] == [b'app-server', b'daemon']:
+        return 'unknown'
+    mode = 'agent-cli'
+    for arg in arguments[:5]:
+        if arg in {b'app-server', b'mcp-server', b'exec', b'resume'}:
+            mode = arg.decode()
+    return mode
+
+
 def logical_workers(workers):
-    """Attached native app servers are components, not extra agent sessions."""
+    """Exclude exact maintenance helpers and attached native app servers."""
+    workers = [row for row in workers if not (row['runtime'] == 'codex'
+               and row.get('mode') == 'daemon-pid-updater')]
     codex_pids = {row['pid'] for row in workers if row['runtime'] == 'codex'}
     return [row for row in workers if not (row['runtime'] == 'codex'
             and row.get('mode') == 'app-server' and row.get('parent_pid') in codex_pids)]
@@ -91,9 +113,7 @@ def node_observation():
             mode = 'agent-cli'
             if name == 'codex':
                 # Keep only a recognized command kind, never argv or prompts.
-                for arg in (directory / 'cmdline').read_bytes().split(b'\0')[:5]:
-                    if arg in {b'app-server', b'mcp-server', b'exec', b'resume'}:
-                        mode = arg.decode()
+                mode = codex_mode((directory / 'cmdline').read_bytes())
             key = 'card:' + card if re.fullmatch('[0-9a-f]{8}', card) else f'process:{host}:{directory.name}'
             workers.append({'key': key, 'host': host, 'provider': process_provider(name, identity),
                             'runtime': name, 'mode': mode, 'parent_pid': parent,
