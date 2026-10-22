@@ -78,6 +78,7 @@ FUNCTIONS = {
     "_provisional_candidate",
     "_outcome_scan_rows",
     "_eligible_provisional_reviews",
+    "_production_review_candidate_shape",
     "_production_review_plan",
     "_open_production_review",
     "_authoritative_review_readback",
@@ -95,6 +96,18 @@ CONSTANTS = {
 
 def _namespace(cards: Path, refusals: Path) -> dict[str, object]:
     """Extract the opener seam without executing the fleet launcher."""
+    from skcoord.card_store import CardStore
+
+    def native_state(card_id):
+        card = CardStore(Path(namespace["CARDS"]).parent).fold(card_id)
+        return {}, {
+            "owner": card.owner,
+            "claim_revision": card.meta.get("_claim_revision"),
+            "status": card.status.value,
+            "archived": card.archived,
+            "labels": card.labels,
+        }
+
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
     nodes = []
     for node in tree.body:
@@ -111,6 +124,7 @@ def _namespace(cards: Path, refusals: Path) -> dict[str, object]:
         "os": os,
         "re": re,
         "CARDS": str(cards),
+        "_authoritative_card_state": native_state,
         "datetime": datetime,
         "_REVIEW_REFUSALS": str(refusals),
         "HOST": "test-host",
