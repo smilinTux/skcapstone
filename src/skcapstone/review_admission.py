@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
+import os
 import re
+import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -148,10 +151,20 @@ def reviewer_capacity(
     reviewer: str,
 ) -> tuple[int, int]:
     """Return occupied and total qualified SKGateway slots for this card."""
+    evaluation = reviewer_capacity_evaluation(home, core, labels, producer, reviewer)
+    return sum(evaluation["occupancy"].values()), int(evaluation["logical_available"])
+
+
+def reviewer_capacity_evaluation(
+    home: Path,
+    core: Mapping[str, object],
+    labels: Sequence[str],
+    producer: str,
+    reviewer: str,
+) -> dict[str, object]:
+    """Return the revisioned capacity decision shared by claim and diagnostics."""
     from .fleet.review_capacity import (
-        aggregate_review_capacity,
-        eligible_review_routes,
-        load_route_occupancy,
+        evaluate_review_capacity,
     )
 
     title = str(core.get("title") or "")
@@ -166,26 +179,45 @@ def reviewer_capacity(
         if title and len(title_sizes) == 1
         else next(iter(label_sizes)) if not title and len(label_sizes) == 1 else None
     )
-    path = home / "evidence" / "fleet-review-routes.json"
+    host = (os.environ.get("SKFLEET_EVIDENCE_HOST") or os.uname().nodename).split(".")[0].lower()
+    if not re.fullmatch(r"[a-z0-9-]+", host):
+        host = os.uname().nodename.split(".")[0].lower()
+    paths = (home / "evidence" / f"fleet-review-routes.{host}.json",
+             home / "evidence" / "fleet-review-routes.json")
     try:
-        snapshot = json.loads(path.read_text(encoding="utf-8"))
+        observations = []
+        for path in paths:
+            if not os.path.lexists(path):
+                continue
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError("route evidence is not a regular file")
+                raw = stream.read(1_048_577)
+            if len(raw) > 1_048_576:
+                raise ValueError("route evidence exceeds bound")
+            value = json.loads(raw)
+            if not isinstance(value, dict):
+                raise ValueError("route evidence is not an object")
+            stamp = value.get("observed_at")
+            if type(stamp) not in {int, float} or not math.isfinite(stamp):
+                raise ValueError("invalid route observation timestamp")
+            observations.append(value)
+        # A stale host file must not shadow a newer gateway observation from
+        # the older publisher. The newest failure still overrides older health.
+        snapshot = max(observations, key=lambda value: value["observed_at"], default={})
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return 0, 0
-    occupancy, ambiguous = load_route_occupancy(home)
-    if size is None or ambiguous:
-        return 0, 0
-    routes = eligible_review_routes(
+        snapshot = {}
+    return evaluate_review_capacity(
         snapshot,
-        size,
+        size or "",
         labels,
         producer,
         reviewer,
-        occupancy,
         declared_seat=governed_review_seat(labels, qualified_reviewer_seats(core)),
         qualified_seats=qualified_reviewer_seats(core),
     )
-    total = aggregate_review_capacity(routes, sum(int(route["free"]) for route in routes))
-    return sum(occupancy.values()), total
 
 
 def reviewer_candidate_reasons(
@@ -335,7 +367,7 @@ def assert_governed_review_claim(home: Path, card_id: str, agent: str) -> None:
     )
     metadata = governed_review_metadata(core, labels)
     producer = metadata[0] if metadata else ""
-    busy, target = reviewer_capacity(home, core, labels, producer, reviewer)
+    capacity = reviewer_capacity_evaluation(home, core, labels, producer, reviewer)
     candidate_reasons = reviewer_candidate_reasons(
         reviewer,
         producer=producer,
@@ -343,7 +375,7 @@ def assert_governed_review_claim(home: Path, card_id: str, agent: str) -> None:
             governed_review_seat(labels, qualified_reviewer_seats(core)) if elastic else None
         ),
         qualified_seats=qualified_reviewer_seats(core),
-        capacity_available=target > 0,
+        capacity_available=capacity["reason"] == "eligible",
     )
     if "unqualified-reviewer" in candidate_reasons:
         reasons = ("wrong-reviewer", *reasons)

@@ -21,6 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--evidence-root", type=Path, required=True)
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--credential-file", type=Path, required=True)
+    parser.add_argument("--protection-credential-file", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         signer = capauth_signer()
@@ -32,6 +33,7 @@ def main(argv: list[str] | None = None) -> int:
             evidence_root=args.evidence_root,
             runtime_dir=args.runtime_dir,
             credential_file=args.credential_file,
+            protection_credential_file=args.protection_credential_file,
             signer=signer,
         )
         print(json.dumps({"status": "complete", "published": len(receipts)}, sort_keys=True))

@@ -33,6 +33,7 @@ def register_coord_commands(main: click.Group) -> None:
             "  coord link <id> evidence <path>            record the proof\n"
             "  coord move <id> review --agent <you>       hand to an independent reviewer\n"
             "  coord complete <id> --agent <you>          done\n"
+            "  coord reopen <id> --reason ... --agent ... revive a completed card\n"
             "\n"
             "\b\n"
             "COLUMNS\n"
@@ -68,11 +69,19 @@ def register_coord_commands(main: click.Group) -> None:
         """
 
     from .coord_amend import register_coord_amend_commands
+    from .coord_liveness import register_coord_liveness_command
+
+    register_coord_liveness_command(coord)
+    from .coord_historical_pr import register_historical_pr_command
+
+    register_historical_pr_command(coord)
     from .coord_mail_cmd import register_coord_mail_commands
+    from .coord_review_work import register_coord_review_work
     from .portfolio_plan_cmd import register_portfolio_plan_command
 
     register_coord_amend_commands(coord)
     register_coord_mail_commands(coord)
+    register_coord_review_work(coord)
     register_portfolio_plan_command(coord)
 
     @coord.command("status")
@@ -654,15 +663,39 @@ def register_coord_commands(main: click.Group) -> None:
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", required=True, help="Agent name completing the task.")
+    @click.option("--expected-source-revision", help="Optional exact native card snapshot digest.")
+    @click.option("--expected-claim-revision", help="Optional exact owned claim generation.")
+    @click.option(
+        "--review-card", help="Guarded source completion: exact completed independent review."
+    )
+    @click.option(
+        "--expected-review-revision", help="Guarded source completion: exact review snapshot."
+    )
     @click.option("--casey-authorization", type=click.Path(path_type=Path))
     @click.option("--casey-change-id")
-    def coord_complete(task_id, home, agent, casey_authorization, casey_change_id):
+    def coord_complete(
+        task_id,
+        home,
+        agent,
+        casey_authorization,
+        casey_change_id,
+        expected_source_revision,
+        expected_claim_revision,
+        review_card,
+        expected_review_revision,
+    ):
         """Mark a task as completed."""
         validate_task_id(task_id)
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
-        from ..coord_completion import complete_coord_task
+        from contextlib import ExitStack
+
+        from ..coord_completion import (
+            complete_coord_task,
+            owned_revision_guard,
+            reviewed_source_guard,
+        )
         from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
@@ -673,7 +706,31 @@ def register_coord_commands(main: click.Group) -> None:
         from ..coord_completion import GATED_EXIT_CODE, GatesPending
 
         try:
-            result = complete_coord_task(home_path, agent, task_id)
+            guards = (expected_source_revision, expected_claim_revision)
+            if any(value is not None for value in guards) and not all(guards):
+                raise ValueError("guarded completion requires both revisions")
+            review_guards = (review_card, expected_review_revision)
+            if any(value is not None for value in review_guards) and not (
+                all(guards) and all(review_guards)
+            ):
+                raise ValueError("guarded review completion requires all source and review guards")
+            if all(guards):
+                guard = owned_revision_guard(home_path, agent, task_id, *guards)
+                with ExitStack() as stack:
+                    related = (
+                        reviewed_source_guard(home_path, task_id, *review_guards, stack)
+                        if all(review_guards)
+                        else None
+                    )
+                    result = complete_coord_task(
+                        home_path,
+                        agent,
+                        task_id,
+                        precondition=guard,
+                        mutation_precondition=related,
+                    )
+            else:
+                result = complete_coord_task(home_path, agent, task_id)
         except ValueError as e:
             console.print(f"\n  [red]Error:[/] {e}\n")
             sys.exit(1)
@@ -693,6 +750,40 @@ def register_coord_commands(main: click.Group) -> None:
 
         # board.complete_task() automatically mints Joules via _mint_joules_for_task
         console.print(f"\n  [green]Completed:[/] [{task_id}] by [bold]{result.agent}[/]\n")
+
+    @coord.command("reopen")
+    @click.argument("task_id")
+    @click.option("--reason", required=True, help="Why the completed card must resume.")
+    @click.option("--agent", required=True, help="Audited reopen actor.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
+    def coord_reopen(task_id, reason, agent, home, casey_authorization, casey_change_id):
+        """Revive one unowned, unarchived terminal card to backlog."""
+        validate_task_id(task_id)
+        validate_agent_name(agent)
+        if not reason.strip():
+            raise click.ClickException("a reopen reason is required")
+
+        from ..coord_reopen import reopen_card
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(
+            agent,
+            Action.MOVE_CARD,
+            f"{task_id}:reopen",
+            casey_authorization,
+            casey_change_id,
+        )
+        try:
+            event = reopen_card(Path(home).expanduser(), task_id, reason, agent)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(
+            f"\n  [green]Reopened:[/] [{task_id}] to backlog by [bold]{agent}[/]\n"
+            f"  [dim]event_id {event.get('event_id')}[/]\n"
+        )
 
     @coord.command("satisfy-gate")
     @click.argument("task_id")
@@ -992,27 +1083,55 @@ def register_coord_commands(main: click.Group) -> None:
         default=False,
         help="Emit the grid as JSON instead of a text summary.",
     )
-    def coord_kanban(home, html_out, as_json):
+    @click.option(
+        "--include-archived",
+        is_flag=True,
+        default=False,
+        help="Include cards archived off the active board (full historical scope).",
+    )
+    def coord_kanban(home, html_out, as_json, include_archived):
         """Unified kanban board over coord tasks and ITIL tickets.
 
         Columns are the shared lifecycle (backlog, ready, doing, review, done);
         swimlanes are the card kind (feature, bug, security, expedite, change,
-        problem). Reads both stores read-only.
+        problem). Reads both stores read-only. Archived cards (card 2f054aa5)
+        are excluded from the active view unless --include-archived is passed.
         """
         import json as _json
 
         from ..card import COLUMN_ORDER, LANE_ORDER, KanbanBoard, render_html
+        from ..coordination import Board
 
         home_path = Path(home).expanduser()
         kb = KanbanBoard(home_path)
+
+        if include_archived:
+            grid = {lane: {col: [] for col in COLUMN_ORDER} for lane in LANE_ORDER}
+            for c in kb.cards(include_archived=True):
+                if c.meta.get("voided"):
+                    continue  # voided cards never return to any board view
+                lane = c.swimlane if c.swimlane in LANE_ORDER else "feature"
+                grid[lane][c.status.value].append(c)
+            for cells in grid.values():
+                for col in cells.values():
+                    col.sort(key=lambda c: (c.order if c.order else 9999, c.id))
+        else:
+            grid = kb.grid()
+            archived = Board(home_path).archived_ids()
+            if archived:
+                grid = {
+                    lane: {
+                        col: [c for c in grid[lane][col] if c.id not in archived]
+                        for col in grid[lane]
+                    }
+                    for lane in grid
+                }
 
         if html_out:
             out = Path(html_out).expanduser()
             out.write_text(render_html(kb), encoding="utf-8")
             console.print(f"\n  [green]Kanban board written to {out}[/]\n")
             return
-
-        grid = kb.grid()
         if as_json:
             payload = {
                 lane: {col: [c.model_dump() for c in grid[lane][col]] for col in COLUMN_ORDER}
@@ -1528,10 +1647,12 @@ def register_coord_commands(main: click.Group) -> None:
         attributed to its writer and reversed by describing again. Only the
         options you pass are changed; pass an empty string to clear a field.
         """
+        actor = agent or "coord-edit"
+
         from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
-        authorize_coord_mutation(agent or "", Action.DESCRIBE_CARD, task_id, None, None)
+        authorize_coord_mutation(actor, Action.DESCRIBE_CARD, task_id, None, None)
 
         from ..describe_guard import DegenerateTitleError, check_title
 
@@ -1551,14 +1672,14 @@ def register_coord_commands(main: click.Group) -> None:
                     action="describe",
                     title=title,
                     description=description,
-                    writer=agent or "",
+                    writer=actor,
                 )
             )
             from ..card_store import card_store_write_enabled, mirror_coord_describe
 
             if card_store_write_enabled():
                 mirror_coord_describe(
-                    home_path, task_id, agent or "", title=title, description=description
+                    home_path, task_id, actor, title=title, description=description
                 )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
@@ -1654,9 +1775,32 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--commit", required=True, help="git rev-parse HEAD")
     @click.option("--tree", required=True, help="git rev-parse HEAD^{tree}")
     @click.option("--ref", required=True, help="refs/heads/<branch> or an https:// URL")
+    @click.option(
+        "--expected-source-revision", help="Optional exact native source snapshot digest."
+    )
+    @click.option("--expected-claim-revision", help="Optional exact owned claim generation.")
+    @click.option(
+        "--expected-candidate-sha256", help="Controller's already verified candidate digest."
+    )
+    @click.option(
+        "--transition-id", help="Optional 64-hex idempotency key; requires both revision guards."
+    )
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Writer name. Required: the producer.")
-    def coord_verdict(task_id, outcome, candidate, commit, tree, ref, home, agent):
+    def coord_verdict(
+        task_id,
+        outcome,
+        candidate,
+        commit,
+        tree,
+        ref,
+        home,
+        agent,
+        expected_source_revision,
+        expected_claim_revision,
+        expected_candidate_sha256,
+        transition_id,
+    ):
         """Record an outcome bound to the candidate a reviewer will verify.
 
         This is the verdict path for anything that owes an independent review.
@@ -1672,8 +1816,9 @@ def register_coord_commands(main: click.Group) -> None:
         link after the verdict, such as your own evidence or commit reference,
         is fine and does not disturb it.
         """
+        from ..blocked_verdict import validate_blocked_verdict
         from ..jarvis_emergency import authorize_coord_mutation
-        from ..provisional_verdict import candidate_evidence
+        from ..provisional_verdict import candidate_evidence, record_guarded_verdict
         from ..seat_boundaries import Action
 
         # The opener attributes an outcome to exactly one producer and fails
@@ -1683,17 +1828,40 @@ def register_coord_commands(main: click.Group) -> None:
                 "--agent is required: a verdict is attributed to exactly one producer, "
                 "and the review opener fails closed on an unnamed one."
             )
+        guards = (expected_source_revision, expected_claim_revision, transition_id)
+        if any(value is not None for value in guards) and not all(guards):
+            raise click.ClickException("guarded verdict requires both revisions and transition id")
+        if expected_candidate_sha256 is not None and not all(guards):
+            raise click.ClickException("expected candidate digest requires revision guards")
         authorize_coord_mutation(agent, Action.LINK_CARD, task_id, None, None)
         from ..card_store import CardStore
 
         try:
+            validate_blocked_verdict("verdict", outcome)
             payload = candidate_evidence(candidate, commit, tree, ref)
+            if (
+                expected_candidate_sha256 is not None
+                and payload["candidate_sha256"] != expected_candidate_sha256
+            ):
+                raise ValueError("guarded verdict candidate digest changed")
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
         try:
-            event = CardStore(Path(home).expanduser()).append_event(
-                task_id, "verdict", agent, verdict=str(outcome).strip(), **payload
-            )
+            if any(guards):
+                event = record_guarded_verdict(
+                    Path(home).expanduser(),
+                    task_id,
+                    agent,
+                    str(outcome).strip(),
+                    payload,
+                    expected_source_revision=expected_source_revision,
+                    expected_claim_revision=expected_claim_revision,
+                    transition_id=transition_id,
+                )
+            else:
+                event = CardStore(Path(home).expanduser()).append_event(
+                    task_id, "verdict", agent, verdict=str(outcome).strip(), **payload
+                )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
         console.print(
@@ -1708,7 +1876,25 @@ def register_coord_commands(main: click.Group) -> None:
     @click.argument("value")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
-    def coord_link(task_id, key, value, home, agent):
+    @click.option("--expected-source-revision", help="Optional exact native card snapshot digest.")
+    @click.option("--expected-claim-revision", help="Optional exact owned claim generation.")
+    @click.option(
+        "--transition-id", help="Optional idempotency key; requires both revision guards."
+    )
+    @click.option(
+        "--json", "as_json", is_flag=True, help="Guarded writes: return exact native readback."
+    )
+    def coord_link(
+        task_id,
+        key,
+        value,
+        home,
+        agent,
+        expected_source_revision,
+        expected_claim_revision,
+        transition_id,
+        as_json,
+    ):
         """Attach a link (pr/commit/doc/...) to a card."""
         from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
@@ -1743,18 +1929,163 @@ def register_coord_commands(main: click.Group) -> None:
 
         home_path = Path(home).expanduser()
         try:
-            CardEventLog(home_path).append(
-                CardEvent(
-                    card_id=task_id,
-                    action="link",
-                    link_key=key,
-                    link_value=value,
-                    writer=agent or "",
+            guards = (expected_source_revision, expected_claim_revision, transition_id)
+            if any(item is not None for item in guards) and not all(guards):
+                raise ValueError("guarded link requires both revisions and transition id")
+            if as_json and not all(guards):
+                raise ValueError("guarded link JSON readback requires revision guards")
+            if all(guards):
+                from ..guarded_coord_link import record_guarded_link
+
+                readback = record_guarded_link(
+                    home_path,
+                    task_id,
+                    agent or "",
+                    key,
+                    value,
+                    expected_source_revision=expected_source_revision,
+                    expected_claim_revision=expected_claim_revision,
+                    transition_id=transition_id,
                 )
-            )
+            else:
+                CardEventLog(home_path).append(
+                    CardEvent(
+                        card_id=task_id,
+                        action="link",
+                        link_key=key,
+                        link_value=value,
+                        writer=agent or "",
+                    )
+                )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
+        if as_json:
+            click.echo(json.dumps(readback, sort_keys=True))
+            return
         console.print(f"\n  [green]Linked {task_id}: {key} = {value}.[/]\n")
+
+    @coord.command("recover-overlay")
+    @click.argument("operation", type=click.Choice(("plan", "apply", "rollback")))
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", required=True, help="Claimed recovery actor.")
+    @click.option("--writer", help="Overlay shard filename for plan.")
+    @click.option(
+        "--line",
+        "line_numbers",
+        type=click.IntRange(min=1),
+        multiple=True,
+        help="Physical line. Repeat with --line-sha256 for atomic multi-row recovery.",
+    )
+    @click.option("--source-sha256", help="Exact current shard SHA256.")
+    @click.option(
+        "--line-sha256",
+        "line_sha256s",
+        multiple=True,
+        help="Exact rejected line SHA256. Repeat in the same order as --line.",
+    )
+    @click.option("--recovery-card", help="Claimed recovery card ID.")
+    @click.option("--evidence", type=click.Path(), help="Existing evidence directory.")
+    @click.option("--plan", "plan_path", type=click.Path(), help="Saved plan for apply.")
+    @click.option("--receipt", "receipt_path", type=click.Path(), help="Receipt for rollback.")
+    @click.option(
+        "--writer-quiesced",
+        is_flag=True,
+        help="Assert pre-upgrade appenders are stopped or upgraded before apply or rollback.",
+    )
+    def coord_recover_overlay(
+        operation,
+        home,
+        agent,
+        writer,
+        line_numbers,
+        source_sha256,
+        line_sha256s,
+        recovery_card,
+        evidence,
+        plan_path,
+        receipt_path,
+        writer_quiesced,
+    ):
+        """Plan, apply, or roll back hash-pinned rejected overlay rows."""
+        from skcoord.card_event_recovery import (
+            apply_overlay_recovery,
+            plan_overlay_recovery,
+            rollback_overlay_recovery,
+            save_recovery_plan,
+        )
+
+        home_path = Path(home).expanduser()
+        try:
+            if operation == "plan":
+                required = {
+                    "--writer": writer,
+                    "--line": line_numbers,
+                    "--source-sha256": source_sha256,
+                    "--line-sha256": line_sha256s,
+                    "--recovery-card": recovery_card,
+                    "--evidence": evidence,
+                }
+                missing = [name for name, value in required.items() if value in (None, "", ())]
+                if missing:
+                    raise click.UsageError(f"plan requires {', '.join(missing)}")
+                if len(line_numbers) != len(line_sha256s):
+                    raise click.UsageError(
+                        "plan requires matching counts of --line and --line-sha256"
+                    )
+                plan = plan_overlay_recovery(
+                    home=home_path,
+                    writer=writer,
+                    line_number=line_numbers,
+                    source_sha256=source_sha256,
+                    line_sha256=line_sha256s,
+                    recovery_card_id=recovery_card,
+                    evidence=Path(evidence).expanduser(),
+                    actor=agent,
+                )
+                saved = save_recovery_plan(plan)
+                click.echo(
+                    json.dumps(
+                        {"plan": str(saved), "plan_sha256": plan["plan_sha256"]},
+                        sort_keys=True,
+                    )
+                )
+                return
+
+            from ..jarvis_emergency import authorize_coord_mutation
+            from ..seat_boundaries import Action
+
+            authorize_coord_mutation(agent, Action.MAINTAIN_BOARD, "overlay-recovery", None, None)
+            if operation == "apply":
+                if not plan_path:
+                    raise click.UsageError("apply requires --plan")
+                if not writer_quiesced:
+                    raise click.UsageError(
+                        "apply requires --writer-quiesced because pre-upgrade appenders "
+                        "do not honor the stable recovery lock"
+                    )
+                result = apply_overlay_recovery(
+                    home=home_path,
+                    plan_path=Path(plan_path).expanduser(),
+                    actor=agent,
+                    writer_quiesced=writer_quiesced,
+                )
+            else:
+                if not receipt_path:
+                    raise click.UsageError("rollback requires --receipt")
+                if not writer_quiesced:
+                    raise click.UsageError(
+                        "rollback requires --writer-quiesced because pre-upgrade appenders "
+                        "do not honor the stable recovery lock"
+                    )
+                result = rollback_overlay_recovery(
+                    home=home_path,
+                    receipt_path=Path(receipt_path).expanduser(),
+                    actor=agent,
+                    writer_quiesced=writer_quiesced,
+                )
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        click.echo(json.dumps(result, sort_keys=True))
 
     @coord.command("changelog")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
