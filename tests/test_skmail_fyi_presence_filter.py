@@ -140,9 +140,7 @@ def test_read_always_tells_you_to_ack(tmp_path: Path) -> None:
 
 
 def test_read_with_a_backlog_still_says_read_again(tmp_path: Path) -> None:
-    records = [
-        _rec(f"2026-10-22T0{h}:00:00+00:00", f"message {h}" * 400) for h in range(1, 9)
-    ]
+    records = [_rec(f"2026-10-22T0{h}:00:00+00:00", f"message {h}" * 400) for h in range(1, 9)]
     out = _read(tmp_path, "lumina", records)
     assert "more unread" in out and "skmail ack lumina" in out
     assert "read lumina" in out
