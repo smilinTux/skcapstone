@@ -1,0 +1,1 @@
+- Auto-rollout now tells the local staged gate when it intentionally holds the seat-cycle timer, and it reports success only after that timer is enabled and active again.

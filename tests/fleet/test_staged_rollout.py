@@ -418,6 +418,65 @@ def test_default_gate_node_fails_on_unambiguous_drift(home: Path) -> None:
     assert len(outcome.drift) == 1
 
 
+def test_local_gate_allows_only_the_declared_inactive_held_timer(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from skcapstone.fleet import staged_rollout
+
+    _write_verdict(home, "chiap08", ready=True)
+    drift = Drift(
+        "unit_enablement:skfleet-seat-cycle.timer",
+        "enablement_mismatch",
+        "active",
+        "inactive",
+        "chiap08",
+    )
+    monkeypatch.setattr(staged_rollout, "self_node_name", lambda: "node-chiap08")
+    monkeypatch.setattr(staged_rollout, "detect_drift", lambda *args: [drift])
+
+    held = default_gate_node(
+        "chiap08",
+        _manifest(),
+        home=home,
+        local_repo_root=tmp_path,
+        held_timers=("skfleet-seat-cycle.timer",),
+    )
+    unheld = default_gate_node("chiap08", _manifest(), home=home, local_repo_root=tmp_path)
+
+    assert held.ready is True
+    assert held.drift == ()
+    assert unheld.ready is False
+    assert unheld.drift == (drift,)
+
+
+def test_local_gate_does_not_ignore_a_disabled_held_timer(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from skcapstone.fleet import staged_rollout
+
+    _write_verdict(home, "chiap08", ready=True)
+    drift = Drift(
+        "unit_enablement:skfleet-seat-cycle.timer",
+        "enablement_mismatch",
+        "enabled",
+        "disabled",
+        "chiap08",
+    )
+    monkeypatch.setattr(staged_rollout, "self_node_name", lambda: "node-chiap08")
+    monkeypatch.setattr(staged_rollout, "detect_drift", lambda *args: [drift])
+
+    outcome = default_gate_node(
+        "chiap08",
+        _manifest(),
+        home=home,
+        local_repo_root=tmp_path,
+        held_timers=("skfleet-seat-cycle.timer",),
+    )
+
+    assert outcome.ready is False
+    assert outcome.drift == (drift,)
+
+
 def test_default_gate_node_fails_closed_on_malformed_remote_drift_entry(home: Path) -> None:
     """A remote node on an older/newer drift-report schema must fail the
     gate cleanly, not raise a ``KeyError`` out of ``execute_rollout``: an

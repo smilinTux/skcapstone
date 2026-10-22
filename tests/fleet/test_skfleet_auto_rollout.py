@@ -41,11 +41,14 @@ def fleet(tmp_path: Path):
     bins.mkdir()
     calls = tmp_path / "calls.log"
     fail_host = tmp_path / "fail_host"
+    fail_timer_resume = tmp_path / "fail_timer_resume"
     _write_exe(
         bins / "skcapstone",
         f'echo "rollout $*" >> {calls}\n'
         'host=""; while [ $# -gt 0 ]; do [ "$1" = --node ] && host=$2; shift; done\n'
-        f'if [ -f {fail_host} ] && [ "$host" = "$(cat {fail_host})" ]; then echo "{"{"}host{"}"}: gate failed"; else echo "$host: deployed and gate passed"; fi\n',
+        f'if [ -f {fail_host} ] && [ "$host" = "$(cat {fail_host})" ]; '
+        'then echo "$host: gate failed"; '
+        'else echo "$host: deployed and gate passed"; fi\n',
     )
     _write_exe(bins / "ssh", f'echo "ssh $*" >> {calls}\n')
     _write_exe(bins / "skmail", f'echo "skmail $*" >> {calls}\n')
@@ -53,11 +56,19 @@ def fleet(tmp_path: Path):
     _write_exe(
         bins / "systemctl",
         f'echo "systemctl $*" >> {calls}\n'
-        'case "$*" in *is-active*.timer) echo active ;; *is-active*) echo inactive ;; esac\n',
+        f"if [ -f {fail_timer_resume} ] && "
+        '[ "$*" = "--user is-active skfleet-seat-cycle.timer" ] && '
+        f'grep -q "systemctl --user start skfleet-seat-cycle.timer" {calls}; '
+        "then echo inactive; exit 0; fi\n"
+        'case "$*" in *is-enabled*.timer) echo enabled ;; '
+        "*is-active*.timer) echo active ;; *is-active*) echo inactive ;; esac\n",
     )
     env = dict(
         os.environ,
         PATH=f"{bins}:{os.environ['PATH']}",
+        SKCAPSTONE_BIN=str(bins / "skcapstone"),
+        SSH_BIN=str(bins / "ssh"),
+        SKMAIL_BIN=str(bins / "skmail"),
         SKFLEET_AUTO_ROLLOUT_REPO=str(deploy),
         SKFLEET_AUTO_ROLLOUT_HOSTS="h1 h2 h3",
         SKFLEET_AUTO_ROLLOUT_LOCK=str(tmp_path / "lock"),
@@ -65,7 +76,14 @@ def fleet(tmp_path: Path):
         SKFLEET_AUTO_ROLLOUT_ATTEMPTS="2",
         SYSTEMCTL_BIN=str(bins / "systemctl"),
     )
-    return dict(origin=origin, deploy=deploy, calls=calls, fail_host=fail_host, env=env)
+    return dict(
+        origin=origin,
+        deploy=deploy,
+        calls=calls,
+        fail_host=fail_host,
+        fail_timer_resume=fail_timer_resume,
+        env=env,
+    )
 
 
 def _advance_origin(origin: Path) -> str:
@@ -97,6 +115,7 @@ def test_new_main_rolls_every_host_in_order_and_notifies(fleet):
     assert _git(fleet["deploy"], "rev-parse", "HEAD") == target
     rollouts = [c for c in _calls(fleet["calls"]) if c.startswith("rollout")]
     assert [c.split("--node ")[1].split()[0] for c in rollouts] == ["h1", "h2", "h3"]
+    assert all("--held-timer skfleet-seat-cycle.timer" in c for c in rollouts)
     assert any(
         c.startswith("skmail send skfleet-auto-rollout") and "ROLLED" in c
         for c in _calls(fleet["calls"])
@@ -170,8 +189,8 @@ def test_merge_during_run_supersedes_quietly_instead_of_halting(fleet):
     # The fake skcapstone fails h2's gate; simulate the merge that caused it.
     hook = fleet["deploy"].parent / "bin" / "skcapstone"
     hook.write_text(
-        hook.read_text()
-        + f'if [ "$host" = h2 ]; then cd {fleet["origin"]} && echo 3 > f && git commit -qam third; fi\n'
+        hook.read_text() + f'if [ "$host" = h2 ]; then cd {fleet["origin"]} && '
+        "echo 3 > f && git commit -qam third; fi\n"
     )
     result = _run(fleet["env"])
     assert result.returncode == 0, result.stdout + result.stderr
@@ -240,6 +259,17 @@ def test_cycle_timer_is_restarted_after_a_halt(fleet):
         "stop skfleet-seat-cycle.timer",
         "start skfleet-seat-cycle.timer",
     ]
+
+
+def test_success_is_not_reported_if_held_timer_does_not_resume(fleet):
+    _advance_origin(fleet["origin"])
+    fleet["fail_timer_resume"].touch()
+
+    result = _run(fleet["env"])
+
+    assert result.returncode == 1
+    assert "did not resume enabled and active" in result.stdout
+    assert not any("ROLLED main" in call for call in _calls(fleet["calls"]))
 
 
 def test_up_to_date_checkout_leaves_the_cycle_timer_alone(fleet):

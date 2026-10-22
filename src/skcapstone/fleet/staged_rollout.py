@@ -751,7 +751,11 @@ def _unambiguous_drift(drifts: list[Drift]) -> tuple[Drift, ...]:
 
 
 def _gate_local(
-    node: str, manifest: dict, home: Path, local_repo_root: Path | None
+    node: str,
+    manifest: dict,
+    home: Path,
+    local_repo_root: Path | None,
+    held_timers: tuple[str, ...] = (),
 ) -> GateOutcome:
     ready, reason = _readiness_verdict(node, home)
     repo_root = local_repo_root or _default_local_repo_root()
@@ -767,6 +771,19 @@ def _gate_local(
             ready=False, drift=(), reason=f"could not compute drift for {node}: {exc}"
         )
     unambiguous = _unambiguous_drift(drifts)
+    held_timer_drifts = {
+        f"unit_enablement:{timer}" for timer in held_timers if timer.endswith(".timer")
+    }
+    unambiguous = tuple(
+        drift
+        for drift in unambiguous
+        if not (
+            drift.artifact in held_timer_drifts
+            and drift.kind == "enablement_mismatch"
+            and drift.expected == "active"
+            and drift.found == "inactive"
+        )
+    )
     if ready is not True:
         return GateOutcome(ready=False, drift=unambiguous, reason=reason)
     if unambiguous:
@@ -864,6 +881,7 @@ def default_gate_node(
     remote_repo_root: str = DEFAULT_REMOTE_REPO_ROOT,
     local_repo_root: Path | None = None,
     runner: Runner = default_runner,
+    held_timers: tuple[str, ...] = (),
 ) -> GateOutcome:
     """Gate ``node``: the existing readiness verdict plus ``detect_drift``.
 
@@ -876,7 +894,7 @@ def default_gate_node(
     """
     home_path = Path(home) if home is not None else Path.home()
     if _is_local(node):
-        return _gate_local(node, manifest, home_path, local_repo_root)
+        return _gate_local(node, manifest, home_path, local_repo_root, held_timers)
     return _gate_remote(node, home_path, remote_repo_root, runner, manifest.get("git_sha"))
 
 
@@ -898,6 +916,7 @@ def execute_rollout(
     runner: Runner = default_runner,
     deploy: DeployFn | None = None,
     gate: GateFn | None = None,
+    held_timers: tuple[str, ...] = (),
 ) -> RolloutResult:
     """Roll ``plan`` out one node at a time, halting on the first failure.
 
@@ -922,6 +941,8 @@ def execute_rollout(
             tests). Defaults to ``default_deploy_node``.
         gate: Overrides the default gate step entirely (mainly for tests).
             Defaults to ``default_gate_node``.
+        held_timers: Locally paused timers whose exact inactive-state drift
+            is expected until the auto-rollout resumes and verifies them.
 
     Returns:
         A ``RolloutResult`` naming, on failure, which node halted the
@@ -948,6 +969,7 @@ def execute_rollout(
             remote_repo_root=remote_repo_root,
             local_repo_root=local_repo_root,
             runner=runner,
+            held_timers=held_timers,
         )
 
     deploy_fn = deploy or _default_deploy

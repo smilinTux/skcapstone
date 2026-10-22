@@ -147,6 +147,37 @@ def test_apply_flag_is_required_to_execute_for_real(tmp_path, monkeypatch, fake_
     assert seen["dry_run"] is False
 
 
+def test_explicitly_held_timer_is_forwarded_to_the_local_rollout_gate(
+    tmp_path, monkeypatch, fake_manifest
+):
+    seen: dict = {}
+
+    def fake_execute_rollout(plan, **kwargs):
+        seen["held_timers"] = kwargs["held_timers"]
+        return _dry_run_result(plan.nodes)
+
+    monkeypatch.setattr(staged_rollout, "execute_rollout", fake_execute_rollout)
+
+    result = CliRunner().invoke(
+        fleet,
+        [
+            "rollout",
+            "--node",
+            "chiap08",
+            "--held-timer",
+            "skfleet-seat-cycle.timer",
+            "--repo-root",
+            str(tmp_path),
+            "--home",
+            str(tmp_path),
+        ],
+        env=_env(),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["held_timers"] == ("skfleet-seat-cycle.timer",)
+
+
 def test_dry_run_output_lists_every_node_in_order(tmp_path, monkeypatch, fake_manifest):
     monkeypatch.setattr(
         staged_rollout, "execute_rollout", lambda plan, **kwargs: _dry_run_result(plan.nodes)

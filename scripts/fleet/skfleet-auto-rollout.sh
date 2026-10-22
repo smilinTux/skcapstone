@@ -82,11 +82,24 @@ if ! git -C "$REPO" merge-base --is-ancestor "$head" "$target"; then
 fi
 held=""
 release_timers() {
-  local t
+  local t failed=0 pending="" active enabled
   for t in $held; do
-    "$SYSTEMCTL" --user start "$t" >/dev/null 2>&1 || log "could not restart $t; start it by hand"
+    if ! "$SYSTEMCTL" --user start "$t" >/dev/null 2>&1; then
+      log "could not restart $t"
+      pending="$pending $t"
+      failed=1
+      continue
+    fi
+    active=$("$SYSTEMCTL" --user is-active "$t" 2>/dev/null || true)
+    enabled=$("$SYSTEMCTL" --user is-enabled "$t" 2>/dev/null || true)
+    if [ "$active" != active ] || [ "$enabled" != enabled ]; then
+      log "$t did not resume enabled and active (enabled=$enabled active=$active)"
+      pending="$pending $t"
+      failed=1
+    fi
   done
-  held=""
+  held="${pending# }"
+  return "$failed"
 }
 trap release_timers EXIT
 for t in $HOLD_TIMERS; do
@@ -108,10 +121,14 @@ subject=$(git -C "$REPO" log -1 --format=%s "$target")
 log "rolling main ${target:0:8} ($subject) from ${head:0:8} to: $HOSTS"
 
 rolled=()
+held_timer_args=()
+for t in $HOLD_TIMERS; do
+  held_timer_args+=(--held-timer "$t")
+done
 for host in $HOSTS; do
   ok=0
   for attempt in $(seq 1 "$ATTEMPTS"); do
-    out=$("$SKCAPSTONE" fleet rollout --node "$host" --repo-root "$REPO" --remote-repo-root "~/deploy/skcapstone" --apply 2>&1 | tail -1)
+    out=$("$SKCAPSTONE" fleet rollout --node "$host" --repo-root "$REPO" --remote-repo-root "~/deploy/skcapstone" "${held_timer_args[@]}" --apply 2>&1 | tail -1)
     log "$host try$attempt: $out"
     if printf '%s' "$out" | grep -q "gate passed"; then ok=1; break; fi
     # A merge during the run makes the host pull a newer main than the
@@ -134,6 +151,11 @@ for host in $HOSTS; do
   rolled+=("$host")
 done
 
+if ! release_timers; then
+  log "HALT: held timers did not resume enabled and active"
+  notify "auto-rollout HALTED: timer did not resume" "main ${target:0:8} reached ${rolled[*]:-none}, but held timer state did not recover on $(hostname)"
+  exit 1
+fi
 log "ROLLED main ${target:0:8} to: ${rolled[*]}"
 notify "ROLLED main ${target:0:8}" "$subject -> ${rolled[*]} (gates passed)"
 exit 0

@@ -1178,8 +1178,7 @@ def node_drift_cmd(
             # are about; every other finding is about this node.
             where = f" on {d.host}" if d.artifact.startswith("fleet:") else ""
             click.echo(
-                f"  {d.kind:20} {d.artifact:40} expected={d.expected!r} "
-                f"found={d.found!r}{where}"
+                f"  {d.kind:20} {d.artifact:40} expected={d.expected!r} found={d.found!r}{where}"
             )
         if ambiguous:
             click.echo(
@@ -1366,6 +1365,13 @@ def _render_staged_result(result, as_json: bool, *, noun: str) -> None:
     help="Execute for real. Without this flag the rollout is a DRY RUN: no "
     "deploy, gate, or record call is made for any node.",
 )
+@click.option(
+    "--held-timer",
+    "held_timers",
+    multiple=True,
+    type=click.Choice(("skfleet-seat-cycle.timer",)),
+    help="A local timer intentionally stopped by the caller during this rollout.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 @click.option(
     "--strict",
@@ -1378,6 +1384,7 @@ def rollout_cmd(
     home: Path | None,
     remote_repo_root: str,
     apply_flag: bool,
+    held_timers: tuple[str, ...],
     as_json: bool,
     strict: bool,
 ) -> None:
@@ -1406,7 +1413,9 @@ def rollout_cmd(
     --strict sets a non-zero exit code when the rollout halts before every
     node completes; it does not change the output (matching `node drift` and
     `node doctor`). Re-run with --json for the full machine-readable result,
-    including every node's readiness and drift detail.
+    including every node's readiness and drift detail. ``--held-timer`` only
+    exempts the named local timer from its temporary inactive-state finding;
+    auto-rollout verifies it is enabled and active again before success.
     """
     from . import deployment_manifest
 
@@ -1431,6 +1440,7 @@ def rollout_cmd(
         home=resolved_home,
         remote_repo_root=remote_repo_root,
         local_repo_root=resolved_repo_root,
+        held_timers=held_timers,
     )
 
     _render_staged_result(result, as_json, noun="rollout")
