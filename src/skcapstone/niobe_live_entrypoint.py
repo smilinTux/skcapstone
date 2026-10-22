@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import fcntl
 import hashlib
 import json
@@ -11,15 +12,60 @@ import signal
 import socket
 import subprocess
 import sys
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .fleet.production_policy import LEGACY_CEILING_VARIABLES, load_production_policy
 from .niobe_activation import LIVE_UNIT, parse_activation
 from .receipt_output import condense_dispatcher_output
 from .seat_mail import poll_mail, startup_hello
 
 _DISPATCH_TIMEOUT_SECONDS = 270
 _TERMINATE_GRACE_SECONDS = 5
+
+
+def _production_environment(
+    dispatcher: Path, *, host: str, environment: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """Validate explicit policy mode without executing an unqualified dispatcher."""
+    environment = os.environ.copy() if environment is None else dict(environment)
+    policy_path = environment.get("SKFLEET_PRODUCTION_POLICY")
+    if policy_path is None:
+        required = {
+            "SKFLEET_TARGET": "3",
+            "SKFLEET_QWEN_TARGET": "0",
+            "SKFLEET_GLM_TARGET": "0",
+            "SKFLEET_KIMI_TARGET": "0",
+        }
+        if any(environment.get(key) != expected for key, expected in required.items()):
+            raise ValueError("Niobe live unit requires effective Codex-only target 3")
+        return environment
+    if not policy_path.strip():
+        raise ValueError("Niobe production policy path is empty")
+    if LEGACY_CEILING_VARIABLES.intersection(environment):
+        raise ValueError("Niobe production policy refuses legacy local ceilings")
+    policy = load_production_policy(Path(policy_path), host=host)
+    tree = ast.parse(dispatcher.read_text(encoding="utf-8"))
+    markers = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "SKFLEET_PRODUCTION_POLICY_V1"
+            for target in node.targets
+        )
+    ]
+    if (
+        len(markers) != 1
+        or len(markers[0].targets) != 1
+        or not isinstance(markers[0].value, ast.Constant)
+        or markers[0].value.value is not True
+    ):
+        raise ValueError("Niobe dispatcher lacks production policy capability")
+    environment["SKFLEET_GATEWAY_URL"] = policy["gateway_url"]
+    environment["SKFLEET_PRODUCTION_POLICY"] = str(Path(policy_path).resolve())
+    return environment
 
 
 def _run_dispatcher(
@@ -143,19 +189,11 @@ def run_live(
     # the record authorizes, using the estate's own operator and product scope.
     activation = parse_activation(value, home=home, host=host)
     started_at = datetime.now(timezone.utc).isoformat()
-    required_environment = {
-        "SKFLEET_TARGET": "3",
-        "SKFLEET_QWEN_TARGET": "0",
-        "SKFLEET_GLM_TARGET": "0",
-        "SKFLEET_KIMI_TARGET": "0",
-    }
-    if any(os.environ.get(key) != expected for key, expected in required_environment.items()):
-        raise ValueError("Niobe live unit requires effective Codex-only target 3")
+    environment = _production_environment(dispatcher, host=host)
     if not dispatcher.is_file():
         raise ValueError("Niobe dispatcher is missing")
     startup_hello(home, "niobe", host=host)
     mailbox = poll_mail("niobe")
-    environment = os.environ.copy()
     environment["SKFLEET_NIOBE_ACTIVATION"] = str(activation_path.resolve())
     invocation = os.environ.get("INVOCATION_ID", "").lower()
     cycle_id = (
@@ -165,7 +203,7 @@ def run_live(
         else hashlib.sha256(f"{activation.card_revision}:{started_at}".encode()).hexdigest()[:32]
     )
     environment["SKFLEET_ROTATION_ID"] = cycle_id
-    evidence_path = home / "evidence" / "fleet-rotation" / cycle_id / "actions.log"
+    evidence_path = home / "evidence" / "fleet-rotation" / f"{host}-{cycle_id}" / "actions.log"
     command = [sys.executable, str(dispatcher), "--go"]
     try:
         completed = (

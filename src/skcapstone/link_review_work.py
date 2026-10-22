@@ -12,6 +12,8 @@ from urllib.parse import urlsplit
 
 from skcoord.card_store import CardCore, CardStore, card_mutation_lock
 
+from .review_work_identity import card_generation as card_generation
+from .review_work_identity import review_card_id as review_card_id
 from .seat_boundaries import BoundaryError
 from .seat_runtime import authorize_review_launch, recommend_reviewer
 
@@ -35,41 +37,6 @@ class ReviewWorkResult:
 
     def as_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
-
-
-def card_generation(card: Any) -> str:
-    """Return the canonical Link generation for one folded source card."""
-
-    def value(name: str, default: Any = None) -> Any:
-        return card.get(name, default) if isinstance(card, dict) else getattr(card, name, default)
-
-    links = value("links", {}) or {}
-    status = value("status")
-    stable = {
-        "id": value("id"),
-        "status": getattr(status, "value", status),
-        "owner": value("owner"),
-        "labels": sorted(value("labels", []) or []),
-        "dependencies": sorted(value("dependencies", []) or []),
-        "verdict": str(links.get("verdict") or links.get("outcome") or "").strip().upper(),
-    }
-    encoded = json.dumps(stable, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(encoded.encode()).hexdigest()
-
-
-def review_card_id(
-    source_card: str,
-    head_revision: str,
-    card_generation: str,
-    evidence_sha256: str,
-    review_class: str = "review",
-) -> str:
-    """Return the stable cross-host identity for one source generation."""
-
-    identity = "\0".join(
-        (source_card, head_revision, card_generation, evidence_sha256, review_class)
-    )
-    return hashlib.sha256(identity.encode()).hexdigest()[:8]
 
 
 def _validated_workspace_binding(repository: object, base_ref: object) -> tuple[str, str]:
@@ -156,7 +123,7 @@ def reconcile_review_work(
     item: dict[str, Any],
     *,
     evidence_sha256: str,
-    _cards_by_key: dict[tuple[str, str, str, str, str], list[Any]] | None = None,
+    _cards_by_key: dict[tuple[str, ...], list[Any]] | None = None,
 ) -> ReviewWorkResult:
     """Materialize once and prove the exact card passes reviewer preflight."""
 
@@ -165,12 +132,14 @@ def reconcile_review_work(
     base_revision = str(item.get("base_revision") or "").lower()
     supplied_generation = str(item["card_generation"])
     review_class = "review"
+    attempt = str(item.get("review_attempt") or "")
     card_id = review_card_id(
         source_card,
         head_revision,
         supplied_generation,
         evidence_sha256,
         review_class,
+        review_attempt=attempt,
     )
     if not _DIGEST.fullmatch(supplied_generation):
         return ReviewWorkResult(
@@ -213,7 +182,14 @@ def reconcile_review_work(
             return ReviewWorkResult(source_card, head_revision, card_id, False, False, str(exc))
         if _cards_by_key is None:
             _cards_by_key = _review_card_index(store.list_cards())
-        key = (source_card, head_revision, supplied_generation, evidence_sha256, review_class)
+        key = (
+            source_card,
+            head_revision,
+            supplied_generation,
+            evidence_sha256,
+            review_class,
+            attempt,
+        )
         matching = _cards_by_key.get(key, [])
         if len({card.id for card in matching}) > 1:
             return ReviewWorkResult(
@@ -244,6 +220,32 @@ def reconcile_review_work(
         reviewer = dict(item["reviewer_candidates"][0])
         reviewer_identity = str(reviewer["identity"])
         source_owner = str(item["source_owner"])
+        # The guarded dispatcher supplies these exact native outcome bindings.
+        # Legacy Link manifests retain their existing identity and behavior.
+        guarded = bool(item.get("source_revision"))
+        if attempt:
+            from .review_replacement import replacement_binding
+
+            lineage = replacement_binding(home, source_card, head_revision)
+            if lineage.get("review_card_id") != card_id or any(
+                item.get(k) != v for k, v in lineage.items() if k != "review_card_id"
+            ):
+                raise ValueError("review replacement authorization missing or changed")
+            expected_meta.update({k: v for k, v in lineage.items() if k != "review_card_id"})
+        if guarded:
+            expected_meta.update(
+                {
+                    key: item[key]
+                    for key in (
+                        "source_revision",
+                        "producer_identity",
+                        "candidate_evidence_sha256",
+                        "candidate_path",
+                        "candidate_tree",
+                        "candidate_ref",
+                    )
+                }
+            )
         if created:
             try:
                 store.create(
@@ -256,13 +258,47 @@ def reconcile_review_work(
                         description=(
                             f"Producer identity: {source_owner}. "
                             f"Candidate evidence sha256={evidence_sha256}."
+                            + (
+                                f" Candidate evidence: {item['candidate_path']}. "
+                                f"Candidate commit: {head_revision}. "
+                                f"Candidate tree: {item['candidate_tree']}. "
+                                f"Candidate ref: {item['candidate_ref']}. "
+                                "In the checked-out source, verify the same report bytes at "
+                                f"docs/evidence/agents/{source_card}/COMPLETION-EVIDENCE.md. "
+                                "Review only; do not implement or modify the producer's source. "
+                                "This review explicitly requests a commit: you must create a "
+                                "local review-evidence commit containing COMPLETION-EVIDENCE.md "
+                                "and REVIEW-DECISION.json under "
+                                f"docs/evidence/agents/{card_id}/ "
+                                "before handoff, for any verdict; "
+                                "do not modify source or tests and no push. "
+                                "Run git rev-parse HEAD and report the resulting reviewer "
+                                "evidence commit separately; "
+                                "it must be a new commit beyond the reviewed candidate. "
+                                "Keep source_head equal to the reviewed candidate "
+                                f"{head_revision}, not the reviewer evidence commit. "
+                                "Run git status --porcelain: the worktree must be clean "
+                                "before handoff. "
+                                "Original producer contract (review context, not implementation "
+                                f"authority): {source.description}"
+                                if guarded
+                                else ""
+                            )
                         ),
                         created_by="link",
                         created_at=source.created_at,
                         acceptance_criteria=[
                             f"Review source card {source_card} at exact head {head_revision}.",
                             "Return a terminal PASS, FAIL, or BLOCKED verdict with evidence.",
-                        ],
+                        ]
+                        + (
+                            [
+                                f"Verify producer criterion: {criterion}"
+                                for criterion in source.acceptance_criteria
+                            ]
+                            if guarded
+                            else []
+                        ),
                         initial_labels=[
                             "review",
                             "seat-seraph",
@@ -279,6 +315,9 @@ def reconcile_review_work(
             created_card = store.fold(card_id)
             if created_card is not None:
                 _cards_by_key[key] = [created_card]
+        if created or (guarded and existing.owner is None and existing.status.value == "backlog"):
+            # A lost create acknowledgement must finish the same initial events,
+            # never mint another card or move an already claimed review backward.
             store.append_event(
                 card_id,
                 "link",
@@ -365,18 +404,21 @@ def reconcile_review_work(
         source_lock.__exit__(None, None, None)
 
 
-def _review_card_index(cards: Iterable[Any]) -> dict[tuple[str, str, str, str, str], list[Any]]:
+def _review_card_index(cards: Iterable[Any]) -> dict[tuple[str, ...], list[Any]]:
     """Index existing Link review cards in one CardStore scan."""
 
-    result: dict[tuple[str, str, str, str, str], list[Any]] = {}
+    result: dict[tuple[str, ...], list[Any]] = {}
     for card in cards:
         source = str(card.meta.get("link_source_card") or "")
         head = str(card.meta.get("link_head_revision") or "")
         generation = str(card.meta.get("link_card_generation") or "")
         evidence = str(card.meta.get("link_evidence_sha256") or "")
         review_class = str(card.meta.get("link_review_class") or "")
+        attempt = str(card.meta.get("review_attempt") or "")
         if source and head and generation and evidence and review_class:
-            result.setdefault((source, head, generation, evidence, review_class), []).append(card)
+            result.setdefault(
+                (source, head, generation, evidence, review_class, attempt), []
+            ).append(card)
     return result
 
 

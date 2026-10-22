@@ -11,7 +11,7 @@ from .review_admission import (
     governed_review_metadata,
     governed_review_seat,
     qualified_reviewer_seats,
-    reviewer_capacity,
+    reviewer_capacity_evaluation,
 )
 
 
@@ -35,9 +35,11 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
         "meta": card.meta,
     }
     metadata = governed_review_metadata(core, card.labels)
-    busy, target = reviewer_capacity(
+    capacity = reviewer_capacity_evaluation(
         home, core, card.labels, metadata[0] if metadata else "", "diagnostic-reviewer"
     )
+    busy = sum(capacity["occupancy"].values())
+    target = int(capacity["logical_available"])
     labels = {str(label).strip().lower() for label in card.labels}
     reasons = list(
         governed_review_gate_reasons(
@@ -45,7 +47,7 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
             card.labels,
             dependency_blocked=dependency_blocked,
             owned=card.owner is not None,
-            capacity_available=busy < target,
+            capacity_available=capacity["reason"] == "eligible",
             dependency_blocker_holds=dependency_blocker_unresolved(home, core, card.labels),
         )
     )
@@ -58,5 +60,11 @@ def diagnose(home: Path, card_id: str) -> dict[str, object]:
         "eligible": not reasons,
         "reasons": list(dict.fromkeys(reasons)),
         "seat": governed_review_seat(card.labels, qualified_reviewer_seats(core)),
-        "capacity": {"busy": busy, "target": target},
+        "capacity": {
+            "busy": busy,
+            "target": target,
+            "available": int(capacity["available"]),
+            "reason": capacity["reason"],
+            "revision": capacity["capacity_revision"],
+        },
     }

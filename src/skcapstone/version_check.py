@@ -140,7 +140,12 @@ def check_versions(
 
         up_to_date = True
         if installed and latest:
-            up_to_date = installed == latest
+            from packaging.version import InvalidVersion, Version
+
+            try:
+                up_to_date = Version(installed) >= Version(latest)
+            except InvalidVersion:
+                up_to_date = installed == latest
 
         report.packages.append(
             PackageVersion(

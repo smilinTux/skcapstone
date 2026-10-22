@@ -60,7 +60,7 @@ class ForgejoClient:
             or any(not query[key][0].isdigit() for key in ("page", "limit") if key in query)
             or ("state" in query and query["state"][0] != "open")
             or not (
-                parsed.path in {"/api/v1/user", "/api/v1/user/teams"}
+                parsed.path in {"/api/v1/user", "/api/v1/user/teams", _ROOT}
                 or parsed.path.startswith(_ROOT + "/")
             )
         ):

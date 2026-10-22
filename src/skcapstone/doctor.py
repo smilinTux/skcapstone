@@ -511,7 +511,7 @@ def _check_estate_sknoded_interval(unit_dir: Path) -> Check:
     )
 
 
-def _check_estate_seat_units(unit_dir: Path) -> Check:
+def _check_estate_seat_units(unit_dir: Path, home: Path) -> Check:
     """Verify the bounded lifecycle seat timers are installed on this host.
 
     Args:
@@ -527,6 +527,21 @@ def _check_estate_seat_units(unit_dir: Path) -> Check:
             passed=False,
             unknown=True,
             detail=f"{unit_dir} does not exist, so no unit can be observed",
+            category="estate",
+        )
+    from .estate import local_host
+
+    control = home / "coordination" / "seat-control-plane.json"
+    try:
+        elected = json.loads(control.read_text(encoding="utf-8")).get("active_host")
+    except (OSError, ValueError, AttributeError):
+        elected = None
+    if elected and elected != local_host():
+        return Check(
+            name="estate:seat-units",
+            description="Bounded lifecycle seat units installed",
+            passed=True,
+            detail=f"seat host is {elected}; this host is not elected",
             category="estate",
         )
     missing = [name for name in SEAT_CYCLE_TIMERS if not (unit_dir / name).is_file()]
@@ -713,7 +728,7 @@ def _check_estate(home: Path) -> list[Check]:
         )
         return checks
     checks.append(_check_estate_sknoded_interval(unit_dir))
-    checks.append(_check_estate_seat_units(unit_dir))
+    checks.append(_check_estate_seat_units(unit_dir, home))
     checks.append(_check_estate_unit_entrypoints(unit_dir))
     return checks
 
@@ -1177,13 +1192,25 @@ def _check_store_integrity(home: Path) -> list[Check]:
     coord_dir = home / "coordination"
     card_cores = sorted(cards_dir.glob("*/core.json"))
     card_events = sorted(cards_dir.glob("*/events/*.jsonl"))
-    legacy_jsonl = sorted((coord_dir / "archive").glob("*.jsonl")) + sorted(
-        (coord_dir / "card_events").glob("*.jsonl")
-    )
+    archive_jsonl = sorted((coord_dir / "archive").glob("*.jsonl"))
+    overlay_jsonl = sorted((coord_dir / "card_events").glob("*.jsonl"))
     scanned_j, problems_j = _scan_json_store(card_cores, jsonl=False)
-    scanned_l, problems_l = _scan_json_store(card_events + legacy_jsonl, jsonl=True)
-    card_scanned = scanned_j + scanned_l
-    card_problems = problems_j + problems_l
+    scanned_l, problems_l = _scan_json_store(card_events + archive_jsonl, jsonl=True)
+    from skcoord.card_event_recovery import scan_overlay_records
+
+    overlay_problems = scan_overlay_records(home)
+    card_scanned = scanned_j + scanned_l + len(overlay_jsonl)
+    card_problems = (
+        problems_j
+        + problems_l
+        + [
+            (
+                f"{item['file']} line {item['line']}: {item['error_type']}"
+                + (f" card_hint={item['card_hint']}" if item.get("card_hint") else "")
+            )
+            for item in overlay_problems
+        ]
+    )
     checks.append(
         Check(
             name="store:cards",
@@ -1192,13 +1219,13 @@ def _check_store_integrity(home: Path) -> list[Check]:
             detail=(
                 f"{card_scanned} file(s) OK"
                 if not card_problems
-                else f"{len(card_problems)} corrupt: {'; '.join(card_problems[:3])}"
+                else f"{len(card_problems)} rejected: {'; '.join(card_problems[:3])}"
             ),
             fix=(
                 ""
                 if not card_problems
-                else "Repair or remove the corrupt store file(s); "
-                "append-only logs must be valid JSON per line"
+                else "Use the supported hash-pinned recovery command for rejected overlay "
+                "records; append-only logs must be schema-valid JSON per line"
             ),
             category="store",
         )
@@ -1842,7 +1869,7 @@ def _check_identity_consistency(home: Path) -> list[Check]:
                 passed=False,
                 unknown=True,
                 detail=(
-                    "UNKNOWN: capauth.canonical_subject not importable: " f"{subject_import_error}"
+                    f"UNKNOWN: capauth.canonical_subject not importable: {subject_import_error}"
                 ),
                 category="identity",
             )
