@@ -16,6 +16,46 @@ metadata: {"clawdbot":{"requires":{"bins":["skcapstone","skmemory"]},"install":[
 
 ---
 
+## Agent Context Pitfall: pin the agent, or you may report a legacy shadow agent
+
+`skcapstone` resolves whose state to open from `SKAGENT`, `SKCAPSTONE_AGENT` and
+`SKMEMORY_AGENT`, then from `SK_DEFAULT_AGENT` if that agent exists, then from
+the single installed agent if there is only one. With several agents installed
+and no selector set, it resolves to nothing. There is no built-in default agent:
+the `DEFAULT_AGENT` constant reads `SK_DEFAULT_AGENT` itself, so it adds no
+fallback of its own.
+
+**Resolving to nothing is not the same as failing.** `agent_home(None)` then
+returns the shared root `~/.skcapstone/` instead of `~/.skcapstone/agents/<name>/`,
+which is deliberate for node-level resources. The trap is that on a node migrated
+from the old single-agent layout, that root still holds a complete pre-migration
+agent: `memory/`, `soul/`, trust state and seeds. So `skcapstone status` does not
+error. It renders that stale tree as a healthy agent.
+
+Measured on noroc2027 on 2026-10-22, with the three selectors unset and 29 agents
+installed:
+
+    $ skcapstone status
+    Chef v0.15.289   CONSCIOUS
+    Memory   SKMemory   ACTIVE   614 memories (0L/0M/614S)
+    Trust    Cloud 9    ACTIVE   depth=9.0 trust=0.97 love=1.0  ENTANGLED
+
+Every pillar reads ACTIVE. The identity, the name and all 614 memories belong to
+`~/.skcapstone/memory/`, a tree nothing has written to in months, not to the
+agent that ran the command (`lumina`, 46,091 memories).
+
+**Rule: pin the agent explicitly.** Do not rely on resolution for your own state.
+
+    SKAGENT=lumina skcapstone status
+
+**`status` will not catch this for you; `doctor` will.** The check is
+`identity:self`, which fails with "resolved to floor: 'local'" and the fix hint
+"Set SKAGENT (or run `skswitch <agent>`)". A green `status` is therefore not
+evidence that you read the right agent, and an unexpectedly small memory count
+with every pillar ACTIVE is the signature of this specific fallback. See the
+matching note in skmemory's SKILL.md, whose resolver refuses outright rather
+than falling back.
+
 ## Description
 
 SKCapstone is the unified sovereign agent runtime — a complete framework for deploying, managing, and coordinating AI agents with persistent identity, memory, trust, security, and P2P sync. It provides the core infrastructure that makes an AI agent sovereign: a PGP-backed identity, multi-layer memory, Cloud 9 trust metrics, cryptographic security auditing, and Syncthing-based decentralized synchronization across devices and peers.
