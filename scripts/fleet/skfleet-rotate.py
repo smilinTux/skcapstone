@@ -2348,8 +2348,9 @@ def publish_live(sessions, units=()):
                        "worker remains live; bounded escalation recorded"
                     % (HOST, _cid, worker, path, int(age)))
     try:
-        os.makedirs(LIVE, exist_ok=True)
-        p = os.path.join(LIVE, HOST + ".json")
+        lane_directory = os.path.join(os.path.dirname(LIVE), "fleet-lanes")
+        os.makedirs(lane_directory, exist_ok=True)
+        p = os.path.join(lane_directory, HOST + ".json")
         tmp = p + ".new"
         workers = []
         for card in cards:
@@ -2390,7 +2391,9 @@ def reporting_capacity():
     """Return total free lanes advertised by each currently reporting host."""
     capacity = {}
     now = time.time()
-    for path in glob.glob(os.path.join(LIVE, "*.json")):
+    lane_directory = os.path.join(os.path.dirname(LIVE), "fleet-lanes")
+    for path in (glob.glob(os.path.join(LIVE, "*.json")) +
+                 glob.glob(os.path.join(lane_directory, "*.json"))):
         try:
             with open(path, encoding="utf-8") as fh:
                 snap = json.load(fh)
@@ -2437,6 +2440,11 @@ def live_report_health(expected_hosts=None, now=None):
         if age > LIVE_FRESH:
             faults.append({"host": host, "reason": "stale",
                            "age_seconds": int(age), "detail": ""})
+            continue
+        if snap.get("complete") is not True:
+            faults.append({"host": host, "reason": "incomplete",
+                           "age_seconds": int(age),
+                           "detail": "tmux and systemd completeness not established"})
             continue
         stamps.append(ts)
         reporting.add(host)
@@ -4266,6 +4274,8 @@ def _blocker_change_epoch(cid,verdict_ts,val):
         changes=[_human_resolution_epoch(cid,ref,threshold) for ref in referents]
         return max(changes) if changes and all(changes) else 0
     if category=="capability":
+        if referents==("git-author-identity",):
+            return _authored_change_epoch(cid,threshold)
         if not all(_AC_REFERENT_RE.match(ref) or ref=="free" for ref in referents):
             return 0
         return _authored_change_epoch(cid,threshold)
@@ -4479,6 +4489,11 @@ def blocked_backoff(cid):
         # Codex. After that stronger route has also returned capability, park the
         # card until authored state changes so the fleet does not loop forever.
         if reason[0]=="capability":
+            # Operational identity needs an authored correction, not a model
+            # escalation. Consume only one exact retry for that generation.
+            if reason[1]==("git-author-identity",):
+                change=_blocker_change_epoch(cid,ts,val)
+                return not (change and _wake_retry_available(cid,change))
             if not all(_AC_REFERENT_RE.match(ref) or ref=="free" for ref in reason[1]):
                 return True
             strong_at=_strong_launched_at.get(cid,0)
@@ -8433,6 +8448,7 @@ for _pick_index,(_LANE,(_,_,cid,core,_labels,_nb)) in enumerate(picks):
       "  dependency  referent card:<id>      another card must complete first\n"
       "  human       referent approval:<what> only a person can supply this\n"
       "  capability  referent ac:<n> or free  the card is solvable, you could not do it\n"
+      "  capability  referent git-author-identity  missing effective Git identity; waits for authored correction\n"
       "  card        referent ac:<n>          a criterion is unsatisfiable AS WRITTEN\n"
       "Rules that make the value trustworthy:\n"
       "- Cite a referent that EXISTS. A dependency you name is checked against the\n"
