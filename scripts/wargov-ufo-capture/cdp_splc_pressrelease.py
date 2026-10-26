@@ -4,11 +4,12 @@
 scraping any /opa/pr/ or /news/ links the rendered page exposes.
 """
 from __future__ import annotations
+import os
 import json, re, sys, time, urllib.request
 from pathlib import Path
 import websocket
 
-CDP_HTTP = "http://127.0.0.1:9222"
+CDP_HTTP = os.environ.get("LUMINA_CDP_HTTP", "http://127.0.0.1:9232")  # lumina-x-browser; moved off 9222 on 2026-10-25
 SEARCH_URL = "https://www.justice.gov/news?search_api_fulltext=Southern%20Poverty%20Law%20Center"
 OUT = Path("/home/cbrd21/clawd/skills/substance-lens/captures/splc-doj-2026-06-03")
 
