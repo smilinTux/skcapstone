@@ -8,6 +8,7 @@ Three sub-tasks:
 """
 from __future__ import annotations
 
+import os
 import base64
 import json
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 
 import websocket
 
-CDP_HTTP = "http://127.0.0.1:9222"
+CDP_HTTP = os.environ.get("LUMINA_CDP_HTTP", "http://127.0.0.1:9232")  # lumina-x-browser; moved off 9222 on 2026-10-25
 
 PRESS_URL = "https://www.war.gov/News/Releases/Release/Article/4499305/department-of-war-publishes-second-release-of-unidentified-anomalous-phenomena/"
 THUMB_BASE = "https://www.war.gov/medialink/ufo/052226/release_02/thumbnails"
