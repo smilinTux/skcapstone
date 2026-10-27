@@ -1223,19 +1223,19 @@ class DaemonService:
             logger.info("Daemon stopped.")
 
     def _journal_shutdown(self) -> None:
-        """Write a closing journal entry on graceful shutdown (best-effort)."""
-        try:
-            from skmemory.journal import Journal, JournalEntry
+        """Record a graceful shutdown in the daemon log, NOT the agent journal.
 
-            entry = JournalEntry(
-                title="Daemon shutdown",
-                emotional_summary="peaceful",
-                moments=["Graceful shutdown - drained, flushed, and signed off."],
-            )
-            Journal().write_entry(entry)
-            logger.info("Shutdown: journal entry written")
-        except Exception as exc:
-            logger.debug("Shutdown journal write failed: %s", exc)
+        This used to append a "Daemon shutdown" entry to the agent's
+        journal.md. That file lives in the Syncthing-shared agent home and
+        every host runs its own daemon for the same agent, so a fleet-wide
+        restart (the chi rollout restarts them together at 04:15) had N hosts
+        appending to one synced file within seconds. Syncthing cannot merge
+        appends: each restart produced sync-conflict copies of the journal on
+        every host, and whichever session entry was unsynced at that moment
+        was stranded in a conflict copy. The entry carried no information
+        ("peaceful, drained"), so it now goes to the per-host log instead.
+        """
+        logger.info("Shutdown: graceful (drained, flushed, signed off)")
 
     def run_forever(self) -> None:
         """Block until stop is signaled.

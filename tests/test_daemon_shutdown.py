@@ -395,13 +395,15 @@ class TestGracefulStop:
 
         assert (tmp_path / SHUTDOWN_STATE_FILE).exists()
 
-    def test_stop_writes_peaceful_journal_entry(self, tmp_path: Path) -> None:
-        """stop() writes a 'Daemon shutdown' journal entry with a peaceful tone."""
-        svc = _make_service(tmp_path)
-        written: list = []
+    def test_stop_does_not_write_synced_journal(self, tmp_path: Path) -> None:
+        """stop() must not append to the agent journal.
 
+        journal.md is Syncthing-shared and every host runs a daemon for the
+        same agent, so a shutdown entry written by N hosts at once forks the
+        file into sync-conflict copies on every fleet restart.
+        """
+        svc = _make_service(tmp_path)
         fake_journal = MagicMock()
-        fake_journal.write_entry.side_effect = lambda e: written.append(e)
         fake_module = SimpleNamespace(
             Journal=MagicMock(return_value=fake_journal),
             JournalEntry=lambda **kw: SimpleNamespace(**kw),
@@ -409,9 +411,7 @@ class TestGracefulStop:
         with patch.dict("sys.modules", {"skmemory.journal": fake_module}):
             svc.stop()
 
-        assert len(written) == 1
-        assert written[0].title == "Daemon shutdown"
-        assert written[0].emotional_summary == "peaceful"
+        fake_journal.write_entry.assert_not_called()
 
     def test_stop_is_idempotent(self, tmp_path: Path) -> None:
         """A second stop() call is a no-op - components stopped only once."""

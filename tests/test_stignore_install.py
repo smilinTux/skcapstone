@@ -51,6 +51,14 @@ class TestTemplateContents:
             "**/skcomms/acks",
             ".stversions",
             "**/.stversions",
+            # Per-host runtime state inside agent homes: written by every
+            # host's daemon at once, forked on each fleet restart.
+            "**/memory/wal",
+            "**/daemon.pid.identity.json",
+            "**/shutdown_state.json",
+            "**/trust/trust.json",
+            "**/security/audit.log",
+            "**/comms/outbox-retry",
         ):
             assert pattern in text, f"missing derived-exclude rule: {pattern!r}"
 
