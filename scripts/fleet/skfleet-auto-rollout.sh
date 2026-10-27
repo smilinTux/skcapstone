@@ -36,6 +36,16 @@ QUIET_UNITS="${SKFLEET_AUTO_ROLLOUT_QUIET_UNITS:-}"
 QUIET_WAIT="${SKFLEET_AUTO_ROLLOUT_QUIET_WAIT:-600}"
 # Last main rolled to every host; absent until the first full rollout.
 ROLLED_STATE="${SKFLEET_AUTO_ROLLOUT_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/skfleet-auto-rollout/rolled-main}"
+# Consecutive HALTed runs, kept next to ROLLED_STATE. A halted main is retried
+# every tick, and each failure only reached the journal (sk-alert is not
+# installed on chi) plus a skmail per tick that reads as noise: the chiap01
+# readiness halt sat from 2026-10-25 to 10-27 while chiap02/04 kept an old
+# main. After HALT_ESCALATE halts in a row, capture ONE GTD item per stuck
+# episode (deduped by source-ref) and send an ESCALATE skmail.
+HALT_STREAK="$(dirname "$ROLLED_STATE")/halt-streak"
+HALT_ESCALATE="${SKFLEET_AUTO_ROLLOUT_HALT_ESCALATE:-5}"
+# Never restart services on a host while an agent is in a live call.
+CALL_UNITS="${SKFLEET_AUTO_ROLLOUT_CALL_UNITS:-skcall-join@*}"
 
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
 
@@ -110,9 +120,44 @@ fi
 subject=$(git -C "$REPO" log -1 --format=%s "$target")
 log "rolling main ${target:0:8} ($subject) from ${head:0:8} to: $HOSTS"
 
+record_halt() {
+  local host="$1" count=0 since now
+  now=$(date -u +%FT%TZ)
+  since="$now"
+  if [ -r "$HALT_STREAK" ]; then
+    read -r count since _ < "$HALT_STREAK" || true
+  fi
+  count=$(( ${count:-0} + 1 ))
+  mkdir -p "$(dirname "$HALT_STREAK")" && printf '%s %s %s\n' "$count" "${since:-$now}" "$host" > "$HALT_STREAK"
+  if [ "$count" -ge "$HALT_ESCALATE" ]; then
+    local text="chi auto-rollout HALTED $count runs in a row since ${since:-$now} (latest at $host, main ${target:0:8}); hosts after $host keep an old main. Read: journalctl --user -u skfleet-auto-rollout on $(hostname -s), and $host readiness verdict. See reference_chi_auto_rollout_timer."
+    log "ESCALATE: $text"
+    # source-ref is per episode, so this creates one item and later ticks dedupe.
+    "$SKCAPSTONE" gtd capture "$text" --source manual --context @computer \
+      --source-ref "skfleet-auto-rollout-halt:$(hostname -s):${since:-$now}" >/dev/null 2>&1 \
+      || log "gtd capture of the halt escalation failed"
+    if [ "$count" -eq "$HALT_ESCALATE" ]; then
+      notify "ESCALATE auto-rollout stuck at $host" "$text"
+      command -v sk-alert >/dev/null 2>&1 && sk-alert send "$text" >/dev/null 2>&1
+    fi
+  fi
+}
+
+call_active() {
+  # Captured, not piped into grep -q: under pipefail an early grep exit can
+  # SIGPIPE ssh and turn a live call into "no call".
+  local out
+  out=$("$SSH" -o BatchMode=yes "$1" "systemctl --user list-units '$CALL_UNITS' --state=active,activating,deactivating --no-legend --plain" 2>/dev/null)
+  [ -n "${out//[[:space:]]/}" ]
+}
+
 rolled=()
 for host in $HOSTS; do
   ok=0
+  if [ -n "$CALL_UNITS" ] && call_active "$host"; then
+    log "$host has an active call ($CALL_UNITS); deferring main ${target:0:8} there and after to the next tick"
+    exit 0
+  fi
   for attempt in $(seq 1 "$ATTEMPTS"); do
     out=$("$SKCAPSTONE" fleet rollout --node "$host" --repo-root "$REPO" --remote-repo-root "~/deploy/skcapstone" --apply 2>&1 | tail -1)
     log "$host try$attempt: $out"
@@ -131,6 +176,7 @@ for host in $HOSTS; do
   if [ "$ok" != 1 ]; then
     log "HALT: $host did not pass its gate after $ATTEMPTS tries; later hosts keep the previous main"
     notify "auto-rollout HALTED at $host" "main ${target:0:8} ($subject) rolled to: ${rolled[*]:-none}; $host failed its gate. Later hosts not touched."
+    record_halt "$host"
     exit 1
   fi
   "$SSH" -o BatchMode=yes "$host" 'systemctl --user daemon-reload; systemctl --user restart sknoded.service' >/dev/null 2>&1 || log "$host: sknoded restart reported an error"
@@ -138,6 +184,7 @@ for host in $HOSTS; do
 done
 
 mkdir -p "$(dirname "$ROLLED_STATE")" && printf '%s\n' "$target" > "$ROLLED_STATE"
+rm -f "$HALT_STREAK"
 log "ROLLED main ${target:0:8} to: ${rolled[*]}"
 notify "ROLLED main ${target:0:8}" "$subject -> ${rolled[*]} (gates passed)"
 exit 0
