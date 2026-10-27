@@ -320,7 +320,7 @@ class TestStrictAndCategory:
 
         monkeypatch.setattr(
             "skcapstone.doctor.run_diagnostics",
-            lambda home, deep=False: DiagnosticReport(checks=list(checks)),
+            lambda home, deep=False, **_: DiagnosticReport(checks=list(checks)),
         )
         result = CliRunner().invoke(main, ["doctor", *args])
         return result, _json
@@ -390,7 +390,7 @@ class TestJsonOutIsActuallyMachineReadable:
         from skcapstone.cli import main
         from skcapstone.doctor import DiagnosticReport
 
-        def _noisy(home, deep=False):
+        def _noisy(home, deep=False, **_):
             print("liboqs-python faulthandler is disabled")
             return DiagnosticReport(
                 checks=[Check(name="source:a", description="a", passed=True, category="source")]
@@ -410,7 +410,7 @@ class TestJsonOutIsActuallyMachineReadable:
         from skcapstone.cli import main
         from skcapstone.doctor import DiagnosticReport
 
-        def _noisy(home, deep=False):
+        def _noisy(home, deep=False, **_):
             print("SOME-BACKEND-BANNER")
             return DiagnosticReport(
                 checks=[Check(name="source:a", description="a", passed=True, category="source")]
