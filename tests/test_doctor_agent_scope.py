@@ -264,6 +264,9 @@ def test_all_agents_sweeps_seats_in_process_and_reports_only_problems(tmp_path):
     by = _by_name(checks)
     assert by["memory:drift:pi-codex-7"].passed is False
     assert "flat_only=1" in by["memory:drift:pi-codex-7"].detail
+    # A bare `skmemory profile sync` unregisters every profile without a
+    # config/skmemory.yaml; the suggestion must always lead with a dry run.
+    assert "`skmemory profile sync --dry-run` first" in by["memory:drift:pi-codex-7"].fix
     assert "memory:drift:pi-codex-8" not in by
     scope = by["memory:drift:scope"]
     assert "swept 30/30 other" in scope.detail and "1 with problems" in scope.detail
@@ -274,14 +277,16 @@ def test_all_agents_sweep_stops_at_budget(tmp_path):
     home = _estate(tmp_path, seats=[f"pi-{i}" for i in range(20)])
     with patch(
         "skcapstone.doctor._readonly_flat_drift",
-        side_effect=lambda p: time.sleep(0.05)
-        or {
-            "flat_total": 0,
-            "sqlite_total": 0,
-            "sqlite_only": 0,
-            "flat_only": 0,
-            "has_index": False,
-        },
+        side_effect=lambda p: (
+            time.sleep(0.05)
+            or {
+                "flat_total": 0,
+                "sqlite_total": 0,
+                "sqlite_only": 0,
+                "flat_only": 0,
+                "has_index": False,
+            }
+        ),
     ):
         checks = _check_memory_drift(home, all_agents=True, budget=0.2)
     scope = _by_name(checks)["memory:drift:scope"]
