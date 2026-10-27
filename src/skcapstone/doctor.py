@@ -2490,10 +2490,16 @@ def _check_memory_drift(
                         f"flat_only={drift['flat_only']} flat={drift['flat_total']} "
                         f"indexed={drift['sqlite_total']}"
                     ),
+                    # `skmemory profile sync` rebuilds the whole registry from
+                    # the folders that carry config/skmemory.yaml, so a bare
+                    # run unregisters every profile without one (7 of 13 on
+                    # noroc2027, 2026-10-27). Always dry-run it first.
                     fix=(
-                        "not a registered memory profile: register it "
-                        "(`skmemory profile sync`) or archive it "
-                        "(`skcapstone agents stale --archive`)"
+                        "not a registered memory profile: run `skmemory profile sync "
+                        "--dry-run` first (sync rebuilds the registry from folders with "
+                        "config/skmemory.yaml and DROPS any registered profile without "
+                        "one), then register it; a worker seat goes via "
+                        "`skcapstone agents stale --archive`"
                     ),
                     category="memory",
                 )
