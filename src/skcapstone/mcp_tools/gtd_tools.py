@@ -567,7 +567,21 @@ async def _handle_gtd_capture(args: dict) -> list[TextContent]:
                     "inbox_count": len(inbox),
                 }
             )
-        item = next((it for it in inbox if it.get("id") == new_id), {})
+        item = next((it for it in inbox if it.get("id") == new_id), None)
+        if item is None:
+            # Non-owner host: skos spooled the capture for the GTD owner host
+            # (it lands in inbox.json there), so it is not in the local list
+            # yet. Journal the item as captured rather than an empty dict,
+            # which would fold into the inbox as a blank entry.
+            item = {
+                "id": new_id,
+                "text": text,
+                "source": source,
+                "source_ref": source_ref,
+                "privacy": privacy,
+                "context": context,
+                "status": "inbox",
+            }
         _journal("capture", new_id, item, to="inbox")
         return _json_response(
             {
