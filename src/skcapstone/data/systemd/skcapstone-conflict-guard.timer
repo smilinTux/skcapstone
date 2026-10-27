@@ -1,0 +1,11 @@
+[Unit]
+Description=SKCapstone sync-conflict guard timer (daily, spread so hosts do not write GTD together)
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+RandomizedDelaySec=3h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
