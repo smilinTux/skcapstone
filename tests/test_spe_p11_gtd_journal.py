@@ -196,3 +196,20 @@ def test_a_corrupt_line_does_not_sink_the_fold():
 
     assert len(gtd_journal.read_all()) == 1
     assert len(gtd_journal.fold()["inbox"]) == 1
+
+
+def test_spooled_capture_journals_the_item_not_an_empty_dict(monkeypatch):
+    """On a non-owner host skos spools the capture for the GTD owner host, so the
+    new id is not in the local inbox yet. The event must still carry the item,
+    or the fold would place a blank entry in the inbox."""
+    from skcapstone.mcp_tools import gtd_tools
+
+    if not gtd_tools._HAVE_SKOS_SINK:
+        pytest.skip("skos sink not installed")
+    monkeypatch.setattr(gtd_tools, "_skos_capture", lambda c: "abc123def456")
+    result = _capture("cron FAILED: x", source="manual", source_ref="cron:x@d")
+    assert result["captured"] and result["id"] == "abc123def456"
+    (ev,) = _events()
+    assert ev["item"]["id"] == "abc123def456"
+    assert ev["item"]["text"] == "cron FAILED: x"
+    assert ev["item"]["source_ref"] == "cron:x@d"
