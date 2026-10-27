@@ -1456,6 +1456,7 @@ class DreamingEngine:
         """
         import uuid as _uuid
 
+        from .mcp_tools import gtd_tools as _gtd_tools
         from .mcp_tools.gtd_tools import _atomic_write_json, _store_lock_at
 
         gtd_dir = self._home / "coordination" / "gtd"
@@ -1484,6 +1485,22 @@ class DreamingEngine:
         items.extend(_item(f"[Dream question] {q}") for q in result.questions)
 
         if not items:
+            return
+
+        # Not the GTD owner host: queue the items for the owner instead of
+        # rewriting someday-maybe.json here (smilinTux/skos#35, #37).
+        owner = _gtd_tools._spool_owner(gtd_dir)
+        if owner:
+            try:
+                for it in items:
+                    _gtd_tools._skos_spool_append(it, "someday-maybe")
+                logger.info(
+                    "Queued %d dream items for GTD someday-maybe (owner %s applies them)",
+                    len(items),
+                    owner,
+                )
+            except OSError as exc:
+                logger.error("Failed to spool GTD someday-maybe items: %s", exc)
             return
 
         # SPE P1 sprint (83482526): this was a bare write_text, so it was the
