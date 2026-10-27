@@ -98,6 +98,62 @@ except Exception:  # skos not installed: standalone skcapstone
     _skos_capture = None
     _HAVE_SKOS_SINK = False
 
+# Single-owner writes (smilinTux/skos#35, #37). The lists are whole-file JSON in
+# a Syncthing-shared folder, so only the host named in ``OWNER`` may rewrite
+# them; every other host appends its mutations to its own spool and the owner
+# applies them on drain. Imported separately from the sink above so an older
+# skos without the mutation API still serves captures. With no skos, no OWNER
+# file, or on the owner itself, every handler writes directly, as before.
+try:  # pragma: no cover - both branches exercised across environments
+    from skos.gtd_ingest import gtd_dir as _skos_gtd_dir
+    from skos.gtd_ingest import is_owner as _skos_is_owner
+    from skos.gtd_ingest import owner_host as _skos_owner_host
+    from skos.gtd_ingest import spool_append as _skos_spool_append
+    from skos.gtd_ingest import spool_mutation as _skos_spool_mutation
+except Exception:  # skos missing, or too old to spool mutations
+    _skos_gtd_dir = None
+    _skos_is_owner = None
+    _skos_owner_host = None
+    _skos_spool_append = None
+    _skos_spool_mutation = None
+
+# Live lists, i.e. every list a not-yet-done item can be in.
+_LIVE_LISTS = list(_GTD_LISTS)
+
+
+def _spool_owner(gtd_dir: Path | None = None) -> str | None:
+    """The GTD owner host when THIS host must spool list mutations, else None.
+
+    None means "write directly": skos (or its mutation API) is unavailable, no
+    owner is configured, this host is the owner, or skos resolves a different
+    store directory than the one being written (so its OWNER file says nothing
+    about this store). Never raises: an owner check that fails falls back to
+    the direct write, which is the pre-spool behavior."""
+    if _skos_spool_mutation is None or _skos_is_owner is None:
+        return None
+    try:
+        if _skos_is_owner():
+            return None
+        target = Path(gtd_dir) if gtd_dir is not None else _gtd_dir()
+        if Path(_skos_gtd_dir()).resolve() != target.resolve():
+            return None
+        return _skos_owner_host()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("GTD owner check failed, writing directly: %s", exc)
+        return None
+
+
+def _queued(owner: str, payload: dict) -> list[TextContent]:
+    """Response for a mutation spooled for the owner: honest about what changed."""
+    return _json_response(
+        {
+            **payload,
+            "queued": True,
+            "owner": owner,
+            "message": f"queued for owner {owner}; the lists change when it drains the spool",
+        }
+    )
+
 
 @contextmanager
 def _store_lock_at(gtd_dir: Path):
@@ -667,6 +723,17 @@ async def _handle_gtd_status(_args: dict) -> list[TextContent]:
     )
 
 
+def _clarify_destination(actionable: bool, steps: str, delegate_to: str | None) -> tuple[str, str]:
+    """(status, list) a clarified inbox item is routed to."""
+    if actionable and delegate_to:
+        return "waiting", "waiting-for"  # delegated
+    if actionable and steps == "multi":
+        return "project", "projects"  # multi-step
+    if actionable:
+        return "next", "next-actions"  # single action
+    return "someday", "someday-maybe"  # not actionable
+
+
 async def _handle_gtd_clarify(args: dict) -> list[TextContent]:
     """Clarify an inbox item and route it to the appropriate GTD list."""
     item_id = args.get("item_id", "").strip()
@@ -687,6 +754,40 @@ async def _handle_gtd_clarify(args: dict) -> list[TextContent]:
         priority = "medium"
     if energy not in _VALID_ENERGIES:
         energy = "medium"
+
+    owner = _spool_owner()
+    if owner:
+        item = next((it for it in _load_list("inbox") if it.get("id") == item_id), None)
+        if item is None:
+            return _error_response(f"Item '{item_id}' not found in inbox")
+        now = datetime.now(timezone.utc).isoformat()
+        status, dest_name = _clarify_destination(actionable, steps, delegate_to)
+        patch = {
+            "context": context or item.get("context"),
+            "priority": priority,
+            "energy": energy,
+            "clarified_at": now,
+            "status": status,
+        }
+        if status == "waiting":
+            patch["delegate_to"] = delegate_to
+        item = {**item, **patch}
+        _skos_spool_mutation("clarify", item_id, to=dest_name, src=["inbox"], patch=patch, ts=now)
+        _journal("clarify", item_id, item, to=dest_name, src="inbox")
+        return _queued(
+            owner,
+            {
+                "clarified": False,
+                "id": item_id,
+                "text": item.get("text") or item.get("title") or "",
+                "destination": dest_name,
+                "status": status,
+                "priority": priority,
+                "energy": energy,
+                "context": item.get("context"),
+                "delegate_to": item.get("delegate_to"),
+            },
+        )
 
     # Whole find-move-save cycle under the shared store lock so a concurrent
     # skos-sink / cron write cannot be lost between our load and save.
@@ -709,35 +810,12 @@ async def _handle_gtd_clarify(args: dict) -> list[TextContent]:
         item["clarified_at"] = datetime.now(timezone.utc).isoformat()
 
         # Route based on clarification
-        if actionable and delegate_to:
-            # Delegated → waiting-for
-            item["status"] = "waiting"
+        item["status"], dest_name = _clarify_destination(actionable, steps, delegate_to)
+        if item["status"] == "waiting":
             item["delegate_to"] = delegate_to
-            dest_name = "waiting-for"
-            dest_list = _load_list("waiting-for")
-            dest_list.append(item)
-            _save_list("waiting-for", dest_list)
-        elif actionable and steps == "multi":
-            # Multi-step → projects
-            item["status"] = "project"
-            dest_name = "projects"
-            dest_list = _load_list("projects")
-            dest_list.append(item)
-            _save_list("projects", dest_list)
-        elif actionable:
-            # Single action → next-actions
-            item["status"] = "next"
-            dest_name = "next-actions"
-            dest_list = _load_list("next-actions")
-            dest_list.append(item)
-            _save_list("next-actions", dest_list)
-        else:
-            # Not actionable → someday-maybe
-            item["status"] = "someday"
-            dest_name = "someday-maybe"
-            dest_list = _load_list("someday-maybe")
-            dest_list.append(item)
-            _save_list("someday-maybe", dest_list)
+        dest_list = _load_list(dest_name)
+        dest_list.append(item)
+        _save_list(dest_name, dest_list)
 
         # Save updated inbox (item removed)
         _save_list("inbox", inbox)
@@ -769,6 +847,31 @@ async def _handle_gtd_move(args: dict) -> list[TextContent]:
         return _error_response(
             f"Invalid destination '{destination}'. "
             f"Valid: {', '.join(sorted(_DESTINATION_MAP.keys()))}"
+        )
+
+    owner = _spool_owner()
+    if owner:
+        source_list, item, _ = _find_item_across_lists(item_id)
+        if source_list is None or item is None:
+            return _error_response(f"Item '{item_id}' not found in any GTD list")
+        now = datetime.now(timezone.utc).isoformat()
+        patch = {"status": _STATUS_FROM_DEST[destination], "moved_at": now}
+        if destination == "done":
+            patch["completed_at"] = now
+        dest_name = GTD_ARCHIVE if destination == "done" else _DESTINATION_MAP[destination]
+        item = {**item, **patch}
+        _skos_spool_mutation("move", item_id, to=dest_name, src=[source_list], patch=patch, ts=now)
+        _journal("move", item_id, item, to=dest_name, src=source_list)
+        return _queued(
+            owner,
+            {
+                "moved": False,
+                "id": item_id,
+                "text": item.get("text") or item.get("title") or "",
+                "from": source_list,
+                "to": dest_name,
+                "status": item["status"],
+            },
         )
 
     # Whole find-remove-add cycle under the shared store lock so a concurrent
@@ -815,6 +918,31 @@ async def _handle_gtd_done(args: dict) -> list[TextContent]:
     item_id = args.get("item_id", "").strip()
     if not item_id:
         return _error_response("item_id is required")
+
+    owner = _spool_owner()
+    if owner:
+        source_list, item, _ = _find_item_across_lists(item_id)
+        if source_list is None or item is None:
+            return _error_response(f"Item '{item_id}' not found in any GTD list")
+        if source_list == GTD_ARCHIVE:
+            return _error_response(f"Item '{item_id}' is already archived")
+        now = datetime.now(timezone.utc).isoformat()
+        patch = {"status": "done", "completed_at": now}
+        item = {**item, **patch}
+        # Any live list: done is "wherever it is now", even if the owner has
+        # moved it since this host last synced.
+        _skos_spool_mutation("done", item_id, to=GTD_ARCHIVE, src=_LIVE_LISTS, patch=patch, ts=now)
+        _journal("done", item_id, item, to=GTD_ARCHIVE, src=source_list)
+        return _queued(
+            owner,
+            {
+                "done": False,
+                "id": item_id,
+                "text": item.get("text") or item.get("title") or "",
+                "from": source_list,
+                "completed_at": now,
+            },
+        )
 
     # Whole find-remove-archive cycle under the shared store lock so a
     # concurrent writer cannot lose the source-list or archive update.
@@ -877,6 +1005,42 @@ async def _handle_gtd_reopen(args: dict) -> list[TextContent]:
         )
     if destination == "done":
         return _error_response("Cannot reopen an item to 'done'")
+
+    owner = _spool_owner()
+    if owner:
+        source_list, item, _ = _find_item_across_lists(item_id)
+        if source_list is None or item is None:
+            return _error_response(f"Item '{item_id}' not found in the GTD store")
+        if source_list != GTD_ARCHIVE:
+            return _error_response(f"Item '{item_id}' is not archived (it is in {source_list})")
+        dest_name = _DESTINATION_MAP[destination] if destination else _prior_list_for(item)
+        now = datetime.now(timezone.utc).isoformat()
+        patch = {
+            "status": _STATUS_FROM_DEST.get(destination) or _status_for_list(dest_name),
+            "reopened_at": now,
+        }
+        item = {k: v for k, v in {**item, **patch}.items() if k != "completed_at"}
+        _skos_spool_mutation(
+            "reopen",
+            item_id,
+            to=dest_name,
+            src=[GTD_ARCHIVE],
+            patch=patch,
+            drop=["completed_at"],
+            ts=now,
+        )
+        _journal("reopen", item_id, item, to=dest_name, src=GTD_ARCHIVE)
+        return _queued(
+            owner,
+            {
+                "reopened": False,
+                "id": item_id,
+                "text": item.get("text") or item.get("title") or "",
+                "to": dest_name,
+                "status": patch["status"],
+                "reopened_at": now,
+            },
+        )
 
     with _store_lock():
         source_list, item, _ = _find_item_across_lists(item_id)

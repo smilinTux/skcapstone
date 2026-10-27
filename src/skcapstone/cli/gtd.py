@@ -12,6 +12,25 @@ from rich.table import Table
 from ._common import console
 
 
+def _print_queued(data: dict, title: str) -> bool:
+    """Show a mutation spooled for the GTD owner host. True when it was one."""
+    if not data.get("queued"):
+        return False
+    console.print()
+    console.print(
+        Panel(
+            f"[bold yellow]Queued for owner {data.get('owner')}[/] ID: [cyan]{data.get('id')}[/]\n"
+            f"[dim]{data.get('text', '')}[/]\n"
+            "This host is not the GTD owner, so the lists change when the owner "
+            "drains its spool (about every 10 minutes).",
+            title=title,
+            border_style="yellow",
+        )
+    )
+    console.print()
+    return True
+
+
 def register_gtd_commands(main: click.Group) -> None:
     """Register the gtd command group."""
 
@@ -311,6 +330,9 @@ def register_gtd_commands(main: click.Group) -> None:
             console.print(f"\n  [bold red]Error:[/] {data['error']}\n")
             return
 
+        if _print_queued(data, "GTD Clarify"):
+            return
+
         console.print()
         console.print(
             Panel(
@@ -357,6 +379,9 @@ def register_gtd_commands(main: click.Group) -> None:
             console.print(f"\n  [bold red]Error:[/] {data['error']}\n")
             return
 
+        if _print_queued(data, "GTD Move"):
+            return
+
         console.print()
         console.print(
             Panel(
@@ -398,6 +423,9 @@ def register_gtd_commands(main: click.Group) -> None:
         if "error" in data:
             raise click.ClickException(data["error"])
 
+        if _print_queued(data, "GTD Reopen"):
+            return
+
         console.print()
         console.print(
             Panel(
@@ -430,6 +458,9 @@ def register_gtd_commands(main: click.Group) -> None:
 
         if "error" in data:
             console.print(f"\n  [bold red]Error:[/] {data['error']}\n")
+            return
+
+        if _print_queued(data, "GTD Done"):
             return
 
         console.print()
