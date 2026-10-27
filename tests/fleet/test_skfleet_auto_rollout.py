@@ -285,3 +285,54 @@ def test_superseded_run_does_not_record_the_rollout(fleet):
     _run(fleet["env"])
     state = Path(fleet["env"]["SKFLEET_AUTO_ROLLOUT_STATE"])
     assert not state.exists()
+
+
+def test_repeated_halts_escalate_once_to_gtd_and_reset_on_success(fleet):
+    """2026-10-25..27: chiap01 halted every tick for two days and nobody saw it,
+    because the failure alert only reached the journal. After N halts in a row
+    the script captures a GTD item (one source-ref per stuck episode) and sends
+    one ESCALATE skmail; a successful rollout clears the streak."""
+    env = dict(fleet["env"], SKFLEET_AUTO_ROLLOUT_HALT_ESCALATE="2")
+    # Production always has rolled-main; without it a re-run trusts the checkout.
+    state = Path(env["SKFLEET_AUTO_ROLLOUT_STATE"])
+    state.parent.mkdir(parents=True)
+    state.write_text(_git(fleet["deploy"], "rev-parse", "HEAD") + "\n")
+    _advance_origin(fleet["origin"])
+    fleet["fail_host"].write_text("h2")
+    streak = Path(env["SKFLEET_AUTO_ROLLOUT_STATE"]).parent / "halt-streak"
+
+    assert _run(env).returncode == 1
+    assert streak.read_text().split()[0] == "1"
+    assert not any("gtd capture" in c for c in _calls(fleet["calls"]))
+
+    for _ in range(2):
+        assert _run(env).returncode == 1
+    captures = [c for c in _calls(fleet["calls"]) if "gtd capture" in c]
+    assert len(captures) == 2  # halts 2 and 3; the store dedupes on source-ref
+    refs = {c.split("--source-ref ")[1] for c in captures}
+    assert len(refs) == 1 and refs.pop().startswith("skfleet-auto-rollout-halt:")
+    assert sum("ESCALATE" in c and c.startswith("skmail") for c in _calls(fleet["calls"])) == 2
+    # one ESCALATE per recipient (jarvis, lumina-nor), sent only at the threshold
+
+    fleet["fail_host"].unlink()
+    assert _run(env).returncode == 0
+    assert not streak.exists()
+
+
+def test_active_call_on_a_host_defers_without_touching_it(fleet, tmp_path):
+    """Never restart services under a live skcall-join call."""
+    _advance_origin(fleet["origin"])
+    bins = Path(fleet["env"]["SSH_BIN"]).parent
+    _write_exe(
+        bins / "ssh",
+        f'echo "ssh $*" >> {fleet["calls"]}\n'
+        'case "$*" in *skcall-join*) [ "$3" = h2 ] && echo "skcall-join@room.service loaded active running x" ;; esac\n',
+    )
+    result = _run(fleet["env"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "h2 has an active call" in result.stdout
+    hosts = [
+        c.split("--node ")[1].split()[0] for c in _calls(fleet["calls"]) if c.startswith("rollout")
+    ]
+    assert hosts == ["h1"]
+    assert not Path(fleet["env"]["SKFLEET_AUTO_ROLLOUT_STATE"]).exists()
