@@ -204,8 +204,10 @@ def test_spooled_capture_journals_the_item_not_an_empty_dict(monkeypatch):
     or the fold would place a blank entry in the inbox."""
     from skcapstone.mcp_tools import gtd_tools
 
-    if not gtd_tools._HAVE_SKOS_SINK:
-        pytest.skip("skos sink not installed")
+    # Stand in for the skos sink (CI may not have skos installed): it hands
+    # back an id without writing the local inbox, exactly as a spool does.
+    monkeypatch.setattr(gtd_tools, "_HAVE_SKOS_SINK", True)
+    monkeypatch.setattr(gtd_tools, "_GtdCapture", lambda **kw: kw)
     monkeypatch.setattr(gtd_tools, "_skos_capture", lambda c: "abc123def456")
     result = _capture("cron FAILED: x", source="manual", source_ref="cron:x@d")
     assert result["captured"] and result["id"] == "abc123def456"
