@@ -114,7 +114,7 @@ def test_production_readiness_reports_the_actual_interpreter_missing_plugin(
     monkeypatch.setattr(readiness, "qualification_sandbox_error", lambda *args: None)
     calls = []
 
-    def imports(modules, interpreter):
+    def imports(modules, interpreter, **_):
         calls.append((modules, interpreter))
         return {name: not missing or name != module for name in modules}
 

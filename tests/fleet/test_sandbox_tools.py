@@ -266,7 +266,7 @@ def test_production_readiness_and_drift_use_shared_sandbox_gate(tmp_path, monkey
         lambda _: "; ".join(module.readiness(sys.executable)),
     )
     monkeypatch.setattr(
-        observer, "check_module_imports", lambda modules, _: dict.fromkeys(modules, True)
+        observer, "check_module_imports", lambda modules, _, **__: dict.fromkeys(modules, True)
     )
     assert observer._run(source, units, sys.executable, None, env_from_process=True) == 1
     assert "FAIL qualification sandbox: AppArmor profile missing" in capsys.readouterr().out

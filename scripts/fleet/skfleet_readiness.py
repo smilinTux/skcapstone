@@ -29,8 +29,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-
-EXEC_START_MODULE_RE = re.compile(r"-m\s+([A-Za-z_][\w.]*)")
+from typing import NamedTuple
 
 
 def required_env(source: str, *, production: bool = False) -> set[str]:
@@ -209,49 +208,255 @@ def qualification_sandbox_error(python_bin: str) -> str | None:
     return None
 
 
-def unit_modules(unit_text: str) -> list[str]:
-    """Return every ``python -m <module>`` / ``python3 -m <module>`` module path
-    found in ExecStart= lines, in order, with no duplicates.
+class ExecTarget(NamedTuple):
+    """One ``python -m <module>`` that a unit's ExecStart runs, resolved the way
+    systemd would resolve it.
+
+    interpreter is an absolute path, or None when ExecStart names a bare
+    ``python3`` that PATH could not resolve (the caller then uses its own
+    --python-bin, which is the historical behaviour). cwd is the unit's
+    WorkingDirectory: ``python -m`` puts the working directory first on
+    sys.path, so a service that runs its package from a source tree only
+    imports from there. env holds the unit's PYTHON* variables. unresolved is
+    set when the interpreter or cwd depends on something this gate cannot
+    know (a template instance, an undefined variable), so the target cannot be
+    checked honestly in either direction.
     """
-    modules: list[str] = []
-    seen: set[str] = set()
-    for line in unit_text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("ExecStart="):
+
+    module: str
+    interpreter: str | None
+    cwd: str | None
+    env: dict
+    unresolved: str | None = None
+
+
+PYTHON_NAME_RE = re.compile(r"^python(\d+(\.\d+)*)?$")
+MODULE_NAME_RE = re.compile(r"^[A-Za-z_][\w.]*$")
+SHELL_NAMES = {"sh", "bash", "dash", "zsh"}
+# Interpreter options that take a separate argument (python -X dev -m pkg).
+PYTHON_OPTS_WITH_ARG = {"-X", "-W", "-Q"}
+SHELL_SEPARATORS = {"&&", "||", ";", "|"}
+
+
+def _directive_values(unit_text: str, key: str) -> list[str]:
+    prefix = key + "="
+    return [
+        line.strip()[len(prefix) :].strip()
+        for line in unit_text.splitlines()
+        if line.strip().startswith(prefix)
+    ]
+
+
+def expand_specifiers(value: str, unit_name: str, home: str) -> tuple[str, list[str]]:
+    """Expand the systemd unit specifiers this gate can know (%h %u %U %t %H %n
+    %N %p %i %I %%). Returns the expanded text and the specifiers it could not
+    expand; %i/%I are unknowable on a template file (``name@.service``)."""
+    stem = unit_name[: -len(".service")] if unit_name.endswith(".service") else unit_name
+    prefix, at, instance = stem.partition("@")
+    mapping = {
+        "h": home,
+        "u": os.environ.get("USER") or Path(home).name,
+        "U": str(os.getuid()),
+        "t": os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid(),
+        "H": os.uname().nodename,
+        "%": "%",
+        "p": prefix,
+    }
+    if not (at and not instance):
+        mapping.update({"n": unit_name, "N": stem, "i": instance, "I": instance})
+    missing: list[str] = []
+
+    def repl(match: re.Match) -> str:
+        spec = match.group(1)
+        if spec in mapping:
+            return mapping[spec]
+        missing.append("%" + spec)
+        return match.group(0)
+
+    return re.sub(r"%(.)", repl, value), missing
+
+
+def _expand_env(value: str, env: dict) -> tuple[str, list[str]]:
+    missing: list[str] = []
+
+    def repl(match: re.Match) -> str:
+        name = match.group(1) or match.group(2)
+        if name in env:
+            return env[name]
+        missing.append("$" + name)
+        return match.group(0)
+
+    return re.sub(r"\$\{(\w+)\}|\$([A-Za-z_]\w*)", repl, value), missing
+
+
+def _parse_env_assignments(text: str) -> dict:
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        tokens = text.split()
+    return dict(t.partition("=")[::2] for t in tokens if "=" in t)
+
+
+def unit_environment(unit_text: str, unit_name: str, home: str) -> dict:
+    """The variables a unit defines for its own ExecStart: Environment= lines,
+    then EnvironmentFile= files (which override them, as in systemd). A file
+    that is optional, missing, or names an unknowable specifier is skipped."""
+    env: dict = {}
+    for raw in _directive_values(unit_text, "Environment"):
+        env.update(_parse_env_assignments(raw))
+    for raw in _directive_values(unit_text, "EnvironmentFile"):
+        path, missing = expand_specifiers(raw.lstrip("-").strip(), unit_name, home)
+        if missing:
             continue
-        for match in EXEC_START_MODULE_RE.finditer(stripped):
-            module = match.group(1)
-            if module not in seen:
-                seen.add(module)
-                modules.append(module)
+        try:
+            lines = Path(path).read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith(("#", ";")):
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :]
+            key, eq, val = line.partition("=")
+            if eq:
+                env[key.strip()] = val.strip().strip("'\"")
+    return env
+
+
+def _resolve_interpreter(token: str, env: dict, home: str) -> str | None:
+    if token.startswith("~"):
+        token = home + token[1:]
+    if token.startswith("/"):
+        return token
+    if "PATH" in env:
+        import shutil
+
+        return shutil.which(token, path=env["PATH"])
+    return None
+
+
+def _scan_tokens(tokens: list[str], env: dict, home: str, cwd: str | None, found: list):
+    """Find every python [-opts] -m <module> in a command line, descending into
+    ``env ...`` and ``sh -c '...'`` wrappers and following ``cd DIR``."""
+    while tokens:
+        base = tokens[0].rsplit("/", 1)[-1]
+        if base == "env":
+            tokens = tokens[1:]
+            while tokens and (tokens[0].startswith("-") or "=" in tokens[0]):
+                tokens = tokens[1:]
+            continue
+        if base in SHELL_NAMES:
+            for i, tok in enumerate(tokens[1:], 1):
+                if tok.startswith("-") and not tok.startswith("--") and "c" in tok:
+                    if i + 1 < len(tokens):
+                        try:
+                            inner = shlex.split(tokens[i + 1])
+                        except ValueError:
+                            inner = tokens[i + 1].split()
+                        _scan_tokens(inner, env, home, cwd, found)
+                    return
+            return
+        break
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "cd" and i + 1 < len(tokens):
+            target = tokens[i + 1]
+            cwd = home + target[1:] if target.startswith("~") else target
+            i += 2
+            continue
+        if PYTHON_NAME_RE.match(tok.rsplit("/", 1)[-1]):
+            j = i + 1
+            while j < len(tokens) and tokens[j].startswith("-") and tokens[j] != "-m":
+                j += 2 if tokens[j] in PYTHON_OPTS_WITH_ARG else 1
+            if j + 1 < len(tokens) and tokens[j] == "-m" and MODULE_NAME_RE.match(tokens[j + 1]):
+                found.append((tok, tokens[j + 1], cwd))
+                i = j + 2
+                continue
+        i += 1
+
+
+def unit_exec_targets(unit_text: str, unit_name: str = "unit.service", home: str | None = None):
+    """Every module a unit's ExecStart lines run, each with the interpreter,
+    working directory and PYTHON* env it will actually run under.
+
+    Regression this exists for (2026-10-25 to 10-27): the chi auto-rollout
+    halted at chiap01 on every cycle because sklipsync.service runs
+    ``ExecStart=%h/skcall-lipsync-bench/venv/bin/python -m sklipsync serve``
+    from ``WorkingDirectory=%h/skcall-lipsync/...``. The old parser only
+    accepted an interpreter path starting with "/", so the ``%h`` path fell
+    back to ~/.skenv's python, where sklipsync is not installed; and it ran
+    the import from the gate's own cwd, where the source tree is not on
+    sys.path. skcall-join@.service on chiap04 (``%h/.skenv-skcall``) failed
+    the same way. Every host after chiap01 sat on an old main for days.
+    """
+    home = home or str(Path.home())
+    env = unit_environment(unit_text, unit_name, home)
+    python_env = {k: v for k, v in env.items() if k.startswith("PYTHON")}
+    unresolved_cwd = None
+    cwd = home
+    workdirs = _directive_values(unit_text, "WorkingDirectory")
+    if workdirs:
+        raw = workdirs[-1].lstrip("-").strip()
+        if raw == "~":
+            cwd = home
+        elif raw:
+            cwd, missing = expand_specifiers(raw, unit_name, home)
+            if missing:
+                unresolved_cwd = "WorkingDirectory needs %s" % ", ".join(missing)
+    targets: list[ExecTarget] = []
+    seen: set = set()
+    for raw in _directive_values(unit_text, "ExecStart"):
+        value = raw.lstrip("-@+!:").strip()
+        value, missing_spec = expand_specifiers(value, unit_name, home)
+        value, missing_env = _expand_env(value, env)
+        try:
+            tokens = shlex.split(value)
+        except ValueError:
+            tokens = value.split()
+        found: list = []
+        _scan_tokens(tokens, env, home, cwd, found)
+        for interp_token, module, target_cwd in found:
+            unresolved = None
+            bad = [m for m in missing_spec + missing_env if m in interp_token]
+            if bad:
+                unresolved = "interpreter %s needs %s" % (interp_token, ", ".join(bad))
+            elif target_cwd == cwd and unresolved_cwd:
+                unresolved = unresolved_cwd
+            interpreter = None if bad else _resolve_interpreter(interp_token, env, home)
+            key = (module, interpreter, target_cwd)
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append(ExecTarget(module, interpreter, target_cwd, python_env, unresolved))
+    return targets
+
+
+def unit_modules(unit_text: str) -> list[str]:
+    """Return every ``python -m <module>`` module path found in ExecStart=
+    lines, in order, with no duplicates."""
+    modules: list[str] = []
+    for target in unit_exec_targets(unit_text):
+        if target.module not in modules:
+            modules.append(target.module)
     return modules
 
 
-def unit_python(unit_text: str) -> str | None:
-    """The interpreter a unit's own ExecStart names, if it names an absolute one.
+def unit_python(unit_text: str, unit_name: str = "unit.service", home: str | None = None):
+    """The absolute interpreter a unit's ExecStart names, with systemd
+    specifiers such as ``%h`` expanded, or None so the caller falls back to
+    the interpreter it was given.
 
-    A unit is entitled to its own virtualenv, and declaring it in ExecStart is
-    how it does so. Checking every unit's imports against ONE interpreter
-    therefore produces false failures for any unit that is not in that venv.
-
-    Measured on chiap04 2026-09-18: hermes-gateway.service runs
-    ``/home/skuser01/.hermes/hermes-agent/venv/bin/python -m hermes_cli.main``
-    and had been active since 2026-08-27, yet readiness reported
-    "module hermes_cli.main does not import" because it tested
-    ``~/.skenv/bin/python3``. Under the unit's own interpreter the module
-    imports fine. That false failure blocked the deploy gate for the whole
-    host.
-
-    Returns None when ExecStart does not name an absolute interpreter, so the
-    caller falls back to the interpreter it was given.
+    A unit is entitled to its own virtualenv (measured on chiap04 2026-09-18:
+    hermes-gateway.service runs ~/.hermes/hermes-agent/venv/bin/python and
+    readiness falsely failed it under ~/.skenv). See unit_exec_targets for the
+    %h variant of the same false failure.
     """
-    for line in unit_text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("ExecStart="):
-            continue
-        value = stripped.split("=", 1)[1].strip()
-        # systemd prefixes such as "-", "@", "+", "!" are not part of the path.
-        value = value.lstrip("-@+!:").strip()
+    home = home or str(Path.home())
+    for raw in _directive_values(unit_text, "ExecStart"):
+        value = raw.lstrip("-@+!:").strip()
+        value, _ = expand_specifiers(value, unit_name, home)
         first = value.split()[0] if value.split() else ""
         if first.startswith("/") and "python" in first.rsplit("/", 1)[-1]:
             return first
@@ -298,12 +503,23 @@ def dispatcher_imports(source: str) -> list[str]:
     return modules
 
 
-def check_module_imports(modules: list[str], python_bin: str) -> dict[str, bool]:
-    """Return {module: True/False} for whether each imports under python_bin.
+def check_module_imports(
+    modules: list[str],
+    python_bin: str,
+    *,
+    cwd: str | None = None,
+    env: dict | None = None,
+) -> dict[str, bool]:
+    """Return {module: True/False} for whether each imports under python_bin,
+    run from cwd with env layered over this process's environment (a unit's
+    WorkingDirectory and PYTHON* vars, which decide what ``python -m`` sees).
 
-    Never raises: a subprocess failure of any kind is recorded as False.
+    Never raises: a subprocess failure of any kind (including a missing
+    interpreter or working directory, which would fail the unit too) is
+    recorded as False.
     """
     results: dict[str, bool] = {}
+    run_env = {**os.environ, **env} if env else None
     for module in modules:
         code = "import importlib; importlib.import_module('%s')" % module
         try:
@@ -311,6 +527,9 @@ def check_module_imports(modules: list[str], python_bin: str) -> dict[str, bool]
                 [python_bin, "-c", code],
                 capture_output=True,
                 text=True,
+                cwd=cwd,
+                env=run_env,
+                timeout=180,
             )
             results[module] = proc.returncode == 0
         except (OSError, subprocess.SubprocessError):
@@ -678,9 +897,7 @@ def _run(
                     % name
                 )
         else:
-            if env_snapshot is not None and (
-                "SKFLEET_PRODUCTION_POLICY" in env_snapshot
-            ):
+            if env_snapshot is not None and ("SKFLEET_PRODUCTION_POLICY" in env_snapshot):
                 policy_error = production_environment_error(
                     env_snapshot, python_bin, rotate_script
                 )
@@ -725,12 +942,12 @@ def _run(
                         "dispatcher will raise SystemExit without it" % (name, env_source_label)
                     )
 
-    all_modules: list[str] = []
-    seen_modules: set[str] = set()
     unit_files = list(_iter_unit_files(units_dir))
     if not unit_files:
         lines.append("FAIL units: no *.service files found under %s" % units_dir)
         ok = False
+    home = str(Path.home())
+    import_cache: dict = {}
     for unit_path in unit_files:
         try:
             unit_text = unit_path.read_text(encoding="utf-8")
@@ -738,54 +955,39 @@ def _run(
             ok = False
             lines.append("FAIL unit %s: could not read file (%s)" % (unit_path.name, exc))
             continue
-        modules = unit_modules(unit_text)
-        for module in modules:
-            if module not in seen_modules:
-                seen_modules.add(module)
-                all_modules.append(module)
-
-    # Group by the interpreter each unit actually declares, so a unit with its
-    # own virtualenv is checked against that venv rather than against whatever
-    # --python-bin happens to be. Checking everything against one interpreter
-    # fails any unit that legitimately lives elsewhere.
-    by_interpreter: dict[str, list[str]] = {}
-    for unit_path in unit_files:
-        try:
-            unit_text = unit_path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        interpreter = unit_python(unit_text) or python_bin
-        for module in unit_modules(unit_text):
-            bucket = by_interpreter.setdefault(interpreter, [])
-            if module not in bucket:
-                bucket.append(module)
-
-    import_results: dict[tuple[str, str], bool] = {}
-    for interpreter, modules_for in by_interpreter.items():
-        for module, result in check_module_imports(modules_for, interpreter).items():
-            import_results[(interpreter, module)] = result
-
-    for unit_path in unit_files:
-        try:
-            unit_text = unit_path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        modules = unit_modules(unit_text)
-        if not modules:
-            continue
-        interpreter = unit_python(unit_text) or python_bin
-        for module in modules:
-            imports_ok = import_results.get((interpreter, module), False)
-            if imports_ok:
+        # Each module is checked the way the unit runs it: under the
+        # interpreter its own ExecStart names (%h and $VARS expanded), from its
+        # WorkingDirectory, with its PYTHON* env. A unit is entitled to its own
+        # virtualenv; checking every unit against --python-bin fails any unit
+        # that legitimately lives elsewhere. Units that run no python -m
+        # (binaries, wrapper scripts) have nothing to import-check here.
+        for target in unit_exec_targets(unit_text, unit_path.name, home):
+            if target.unresolved:
+                lines.append(
+                    "SKIP unit %s: module %s not checked; %s, which this gate cannot know"
+                    % (unit_path.name, target.module, target.unresolved)
+                )
+                continue
+            interpreter = target.interpreter or python_bin
+            where = (
+                interpreter if target.cwd == home else "%s (cwd %s)" % (interpreter, target.cwd)
+            )
+            key = (interpreter, target.cwd, tuple(sorted(target.env.items())), target.module)
+            if key not in import_cache:
+                result = check_module_imports(
+                    [target.module], interpreter, cwd=target.cwd, env=target.env
+                )
+                import_cache[key] = bool(result.get(target.module))
+            if import_cache[key]:
                 lines.append(
                     "OK unit %s: module %s imports under %s"
-                    % (unit_path.name, module, interpreter)
+                    % (unit_path.name, target.module, where)
                 )
             else:
                 ok = False
                 lines.append(
                     "FAIL unit %s: module %s does not import under %s; "
-                    "ExecStart will fail at runtime" % (unit_path.name, module, interpreter)
+                    "ExecStart will fail at runtime" % (unit_path.name, target.module, where)
                 )
 
     ok = _write_verdict_if_requested(verdict_path, ok, lines)
