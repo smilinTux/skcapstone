@@ -27,6 +27,14 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+#: Total wall-clock seconds the memory drift checks may spend per doctor run.
+DRIFT_BUDGET_SECONDS = 120.0
+#: Ceiling for one ``skmemory health`` call. lumina on noroc2027 (41k
+#: memories) takes about 25 s, so the old 30 s ceiling sat right at the edge.
+DRIFT_AGENT_TIMEOUT_SECONDS = 60.0
+#: Concurrent ``skmemory health`` subprocesses.
+DRIFT_WORKERS = 4
+
 
 @dataclass
 class Check:
@@ -121,7 +129,12 @@ class DiagnosticReport:
         }
 
 
-def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
+def run_diagnostics(
+    home: Path,
+    deep: bool = False,
+    all_agents: bool = False,
+    drift_budget: float = DRIFT_BUDGET_SECONDS,
+) -> DiagnosticReport:
     """Run all diagnostic checks against the sovereign agent stack.
 
     Args:
@@ -130,6 +143,11 @@ def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
             content comparison of each editable checkout against its
             released artifact). Off by default so session-start runs stay
             fast and work offline.
+        all_agents: Sweep memory drift across EVERY agent folder on this
+            node instead of the active agent plus registered memory
+            profiles. See :func:`_check_memory_drift`.
+        drift_budget: Wall-clock seconds the memory drift checks may use in
+            total. Agents not reached in time come back ``unknown``.
 
     Returns:
         DiagnosticReport with results for every check.
@@ -143,7 +161,7 @@ def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
     report.checks.extend(_check_identity(home))
     report.checks.extend(_check_identity_consistency(home))
     report.checks.extend(_check_memory(home))
-    report.checks.extend(_check_memory_drift(home))
+    report.checks.extend(_check_memory_drift(home, all_agents=all_agents, budget=drift_budget))
     report.checks.extend(_check_memory_sync_timer(home))
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
@@ -811,7 +829,15 @@ def _check_sync_conflicts(home: Path) -> list[Check]:
     """
     conflicts: list[Path] = []
     if home.exists():
-        conflicts = [p for p in home.rglob("*.sync-conflict-*") if ".stversions" not in p.parts]
+        # os.walk with .stversions pruned, not Path.rglob: chiap04's shared
+        # root holds ~2.7M entries (318k of them in .stversions), and rglob
+        # built a Path for every one before filtering (18 s there).
+        for dirpath, dirnames, filenames in os.walk(home):
+            if ".stversions" in dirnames:
+                dirnames.remove(".stversions")
+            conflicts.extend(
+                Path(dirpath, n) for n in dirnames + filenames if ".sync-conflict-" in n
+            )
     if not conflicts:
         return [
             Check(
@@ -2011,17 +2037,21 @@ def _every_agent_with_memory_home(home: Path) -> list[str]:
     return names
 
 
-def _skmemory_health_json(agent: str) -> Optional[dict]:
+def _skmemory_health_json(
+    agent: str, timeout: float = DRIFT_AGENT_TIMEOUT_SECONDS
+) -> Optional[dict]:
     """Run ``skmemory health`` for ``agent`` as a subprocess.
 
     skmemory resolves its active agent's paths from environment variables
     at MODULE IMPORT time (cached for the life of the process), so an
     in-process loop over multiple agents cannot work here -- the same
     reasoning ``scripts/skmemory-sync-audit.sh`` already applies. Each
-    agent gets its own subprocess with ``SKAGENT`` set.
+    agent gets its own subprocess with all three selectors set (the
+    fail-closed resolver refuses when they disagree).
 
     Args:
         agent: The agent name to check (``SKAGENT`` value).
+        timeout: Seconds before the call is abandoned.
 
     Returns:
         Optional[dict]: The parsed JSON health payload, or ``None`` if the
@@ -2029,15 +2059,15 @@ def _skmemory_health_json(agent: str) -> Optional[dict]:
         not be parsed as JSON.
     """
     skmemory_bin = shutil.which("skmemory")
-    if not skmemory_bin:
+    if not skmemory_bin or timeout <= 0:
         return None
     try:
-        env = dict(os.environ, SKAGENT=agent)
+        env = dict(os.environ, SKAGENT=agent, SKCAPSTONE_AGENT=agent, SKMEMORY_AGENT=agent)
         result = subprocess.run(
             [skmemory_bin, "health"],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout,
             env=env,
         )
         return json.loads(result.stdout or "{}")
@@ -2045,7 +2075,197 @@ def _skmemory_health_json(agent: str) -> Optional[dict]:
         return None
 
 
-def _check_memory_drift(home: Path) -> list[Check]:
+@dataclass
+class _DriftScope:
+    """Which agent folders the memory checks cover on this run."""
+
+    #: Agents measured with ``skmemory health`` (active + registered).
+    measured: list[str]
+    #: Unregistered memory folders swept read-only (``--all-agents`` only).
+    swept: list[str]
+    #: Unregistered memory folders left out (default mode only).
+    skipped: list[str]
+    #: How many of the unregistered folders are ephemeral worker seats.
+    seats: int
+    #: Registered memory profiles, or ``None`` when the registry is unreadable.
+    registered: Optional[set]
+    active: str
+    #: Registered profiles the strict resolver rejects, with the reason.
+    broken: dict = field(default_factory=dict)
+
+
+def _drift_scope(home: Path, all_agents: bool = False) -> _DriftScope:
+    """Decide which agents the memory drift and sync-timer checks look at.
+
+    Default: the active agent (``--agent`` / SKAGENT / SKCAPSTONE_AGENT /
+    SKMEMORY_AGENT) plus every registered memory profile, intersected with
+    the folders that actually have a ``memory/`` dir. That still covers the
+    2026-10-16 case this check was written for (a REGISTERED agent nobody
+    happened to be running as) without walking thousands of fleet seats.
+
+    Only active and registered agents are measured with ``skmemory health``:
+    for anything else skmemory's fail-closed resolver refuses the profile and
+    reports on the ``template`` agent instead, so the number would describe
+    the wrong corpus (measured on chiap04, 2026-10-27).
+    """
+    from .agent_scope import (
+        active_agent_from_env,
+        is_ephemeral_seat,
+        registered_memory_profiles,
+        resolvable_memory_profiles,
+    )
+
+    agents_dir = _resolve_agents_dir(home)
+    with_memory = _every_agent_with_memory_home(home)
+    registered = registered_memory_profiles(agents_dir.parent)
+    healthy, broken = resolvable_memory_profiles(agents_dir.parent)
+    active = active_agent_from_env()
+    # Registered entries that do not resolve are NOT measured: skmemory would
+    # answer for `template` instead. They are named in the scope summary. The
+    # active agent is always measured, so asking for a broken one fails loudly.
+    wanted = healthy | ({active} if active else set())
+    measured = [a for a in with_memory if a in wanted]
+    rest = [a for a in with_memory if a not in wanted]
+    seats = sum(1 for a in rest if is_ephemeral_seat(agents_dir / a, registered, active))
+    return _DriftScope(
+        measured=measured,
+        swept=rest if all_agents else [],
+        skipped=[] if all_agents else rest,
+        seats=seats,
+        registered=registered,
+        active=active,
+        broken={k: v for k, v in broken.items() if k != active},
+    )
+
+
+def _readonly_flat_drift(memory_dir: Path) -> dict:
+    """Flat-file vs SQLite-index drift for one memory dir, without skmemory.
+
+    Used by ``--all-agents`` for folders skmemory cannot be pointed at (see
+    :func:`_drift_scope`). Opens ``index.db`` read-only and never creates
+    anything, unlike constructing a ``SQLiteBackend``, which makes the tier
+    dirs and an empty index as a side effect. Mirrors
+    ``SQLiteBackend.drift_check``: a row whose file moved to ``archive/`` is
+    cold storage, not drift, and 12-char shortform file names count.
+    """
+    import sqlite3
+
+    tiers = ("short-term", "mid-term", "long-term")
+    flat: set[str] = set()
+    for tier in tiers:
+        tier_dir = memory_dir / tier
+        if tier_dir.is_dir():
+            flat.update(f.stem for f in tier_dir.glob("*.json"))
+    archive_dir = memory_dir / "archive"
+    archived = {f.stem for f in archive_dir.rglob("*.json")} if archive_dir.is_dir() else set()
+
+    index = memory_dir / "index.db"
+    rows: list[tuple] = []
+    if index.is_file():
+        conn = sqlite3.connect(f"file:{index}?mode=ro", uri=True, timeout=2)
+        try:
+            rows = conn.execute("SELECT id, layer, file_path FROM memories").fetchall()
+        finally:
+            conn.close()
+
+    ids: set[str] = set()
+    sqlite_only = 0
+    for memory_id, layer, file_path in rows:
+        ids.add(memory_id)
+        short = str(memory_id)[:12].replace("-", "")
+        if file_path and Path(file_path).exists():
+            continue
+        if short in flat and (memory_dir / str(layer) / f"{short}.json").exists():
+            continue
+        if memory_id in archived or short in archived:
+            continue
+        sqlite_only += 1
+    shorts = {str(i)[:12].replace("-", "") for i in ids}
+    flat_only = sum(1 for stem in flat if stem not in ids and stem not in shorts)
+    return {
+        "flat_total": len(flat),
+        "sqlite_total": len(ids),
+        "sqlite_only": sqlite_only,
+        "flat_only": flat_only,
+        "has_index": index.is_file(),
+    }
+
+
+def _drift_check_from_health(agent: str, health: Optional[dict]) -> Check:
+    """Turn one ``skmemory health`` payload into a ``memory:drift`` check."""
+    name = f"memory:drift:{agent}"
+    description = f"Memory drift ({agent})"
+    if health is None:
+        return Check(
+            name=name,
+            description=description,
+            passed=True,
+            unknown=True,
+            detail="could not run `skmemory health` for this agent (missing, failed or timed out)",
+            category="memory",
+        )
+
+    primary = health.get("primary", {}) if isinstance(health, dict) else {}
+    primary = primary if isinstance(primary, dict) else {}
+
+    # skmemory answers for whichever agent its resolver lands on. When the
+    # profile is stale or unregistered it lands on `template`, and that
+    # corpus's numbers look like catastrophic drift for the agent we asked
+    # about. Refuse to report someone else's memory as this agent's.
+    base_path = primary.get("base_path")
+    if base_path:
+        resolved = Path(base_path).parent.name
+        if resolved and resolved != agent:
+            return Check(
+                name=name,
+                description=description,
+                passed=False,
+                detail=(
+                    f"skmemory resolved {agent!r} to {resolved!r} ({base_path}); "
+                    "this agent's memory was NOT measured"
+                ),
+                fix=(
+                    f"SKAGENT={agent} skmemory profile status  "
+                    "(profile unregistered or stale on this host)"
+                ),
+                category="memory",
+            )
+
+    sync = primary.get("sync", {}) if isinstance(primary.get("sync"), dict) else {}
+    status = health.get("status") or ("ok" if primary.get("ok") else "degraded")
+    sqlite_only = sync.get("sqlite_only", 0) or 0
+    flat_only = sync.get("flat_only", 0) or 0
+    vector = health.get("vector", {}) if isinstance(health, dict) else {}
+    pg_only = vector.get("pg_only", 0) if isinstance(vector, dict) else 0
+    pg_only = pg_only or 0
+
+    clean = (
+        status not in ("degraded", "red") and sqlite_only == 0 and flat_only == 0 and pg_only == 0
+    )
+    return Check(
+        name=name,
+        description=description,
+        passed=clean,
+        detail=(
+            f"status={status} sqlite_only={sqlite_only} "
+            f"flat_only={flat_only} pg_only={pg_only}"
+        ),
+        fix=("" if clean else f"SKAGENT={agent} skmemory sync"),
+        category="memory",
+    )
+
+
+def _progress(msg: str) -> None:
+    """One progress line on stderr (stdout may be carrying --json-out)."""
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _check_memory_drift(
+    home: Path,
+    all_agents: bool = False,
+    budget: float = DRIFT_BUDGET_SECONDS,
+    workers: int = DRIFT_WORKERS,
+) -> list[Check]:
     """Per-agent, per-node memory drift: sqlite_only/flat_only/pg_only.
 
     Card: skmemory sqlite-only-orphans, 2026-10-16. The drift NUMBER
@@ -2057,57 +2277,168 @@ def _check_memory_drift(home: Path) -> list[Check]:
     closes that gap for ``skcapstone doctor``: it fails loudly, per agent,
     whenever drift or a rescued-preview stub marker is present.
 
+    Scope and bounds (2026-10-27): on chiap04 this used to run one
+    ``skmemory health`` per memory folder, 1,272 of them at 2 to 7 s each,
+    and doctor never finished. Now the default covers the active agent and
+    the registered memory profiles (see :func:`_drift_scope`), the calls run
+    in a small pool, and the whole check stops at ``budget`` seconds,
+    reporting what it did not reach as ``unknown``. ``all_agents`` adds a
+    read-only, in-process sweep of every other memory folder; only folders
+    with a problem get their own check, the rest are counted.
+
     Args:
         home: Either the shared ``~/.skcapstone`` root or a single
             agent's home directory.
+        all_agents: Also sweep unregistered memory folders.
+        budget: Total wall-clock seconds for this check.
+        workers: Concurrent ``skmemory health`` subprocesses.
 
     Returns:
-        list[Check]: One check per agent with a memory home on this node.
+        list[Check]: One check per measured agent, one per swept folder with
+        a problem, and a ``memory:drift:scope`` summary.
     """
+    import concurrent.futures as cf
+    import time
+
+    scope = _drift_scope(home, all_agents=all_agents)
+    if not scope.measured and not scope.swept and not scope.skipped:
+        return []
+
+    started = time.monotonic()
+    deadline = started + max(0.0, budget)
+    timings: dict[str, float] = {}
+
+    def _measure(agent: str) -> Optional[dict]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        t0 = time.monotonic()
+        try:
+            return _skmemory_health_json(
+                agent, timeout=min(DRIFT_AGENT_TIMEOUT_SECONDS, remaining)
+            )
+        finally:
+            timings[agent] = time.monotonic() - t0
+
     checks: list[Check] = []
-    for agent in _every_agent_with_memory_home(home):
-        health = _skmemory_health_json(agent)
-        if health is None:
-            checks.append(
-                Check(
+    results: dict[str, Check] = {}
+    if scope.measured:
+        pool = cf.ThreadPoolExecutor(max_workers=max(1, min(workers, len(scope.measured))))
+        futures = {pool.submit(_measure, a): a for a in scope.measured}
+        done, _pending = cf.wait(futures, timeout=max(0.0, deadline - time.monotonic()) + 1)
+        for fut, agent in futures.items():
+            if fut in done and not fut.cancelled() and fut.exception() is None:
+                results[agent] = _drift_check_from_health(agent, fut.result())
+            else:
+                fut.cancel()
+                results[agent] = Check(
                     name=f"memory:drift:{agent}",
                     description=f"Memory drift ({agent})",
                     passed=True,
                     unknown=True,
-                    detail="could not run `skmemory health` for this agent",
+                    detail=f"not checked: drift budget of {budget:.0f}s exhausted",
+                    category="memory",
+                )
+        # Running calls carry their own timeout, capped at the deadline.
+        pool.shutdown(wait=True, cancel_futures=True)
+        checks.extend(results[a] for a in scope.measured)
+
+    swept_problems = 0
+    swept_done = 0
+    unreached = 0
+    agents_dir = _resolve_agents_dir(home)
+    last_note = time.monotonic()
+    for i, agent in enumerate(scope.swept, 1):
+        if time.monotonic() >= deadline:
+            unreached = len(scope.swept) - i + 1
+            break
+        t0 = time.monotonic()
+        try:
+            drift = _readonly_flat_drift(agents_dir / agent / "memory")
+        except Exception as exc:  # sqlite errors, permissions, races with sync
+            drift = None
+            err = str(exc)[:120]
+        timings[agent] = time.monotonic() - t0
+        swept_done += 1
+        if drift is None:
+            swept_problems += 1
+            checks.append(
+                Check(
+                    name=f"memory:drift:{agent}",
+                    description=f"Memory drift ({agent}, read-only sweep)",
+                    passed=True,
+                    unknown=True,
+                    detail=f"could not read memory index: {err}",
                     category="memory",
                 )
             )
-            continue
-
-        primary = health.get("primary", {}) if isinstance(health, dict) else {}
-        sync = primary.get("sync", {}) if isinstance(primary, dict) else {}
-        status = health.get("status") or ("ok" if primary.get("ok") else "degraded")
-        sqlite_only = sync.get("sqlite_only", 0) or 0
-        flat_only = sync.get("flat_only", 0) or 0
-        vector = health.get("vector", {}) if isinstance(health, dict) else {}
-        pg_only = vector.get("pg_only", 0) if isinstance(vector, dict) else 0
-        pg_only = pg_only or 0
-
-        clean = (
-            status not in ("degraded", "red")
-            and sqlite_only == 0
-            and flat_only == 0
-            and pg_only == 0
-        )
-        checks.append(
-            Check(
-                name=f"memory:drift:{agent}",
-                description=f"Memory drift ({agent})",
-                passed=clean,
-                detail=(
-                    f"status={status} sqlite_only={sqlite_only} "
-                    f"flat_only={flat_only} pg_only={pg_only}"
-                ),
-                fix=("" if clean else f"SKAGENT={agent} skmemory sync"),
-                category="memory",
+        elif drift["sqlite_only"] or drift["flat_only"]:
+            swept_problems += 1
+            checks.append(
+                Check(
+                    name=f"memory:drift:{agent}",
+                    description=f"Memory drift ({agent}, read-only sweep)",
+                    passed=False,
+                    detail=(
+                        f"unregistered; sqlite_only={drift['sqlite_only']} "
+                        f"flat_only={drift['flat_only']} flat={drift['flat_total']} "
+                        f"indexed={drift['sqlite_total']}"
+                    ),
+                    fix=(
+                        "not a registered memory profile: register it "
+                        "(`skmemory profile sync`) or archive it "
+                        "(`skcapstone agents stale --archive`)"
+                    ),
+                    category="memory",
+                )
             )
+        if time.monotonic() - last_note >= 5:
+            _progress(f"  memory drift sweep: {i}/{len(scope.swept)} folders")
+            last_note = time.monotonic()
+
+    elapsed = time.monotonic() - started
+    measured_bad = sum(
+        1 for a in scope.measured if not results[a].passed and not results[a].unknown
+    )
+    measured_unknown = sum(1 for a in scope.measured if results[a].unknown)
+    parts = [
+        f"measured {len(scope.measured)} agent(s) with skmemory "
+        f"({measured_bad} drifted, {measured_unknown} unknown)"
+    ]
+    if scope.registered is None:
+        parts.append("profile registry unreadable, so only the active agent is in scope")
+    if scope.broken:
+        names = ", ".join(f"{k} ({v})" for k, v in sorted(scope.broken.items()))
+        parts.append(
+            f"{len(scope.broken)} registered profile(s) do not resolve and were not "
+            f"measured (skmemory would report `template` for them): {names}"
         )
+    if all_agents:
+        parts.append(
+            f"swept {swept_done}/{len(scope.swept)} other folder(s) read-only "
+            f"({swept_problems} with problems, {scope.seats} worker seats)"
+        )
+        if unreached:
+            parts.append(f"{unreached} not reached within the {budget:.0f}s budget")
+        slowest = sorted(timings.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        if slowest:
+            parts.append("slowest: " + ", ".join(f"{a} {t:.1f}s" for a, t in slowest))
+    elif scope.skipped:
+        parts.append(
+            f"skipped {len(scope.skipped)} other memory folder(s) "
+            f"({scope.seats} ephemeral worker seats); --all-agents sweeps them"
+        )
+    parts.append(f"{elapsed:.1f}s")
+    checks.append(
+        Check(
+            name="memory:drift:scope",
+            description="Memory drift scope",
+            passed=not unreached,
+            unknown=bool(unreached),
+            detail="; ".join(parts),
+            category="memory",
+        )
+    )
     return checks
 
 
@@ -2129,8 +2460,9 @@ def _check_memory_sync_timer(home: Path) -> list[Check]:
             agent's home directory.
 
     Returns:
-        list[Check]: One check per agent with a memory home on this node,
-        in the ``systemd`` category. Empty on non-Linux or when no
+        list[Check]: One check per active or registered agent with a
+        memory home on this node (see :func:`_drift_scope`), in the
+        ``systemd`` category. Empty on non-Linux or when no
         ``systemctl --user`` session is available (same degrade-gracefully
         rule as :func:`_check_systemd_runtime`).
     """
@@ -2142,7 +2474,10 @@ def _check_memory_sync_timer(home: Path) -> list[Check]:
     if not sysd.systemd_available():
         return checks
 
-    for agent in _every_agent_with_memory_home(home):
+    # Same scope as the drift check's measured set: worker seats never get a
+    # sync timer by design, so walking all of them only manufactured
+    # failures (and one systemctl call per folder).
+    for agent in _drift_scope(home).measured:
         unit = f"skmemory-sync@{agent}.timer"
         try:
             result = subprocess.run(

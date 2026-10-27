@@ -568,6 +568,22 @@ def register_status_commands(main: click.Group) -> None:
             "check is not evidence of a problem."
         ),
     )
+    @click.option(
+        "--all-agents",
+        is_flag=True,
+        help=(
+            "Sweep memory drift across EVERY agent folder on this node, not just "
+            "the active agent and registered memory profiles. Unregistered folders "
+            "(mostly fleet worker seats) get a read-only flat-vs-index check."
+        ),
+    )
+    @click.option(
+        "--drift-budget",
+        type=float,
+        default=None,
+        show_default=False,
+        help="Total seconds for the memory drift checks (default 120, 600 with --all-agents).",
+    )
     def doctor(
         home: str,
         json_out: bool,
@@ -576,6 +592,8 @@ def register_status_commands(main: click.Group) -> None:
         deep: bool,
         category: tuple,
         strict: bool,
+        all_agents: bool,
+        drift_budget: float | None,
     ):
         """Diagnose sovereign stack health.
 
@@ -591,8 +609,13 @@ def register_status_commands(main: click.Group) -> None:
         scheduled job or CI step can gate on it. Combine with --category to
         keep that gate narrow; a gate that trips on unrelated pre-existing
         failures is one people learn to ignore.
+
+        Memory drift is checked for the active agent (--agent / SKAGENT) and
+        the registered memory profiles. --all-agents adds every other agent
+        folder; fleet hosts carry thousands of worker seats, so that sweep is
+        bounded by --drift-budget. See also `skcapstone agents stale`.
         """
-        from ..doctor import run_diagnostics, run_fixes
+        from ..doctor import DRIFT_BUDGET_SECONDS, run_diagnostics, run_fixes
 
         home_path = Path(home).expanduser()
 
@@ -611,7 +634,12 @@ def register_status_commands(main: click.Group) -> None:
 
         def _diagnose():
             with _quiet():
-                r = run_diagnostics(home_path, deep=deep)
+                budget = drift_budget
+                if budget is None:
+                    budget = 600.0 if all_agents else DRIFT_BUDGET_SECONDS
+                r = run_diagnostics(
+                    home_path, deep=deep, all_agents=all_agents, drift_budget=budget
+                )
             # Reapply the filter after every run, including the post-fix
             # re-run: filtering only once would silently widen --strict back
             # to the whole report the moment --fix was passed.
@@ -733,6 +761,14 @@ def register_status_commands(main: click.Group) -> None:
                         console.print(f"    [yellow]?[/] {c.description}{detail}")
 
             console.print()
+
+        # The drift scope line says what WAS NOT checked. Collapsing it into
+        # "N/N passed" would hide exactly that, so always show it.
+        if not verbose:
+            scope = next((c for c in report.checks if c.name == "memory:drift:scope"), None)
+            if scope is not None and scope.passed and not scope.unknown:
+                console.print(f"  [dim]Memory drift scope: {scope.detail}[/]")
+                console.print()
 
         passed = report.passed_count
         failed = report.failed_count

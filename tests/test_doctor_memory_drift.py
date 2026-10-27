@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from skcapstone.doctor import (
     _check_memory_drift,
     _check_memory_sync_timer,
@@ -27,13 +29,48 @@ def _by_name(checks):
     return {c.name: c for c in checks}
 
 
-def _make_agents(tmp_path, names_with_memory, names_without_memory=()):
+def _make_agents(tmp_path, names_with_memory, names_without_memory=(), register=True):
+    """Build agent homes; by default every memory-bearing one is REGISTERED.
+
+    Since 2026-10-27 the drift and timer checks cover the active agent plus
+    the registered memory profiles, not every folder (see
+    tests/test_doctor_agent_scope.py), so a fixture agent has to be
+    registered to be in scope.
+    """
+    import json
+
     agents_dir = tmp_path / "agents"
     for name in names_with_memory:
         (agents_dir / name / "memory").mkdir(parents=True)
     for name in names_without_memory:
         (agents_dir / name).mkdir(parents=True)
+    if register:
+        (tmp_path / "config").mkdir(exist_ok=True)
+        (tmp_path / "config" / "profile-registry.json").write_text(
+            json.dumps(
+                {
+                    "profiles": [
+                        {"profile_id": n, "memory_principal_id": f"memory:{n}"}
+                        for n in names_with_memory
+                    ]
+                }
+            )
+        )
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _no_active_agent(monkeypatch):
+    monkeypatch.delenv("SKAGENT", raising=False)
+    # Fixture registries are lenient (no hashes). Treat every entry as
+    # resolvable here; the strict resolver has its own tests below/elsewhere.
+    from skcapstone import agent_scope as _scope
+
+    monkeypatch.setattr(
+        _scope,
+        "resolvable_memory_profiles",
+        lambda root: (_scope.registered_memory_profiles(root) or set(), {}),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +209,7 @@ def test_drift_checks_every_agent_independently(tmp_path):
     healthy = {"status": "ok", "primary": {"ok": True, "sync": healthy_sync}}
     drifted = {"status": "degraded", "primary": {"ok": True, "sync": drifted_sync}}
 
-    def fake_health(agent):
+    def fake_health(agent, timeout=None):
         return healthy if agent == "opus" else drifted
 
     with patch("skcapstone.doctor._skmemory_health_json", side_effect=fake_health):
