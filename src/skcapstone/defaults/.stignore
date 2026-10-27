@@ -147,6 +147,27 @@ retry_queue.jsonl
 // was the recurring "sync conflict" the operator seat kept flagging (fix 2026-08-15).
 fallbacks.json
 **/fallbacks.json
+// Per-host runtime state inside agent homes (sync-conflict perma fix, 2026-10-27).
+// Every host runs its own skcapstone@<agent> daemon against the SAME synced
+// agent home, and the fleet restarts them together (04:15 on chi), so each of
+// these was written by N hosts within seconds and forked on every restart.
+// Measured on chi: ~400 conflict copies per host per month.
+//   memory/wal: skmemory's write-ahead log is crash recovery for THIS host's
+//     writes; a peer replaying it reads another host's "pending" lines as
+//     incomplete local writes.
+//   daemon.pid.identity.json / shutdown_state.json: the daemon's own pid
+//     identity and drained in-flight queue, meaningless on any other host.
+//   trust/trust.json: a cache re-derived from trust/febs (which DO sync) on
+//     every daemon start; copies differed only in last_rehydration.
+//   security/audit.log: per-host audit trail appended by each host's daemon.
+//   comms/outbox-retry: skcomms per-host send retry queue (same class as
+//     comms/outbox and retry_queue.jsonl above).
+**/memory/wal
+**/daemon.pid.identity.json
+**/shutdown_state.json
+**/trust/trust.json
+**/security/audit.log
+**/comms/outbox-retry
 
 // --- ITIL coordination: derived, migrate-once, and conflict junk ---
 // (?d) lets Syncthing delete these while cleaning a directory instead of
