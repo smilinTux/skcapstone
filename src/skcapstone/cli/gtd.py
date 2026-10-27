@@ -49,7 +49,7 @@ def register_gtd_commands(main: click.Group) -> None:
         "--source",
         "-s",
         default="manual",
-        type=click.Choice(["manual", "telegram", "email", "voice"]),
+        type=click.Choice(["manual", "telegram", "email", "voice", "chi-estate", "nor-estate"]),
         help="Where this item came from.",
     )
     @click.option(

@@ -40,7 +40,10 @@ GTD_ARCHIVE_FILE = "archive.json"
 GTD_FILES = {**_GTD_LISTS, GTD_ARCHIVE: GTD_ARCHIVE_FILE}
 GTD_STORE_FILES = tuple(GTD_FILES.values())
 
-_VALID_SOURCES = {"manual", "telegram", "email", "voice", "itil"}
+# chi-estate / nor-estate: an item another estate's agent sent over skmail that
+# needs this estate's operator. Captured HERE by a host of this estate, never
+# written into the other estate's store (see the ESTATE guard below).
+_VALID_SOURCES = {"manual", "telegram", "email", "voice", "itil", "chi-estate", "nor-estate"}
 _VALID_PRIVACY = {"private", "team", "community", "public"}
 _VALID_STATUSES = {"inbox", "next", "project", "waiting", "someday", "reference", "done"}
 _VALID_PRIORITIES = {"critical", "high", "medium", "low"}

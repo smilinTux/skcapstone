@@ -89,3 +89,13 @@ def test_guard_only_reads_the_written_dir(tmp_path, monkeypatch):
     _estate("nor")  # the store is nor, but this write targets another dir
     gt._atomic_write_json(other / "x.json", [])
     assert json.loads((other / "x.json").read_text()) == []
+
+
+def test_cross_estate_source_is_kept():
+    _estate("chi")
+    asyncio.run(
+        gt._handle_gtd_capture(
+            {"text": "needs Chef", "source": "nor-estate", "source_ref": "skmail:abc"}
+        )
+    )
+    assert _inbox()[0]["source"] == "nor-estate"
