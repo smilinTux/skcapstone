@@ -6,6 +6,7 @@ import fcntl
 import json
 import logging
 import os
+import socket
 import tempfile
 import uuid
 from contextlib import contextmanager
@@ -199,6 +200,74 @@ def _store_lock():
             os.close(fd)
 
 
+# ── estate guard: one GTD store per estate ────────────────────────────
+# Mirrors skos.gtd_ingest.guard_estate for hosts without skos (the chi fleet).
+# A store dir carrying an ESTATE file (nor|chi, aliases chef|cakjr) refuses
+# writes from a host of another estate. Host estate: SKWORLD_ESTATE, else the
+# nor*/chi* hostname prefix; an unplaceable host is allowed with a warning.
+# No ESTATE file = no check. Cross-estate items go over skmail, never into the
+# other estate's store.
+GTD_ESTATE_FILE = "ESTATE"
+_ESTATE_ALIASES = {"chef": "nor", "cakjr": "chi"}
+
+
+class EstateMismatchError(RuntimeError):
+    """This host belongs to a different estate than the GTD store it tried to write."""
+
+
+def _norm_estate(name: str | None) -> str | None:
+    name = (name or "").strip().lower()
+    return _ESTATE_ALIASES.get(name, name) or None
+
+
+def _gtd_host() -> str:
+    return os.environ.get("SK_GTD_HOST") or socket.gethostname()
+
+
+def _store_estate(d: Path) -> str | None:
+    try:
+        raw = (Path(d) / GTD_ESTATE_FILE).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in raw.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            return _norm_estate(line)
+    return None
+
+
+def _host_estate() -> str | None:
+    env = _norm_estate(os.environ.get("SKWORLD_ESTATE"))
+    if env:
+        return env
+    host = _gtd_host().lower()
+    for prefix in ("nor", "chi"):
+        if host.startswith(prefix):
+            return prefix
+    return None
+
+
+def _guard_estate(d: Path) -> None:
+    """Raise EstateMismatchError if this host may not write the store at ``d``."""
+    want = _store_estate(d)
+    if want is None:
+        return
+    have = _host_estate()
+    if have is None:
+        logger.warning(
+            "gtd store: estate of host %s unknown (set SKWORLD_ESTATE); "
+            "writing %s store unchecked",
+            _gtd_host(),
+            want,
+        )
+        return
+    if have != want:
+        raise EstateMismatchError(
+            f"gtd store {d} belongs to estate {want!r}; host {_gtd_host()} is estate "
+            f"{have!r}. Send the item to that estate's agent over skmail instead."
+        )
+
+
 def _atomic_write_json(path: Path, items: list[dict]) -> None:
     """Crash-safe save: write a temp file in the same dir, fsync, os.replace
     over the target, fsync the dir. The target is never truncated in place, so
@@ -209,6 +278,7 @@ def _atomic_write_json(path: Path, items: list[dict]) -> None:
     The directory check matters: the skos sink resolves a target by NAME under
     its own store dir, so delegating a path from anywhere else would silently
     redirect the write into the store."""
+    _guard_estate(path.parent)
     if _skos_atomic_save is not None and path.parent == _gtd_dir():
         _skos_atomic_save(path.name, items)
         return
