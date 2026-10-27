@@ -107,6 +107,33 @@ def _no_external_network(monkeypatch, request):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_host_config(monkeypatch, request, tmp_path_factory):
+    """Keep doctor/dashboard unit tests off the host's live stack config.
+
+    ``run_diagnostics`` builds ``SKComms.from_config()``, which reads the real
+    ``~/.skcapstone/skcomms/config.yml`` and health-checks every enabled rail:
+    on an operator host that dials the nostr relay (9 doctor tests failed on
+    noroc2027, 2026-10-27, while CI, which has no config, passed). Point the
+    config home at an empty dir, exactly what CI sees. The dashboard's
+    ollama probe likewise honours a host ``OLLAMA_HOST`` pointing off-box.
+    A test that needs either sets it itself, which overrides this default.
+    """
+    if any(request.node.get_closest_marker(mark) for mark in ("integration", "e2e")):
+        return
+    module = request.module.__name__.rsplit(".", 1)[-1]
+    if not module.startswith(("test_doctor", "test_dashboard")):
+        return
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    try:
+        import skcomms.config as skcomms_config
+    except ImportError:
+        return
+    empty_home = tmp_path_factory.mktemp("skcomms-home")
+    monkeypatch.setattr(skcomms_config, "SKCOMMS_HOME", str(empty_home))
+    monkeypatch.setenv("SKCOMMS_HOME", str(empty_home))
+
+
+@pytest.fixture(autouse=True)
 def _offline_unit_services(monkeypatch, request):
     """Default discovery to offline services; HTTP contract tests supply responses.
 

@@ -2037,6 +2037,65 @@ def _every_agent_with_memory_home(home: Path) -> list[str]:
     return names
 
 
+#: Where the skmemory services get their stack settings. systemd --user
+#: imports ``environment.d`` into every unit, and the skmemory/skwhisper units
+#: add ``pg.env`` as an ``EnvironmentFile``. An interactive shell sees neither
+#: unless something exports them, and a stale export in a dotfile (nor,
+#: 2026-10-27: ``~/.bashrc`` still carried the pre-rotation pg password) makes
+#: every agent read as ``degraded`` while the services are healthy.
+SKMEMORY_ENV_FILES = (
+    "~/.config/environment.d/*.conf",
+    "~/.config/skmemory/pg.env",
+)
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    """Parse a systemd ``KEY=VALUE`` env file. Comments and blanks are skipped."""
+    out: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")) or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key:
+            out[key] = value
+    return out
+
+
+def _skmemory_service_env() -> dict[str, str]:
+    """The ``SKMEMORY_*`` settings the skmemory services actually run with.
+
+    Layered like systemd does it: ``environment.d`` files in lexical order,
+    then ``pg.env`` on top. Only ``SKMEMORY_*`` keys are taken and empty
+    values are ignored (``pg.env`` deliberately leaves the DSN to
+    ``environment.d``). These OVERRIDE the inherited shell values, so doctor
+    measures memory health with the same credentials the services use, not
+    whatever an old dotfile exported. A host with none of these files gets
+    an empty dict and the inherited environment is used unchanged.
+    """
+    env: dict[str, str] = {}
+    for pattern in SKMEMORY_ENV_FILES:
+        expanded = Path(pattern).expanduser()
+        paths = sorted(expanded.parent.glob(expanded.name)) if "*" in pattern else [expanded]
+        for path in paths:
+            if not path.is_file():
+                continue
+            for key, value in _parse_env_file(path).items():
+                if key.startswith("SKMEMORY_") and value:
+                    env[key] = value
+    return env
+
+
 def _skmemory_health_json(
     agent: str, timeout: float = DRIFT_AGENT_TIMEOUT_SECONDS
 ) -> Optional[dict]:
@@ -2062,7 +2121,9 @@ def _skmemory_health_json(
     if not skmemory_bin or timeout <= 0:
         return None
     try:
-        env = dict(os.environ, SKAGENT=agent, SKCAPSTONE_AGENT=agent, SKMEMORY_AGENT=agent)
+        env = dict(os.environ)
+        env.update(_skmemory_service_env())
+        env.update(SKAGENT=agent, SKCAPSTONE_AGENT=agent, SKMEMORY_AGENT=agent)
         result = subprocess.run(
             [skmemory_bin, "health"],
             capture_output=True,
@@ -2249,10 +2310,55 @@ def _drift_check_from_health(agent: str, health: Optional[dict]) -> Check:
         detail=(
             f"status={status} sqlite_only={sqlite_only} "
             f"flat_only={flat_only} pg_only={pg_only}"
+            + (" pg=unreachable" if isinstance(vector, dict) and vector.get("ok") is False else "")
         ),
-        fix=("" if clean else f"SKAGENT={agent} skmemory sync"),
+        fix=("" if clean else _drift_fix(agent, sqlite_only, flat_only, pg_only, vector)),
         category="memory",
     )
+
+
+def _drift_fix(agent: str, sqlite_only: int, flat_only: int, pg_only: int, vector) -> str:
+    """The remediation for one agent's drift, never one that writes flat files.
+
+    Flat JSON is the source of truth. ``skmemory sync`` (and ``export-flat``,
+    and a plain ``reindex``, which runs export-flat first) materialise every
+    SQLite-only row into the flat tiers, and SQLite only holds a ~150-char
+    preview, so wherever skmem-pg lacks the full text they write truncated
+    stubs INTO the source of truth (skmemory postmortem 2026-10-16). So:
+
+    - pg unreachable: fix the credentials first, the counts are not real.
+    - SQLite-only rows: recover, do not rebuild. Nothing is suggested to run.
+    - flat-only files: ``reindex --force`` rebuilds the index purely from the
+      flat files and writes nothing to them; safe because no SQLite-only
+      row exists to drop.
+    - pg-only rows: report only; pruning is the reconcile timer's job, under
+      its archive-aware guard.
+    """
+    vector = vector if isinstance(vector, dict) else {}
+    if vector and vector.get("ok") is False:
+        return (
+            "skmem-pg unreachable for this agent; check SKMEMORY_PG_DSN "
+            "(~/.config/environment.d/skmemory.conf) and the skmem-pg container. "
+            "Drift counts are not trustworthy until pg answers"
+        )
+    if sqlite_only:
+        return (
+            f"{sqlite_only} SQLite-only row(s) hold only a ~150-char preview. Do NOT run "
+            "`skmemory sync`, `export-flat` or `reindex` (they write truncated stubs into "
+            "the flat source of truth). Recover full content from skmem-pg first: see "
+            "skmemory docs/postmortems/2026-10-16-sqlite-only-orphans.md"
+        )
+    if flat_only:
+        return (
+            f"SKAGENT={agent} skmemory reindex --force  "
+            "(rebuilds index.db from the flat files only; never writes them)"
+        )
+    if pg_only:
+        return (
+            f"{pg_only} pg row(s) with no flat file: inspect before any prune "
+            "(archived memories look like orphans to old reconcile code); never force-prune"
+        )
+    return f"SKAGENT={agent} skmemory health  (status degraded with zero drift: read its detail)"
 
 
 def _progress(msg: str) -> None:
