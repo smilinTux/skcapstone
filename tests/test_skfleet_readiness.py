@@ -184,9 +184,9 @@ def test_dispatcher_imports_covers_the_real_rotate_script():
     """Guards the wiring: the check must reach the real dispatcher."""
     rotate = Path(__file__).resolve().parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
     modules = dispatcher_imports(rotate.read_text(encoding="utf-8"))
-    assert "skcapstone.card_store" in modules, (
-        "skcapstone.card_store is the exact import that was failing on chiap02"
-    )
+    assert (
+        "skcapstone.card_store" in modules
+    ), "skcapstone.card_store is the exact import that was failing on chiap02"
 
 
 # ── unit ExecStart resolved the way systemd runs it (2026-10-27) ─────────────
