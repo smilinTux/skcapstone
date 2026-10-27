@@ -185,7 +185,10 @@ def test_drift_sqlite_only_fails(tmp_path):
     check = _by_name(checks)["memory:drift:lumina"]
     assert check.passed is False
     assert "sqlite_only=23525" in check.detail
-    assert "skmemory sync" in check.fix
+    # sync/export-flat would write truncated preview stubs into the flat
+    # source of truth; the fix must warn against it, never suggest it.
+    assert "Do NOT run `skmemory sync`" in check.fix
+    assert not check.fix.startswith("SKAGENT=")
 
 
 def test_drift_pg_only_fails(tmp_path):
@@ -303,3 +306,115 @@ def test_timer_check_covers_every_agent(tmp_path):
     names = {c.name for c in checks}
     assert "memory:sync_timer:lumina" in names
     assert "memory:sync_timer:opus" in names
+
+
+# ---------------------------------------------------------------------------
+# Remediation never writes the flat source of truth
+# ---------------------------------------------------------------------------
+
+
+def _drift_fix_for(tmp_path, payload):
+    home = _make_agents(tmp_path, ["lumina"])
+    with patch("skcapstone.doctor._skmemory_health_json", return_value=payload):
+        checks = _check_memory_drift(home)
+    return _by_name(checks)["memory:drift:lumina"]
+
+
+def test_flat_only_fix_is_index_only_rebuild(tmp_path):
+    check = _drift_fix_for(
+        tmp_path,
+        {
+            "status": "degraded",
+            "primary": {"ok": True, "sync": {"sqlite_only": 0, "flat_only": 202}},
+            "vector": {"ok": True, "pg_only": 0},
+        },
+    )
+    assert check.passed is False
+    assert check.fix.startswith("SKAGENT=lumina skmemory reindex --force")
+    assert "skmemory sync" not in check.fix
+
+
+def test_pg_unreachable_fix_points_at_credentials(tmp_path):
+    check = _drift_fix_for(
+        tmp_path,
+        {
+            "status": "degraded",
+            "primary": {"ok": True, "sync": {"sqlite_only": 0, "flat_only": 0}},
+            "vector": {"ok": False, "error": "password authentication failed"},
+        },
+    )
+    assert check.passed is False
+    assert "pg=unreachable" in check.detail
+    assert "SKMEMORY_PG_DSN" in check.fix
+
+
+def test_no_drift_fix_ever_suggests_a_flat_writer(tmp_path):
+    for i, (sync, pg_only) in enumerate(
+        (
+            ({"sqlite_only": 3, "flat_only": 4}, 0),
+            ({"sqlite_only": 0, "flat_only": 0}, 7),
+            ({"sqlite_only": 0, "flat_only": 0}, 0),
+        )
+    ):
+        check = _drift_fix_for(
+            tmp_path / str(i),
+            {
+                "status": "degraded",
+                "primary": {"ok": True, "sync": sync},
+                "vector": {"ok": True, "pg_only": pg_only},
+            },
+        )
+        for writer in ("skmemory sync", "skmemory export-flat", "skmemory reindex"):
+            assert not (writer in check.fix and "Do NOT" not in check.fix), check.fix
+
+
+# ---------------------------------------------------------------------------
+# skmemory health runs with the services' environment
+# ---------------------------------------------------------------------------
+
+
+def test_service_env_layers_envd_then_pg_env(tmp_path, monkeypatch):
+    from skcapstone import doctor
+
+    envd = tmp_path / "environment.d"
+    envd.mkdir()
+    (envd / "10-a.conf").write_text(
+        "# comment\nSKMEMORY_PG_DSN=postgresql://u:new@localhost/x\nOTHER=ignored\n"
+    )
+    (envd / "50-b.conf").write_text('SKMEMORY_EMBED_URL="http://envd"\n')
+    pg_env = tmp_path / "pg.env"
+    pg_env.write_text("SKMEMORY_EMBED_URL=http://pgenv\nSKMEMORY_PG_DSN=\n")
+    monkeypatch.setattr(doctor, "SKMEMORY_ENV_FILES", (str(envd / "*.conf"), str(pg_env)))
+    env = doctor._skmemory_service_env()
+    assert env == {
+        "SKMEMORY_PG_DSN": "postgresql://u:new@localhost/x",  # empty pg.env value ignored
+        "SKMEMORY_EMBED_URL": "http://pgenv",  # pg.env wins, like EnvironmentFile
+    }
+
+
+def test_health_json_overrides_stale_shell_dsn(monkeypatch):
+    """A stale dotfile export must not make healthy agents read as degraded."""
+    from skcapstone import doctor
+
+    seen = {}
+
+    class _Proc:
+        stdout = '{"status": "ok"}'
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs["env"])
+        return _Proc()
+
+    monkeypatch.setenv("SKMEMORY_PG_DSN", "postgresql://u:STALE@localhost/x")
+    monkeypatch.setattr(
+        doctor,
+        "_skmemory_service_env",
+        lambda: {"SKMEMORY_PG_DSN": "postgresql://u:new@localhost/x"},
+    )
+    with (
+        patch("skcapstone.doctor.shutil.which", return_value="/usr/bin/skmemory"),
+        patch("skcapstone.doctor.subprocess.run", side_effect=fake_run),
+    ):
+        assert doctor._skmemory_health_json("jarvis") == {"status": "ok"}
+    assert seen["SKMEMORY_PG_DSN"] == "postgresql://u:new@localhost/x"
+    assert seen["SKAGENT"] == seen["SKMEMORY_AGENT"] == "jarvis"
