@@ -28,13 +28,14 @@ tests/test_cli_completions.py
 
 # --- CI-GAP: optional sibling repos absent on runners --------------------
 # `skos` is in no extra in pyproject.toml and is installed by nothing in
-# .github/. These 10 tests exist specifically to catch skos<->skcapstone drift,
+# .github/. These 11 tests exist specifically to catch skos<->skcapstone drift,
 # so on a runner the drift guards catch nothing. Fix by installing skos from
 # git in pytest.yml exactly as skharness and skdashboard already are.
 tests/test_model_router.py::TestRegistryRoleFold
 tests/operator_seat/test_skos_adapter.py
 tests/test_gtd_locked_sink.py::test_mcp_and_skos_sink_share_one_store_lock
 tests/test_gtd_mutations_spool.py::test_real_skos_round_trip_non_owner_then_owner_drain
+tests/test_gtd_standalone_owner_spool.py::test_records_replay_on_skos
 tests/operator_seat/test_manifest_adapter_conformance.py::test_manifest_operator_block_matches_adapter[skos]
 tests/operator_seat/test_manifest_adapter.py::test_operatorapp_from_shipped_manifest_matches_adapter[skos]
 
