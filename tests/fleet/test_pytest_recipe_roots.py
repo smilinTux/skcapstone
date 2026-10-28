@@ -113,7 +113,14 @@ def run_fixture(
         "def test_known_failure(): assert False\n"
         f"def test_known_failure_extra(): assert {not extra_failure}\n"
         + (
+            # Explicit ids: pytest 9.2 replaces an over-long auto-generated
+            # parameter ID with `<argname><index>` ("value2"), so the long
+            # literal ID this fixture exists to exercise only survives when it
+            # is given explicitly. Explicit ids are kept verbatim on every
+            # pytest version, which keeps the test meaning the same thing.
             "import pytest\n@pytest.mark.parametrize('value', "
+            + repr(["a?b", "a*b"] + (["x" * 1200] if long_parameter else []))
+            + ", ids="
             + repr(["a?b", "a*b"] + (["x" * 1200] if long_parameter else []))
             + ")\n"
             "def test_parameter_value(value): assert value\n"
