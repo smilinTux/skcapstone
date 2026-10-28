@@ -1,0 +1,21 @@
+# skcapstone-gtd-drain.service: fold the other hosts' GTD spools into the store.
+#
+# Install on the GTD OWNER host ONLY (the host named in
+# ~/.skcapstone/coordination/gtd/OWNER: chiap08 for the chi estate). Elsewhere
+# it is a no-op. Same job as skos-gtd-drain.service, for hosts without skos:
+# whole-file JSON lists in a Syncthing folder have exactly one writer host,
+# every other host appends to spool/<host>.jsonl and this job lands them.
+#
+#   cp skcapstone-gtd-drain.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now skcapstone-gtd-drain.timer
+
+[Unit]
+Description=Fold other hosts' GTD spools into the store (GTD owner host only)
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/skcapstone gtd drain-spool
+Nice=10

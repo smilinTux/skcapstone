@@ -106,20 +106,26 @@ except Exception:  # skos not installed: standalone skcapstone
 # a Syncthing-shared folder, so only the host named in ``OWNER`` may rewrite
 # them; every other host appends its mutations to its own spool and the owner
 # applies them on drain. Imported separately from the sink above so an older
-# skos without the mutation API still serves captures. With no skos, no OWNER
-# file, or on the owner itself, every handler writes directly, as before.
+# skos without the mutation API still serves captures. Without skos the names
+# bind to skcapstone.gtd_spool, the same mechanism and record format, so chi
+# (no skos) honors OWNER too. With no OWNER file, or on the owner itself,
+# every handler writes directly, as before.
 try:  # pragma: no cover - both branches exercised across environments
     from skos.gtd_ingest import gtd_dir as _skos_gtd_dir
     from skos.gtd_ingest import is_owner as _skos_is_owner
     from skos.gtd_ingest import owner_host as _skos_owner_host
     from skos.gtd_ingest import spool_append as _skos_spool_append
     from skos.gtd_ingest import spool_mutation as _skos_spool_mutation
-except Exception:  # skos missing, or too old to spool mutations
-    _skos_gtd_dir = None
-    _skos_is_owner = None
-    _skos_owner_host = None
-    _skos_spool_append = None
-    _skos_spool_mutation = None
+
+    _SPOOL_IMPL = "skos"
+except Exception:  # skos missing, or too old: skcapstone's own, same on-disk format
+    from ..gtd_spool import gtd_dir as _skos_gtd_dir
+    from ..gtd_spool import is_owner as _skos_is_owner
+    from ..gtd_spool import owner_host as _skos_owner_host
+    from ..gtd_spool import spool_append as _skos_spool_append
+    from ..gtd_spool import spool_mutation as _skos_spool_mutation
+
+    _SPOOL_IMPL = "skcapstone"
 
 # Live lists, i.e. every list a not-yet-done item can be in.
 _LIVE_LISTS = list(_GTD_LISTS)
@@ -195,12 +201,28 @@ def _store_lock():
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
+        _drain_own_spool_locked()
         yield
     finally:
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
+
+
+def _drain_own_spool_locked() -> None:
+    """Owner host without skos: fold the other hosts' spools in before this
+    write, as skos capture() does. Caller holds the store lock. Never fails the
+    caller's write; the drain timer retries."""
+    if _SPOOL_IMPL != "skcapstone":
+        return
+    try:
+        from ..gtd_spool import drain_spool_locked, is_owner
+
+        if is_owner() and _skos_gtd_dir().resolve() == _gtd_dir().resolve():
+            drain_spool_locked()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("GTD spool drain before write failed: %s", exc)
 
 
 # ── estate guard: one GTD store per estate ────────────────────────────
@@ -282,6 +304,8 @@ def _atomic_write_json(path: Path, items: list[dict]) -> None:
     its own store dir, so delegating a path from anywhere else would silently
     redirect the write into the store."""
     _guard_estate(path.parent)
+    if path.name in GTD_STORE_FILES and _spool_rewrite(path, items):
+        return
     if _skos_atomic_save is not None and path.parent == _gtd_dir():
         _skos_atomic_save(path.name, items)
         return
@@ -305,6 +329,31 @@ def _atomic_write_json(path: Path, items: list[dict]) -> None:
         os.fsync(dfd)
     finally:
         os.close(dfd)
+
+
+def _spool_rewrite(path: Path, items: list[dict]) -> bool:
+    """Non-owner host: turn a whole-list save into spool records for the owner.
+
+    The handlers above spool explicitly; this catches the writers that still
+    load, change and save a list themselves (the skcoord ITIL fallback sink and
+    orphan reaper, ``_remove_item_from_list`` + ``_save_archive``). True when the
+    save was spooled and the list must NOT be rewritten here."""
+    owner = _spool_owner(path.parent)
+    if not owner:
+        return False
+    try:
+        current = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(current, list):
+            current = []
+    except (OSError, json.JSONDecodeError):
+        current = []
+    from .. import gtd_spool
+
+    list_name = path.name[: -len(".json")]
+    gtd_spool.spool_list_rewrite(
+        list_name, current, items, append=_skos_spool_append, mutate=_skos_spool_mutation
+    )
+    return True
 
 
 _ALL_STORE_FILES = list(GTD_STORE_FILES)
@@ -725,7 +774,57 @@ async def _handle_gtd_capture(args: dict) -> list[TextContent]:
             }
         )
 
-    # Fallback: skos not installed. Local locked, atomic, deduped write.
+    # Fallback: skos not installed. On a non-owner host the capture goes to
+    # this host's spool (id assigned now) and the OWNER host lands it.
+    owner = _spool_owner()
+    if owner:
+        from .. import gtd_spool
+
+        new_id = gtd_spool.capture(
+            gtd_spool.GtdCapture(
+                text=text,
+                source=source,
+                source_ref=source_ref,
+                context=context,
+                privacy=privacy,
+                status="inbox",
+            )
+        )
+        inbox = _load_list("inbox")
+        if new_id is None:
+            return _json_response(
+                {
+                    "captured": False,
+                    "duplicate": True,
+                    "source": source,
+                    "source_ref": source_ref,
+                    "inbox_count": len(inbox),
+                }
+            )
+        item = {
+            "id": new_id,
+            "text": text,
+            "source": source,
+            "source_ref": source_ref,
+            "privacy": privacy,
+            "context": context,
+            "status": "inbox",
+        }
+        _journal("capture", new_id, item, to="inbox")
+        return _queued(
+            owner,
+            {
+                "captured": True,
+                "id": new_id,
+                "text": text,
+                "source": source,
+                "privacy": privacy,
+                "context": context,
+                "inbox_count": len(inbox),
+            },
+        )
+
+    # Owner, or no OWNER file: local locked, atomic, deduped write.
     with _store_lock():
         if source_ref and (source, source_ref) in _seen_refs():
             inbox = _load_list("inbox")

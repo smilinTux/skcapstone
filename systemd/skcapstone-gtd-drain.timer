@@ -1,0 +1,12 @@
+# Owner host only. See skcapstone-gtd-drain.service.
+[Unit]
+Description=Drain GTD spools every 10 minutes (GTD owner host)
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Timer]
+OnCalendar=*:0/10
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target
