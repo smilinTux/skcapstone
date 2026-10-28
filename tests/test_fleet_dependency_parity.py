@@ -219,4 +219,4 @@ class TestSkwhisperTracked:
 
         root = Path(__file__).resolve().parents[1]
         text = (root / "deploy" / "fleet-constraints.txt").read_text(encoding="utf-8")
-        assert "skmemory==0.11.68" in text
+        assert "skmemory==0.11.73" in text
