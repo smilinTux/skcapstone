@@ -416,7 +416,10 @@ def sync_gtd(home: Path, rows: Sequence[HumanWait]) -> list[tuple[str, str, str]
         the port. ``unchanged`` performs no write, which is what keeps a
         scheduled re-sync quiet.
     """
-    from skos.gtd_ingest import GtdCapture, upsert
+    try:
+        from skos.gtd_ingest import GtdCapture, upsert
+    except ImportError:  # standalone skcapstone: same sink, owner/spool aware
+        from .gtd_spool import GtdCapture, upsert
 
     out: list[tuple[str, str, str]] = []
     with _gtd_store_at(home):

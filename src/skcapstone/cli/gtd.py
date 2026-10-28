@@ -105,6 +105,9 @@ def register_gtd_commands(main: click.Group) -> None:
             console.print(f"  Inbox has [bold]{payload.get('inbox_count', 0)}[/] item(s).\n")
             return
 
+        if _print_queued(payload, "GTD Inbox"):
+            return
+
         console.print()
         console.print(
             Panel(
@@ -167,6 +170,30 @@ def register_gtd_commands(main: click.Group) -> None:
         )
         console.print(table)
         console.print()
+
+    @gtd.command("drain-spool")
+    def gtd_drain_spool():
+        """Fold the other hosts' GTD spools into the lists (owner host only).
+
+        Non-owner hosts append their GTD writes to
+        coordination/gtd/spool/<host>.jsonl; the host named in
+        coordination/gtd/OWNER applies them. Run by
+        skcapstone-gtd-drain.timer every 10 minutes on the owner. Elsewhere,
+        or with no OWNER file, it reports and does nothing.
+        """
+        try:  # skos, when installed, owns the drain (same records, lock and offsets)
+            from skos.gtd_ingest import drain_spool, is_owner, owner_host
+        except Exception:
+            from ..gtd_spool import drain_spool, is_owner, owner_host
+
+        owner = owner_host()
+        if owner is None:
+            click.echo("no GTD OWNER configured; every host writes directly, nothing to drain")
+            return
+        if not is_owner():
+            click.echo(f"not the GTD owner (owner is {owner}); nothing drained here")
+            return
+        click.echo(f"applied {drain_spool()} spooled op(s)")
 
     @gtd.command("verify")
     @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
