@@ -703,7 +703,7 @@ print(" ".join(sorted({p.get("actorId","") for p in d if "@" in (p.get("actorId"
         fi
         [[ -n "$dkey" && "$resolve" -ne 1 ]] && date +%s > "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
         sk__table_upsert "$tkey" "$row_title" "$level" "$resolve" "$msg" || true
-        sk__log "sent level=$level key=${dkey:-none} channels=$configured delivered=$delivered talk_rc=$talk_rc :: $msg"
+        sk__log "sent level=$level key=${tkey:-none} channels=$configured delivered=$delivered talk_rc=$talk_rc :: $msg"
         [[ "$delivered" -gt 0 ]] && return 0
         return 1
     fi
@@ -746,7 +746,7 @@ print(" ".join(sorted({p.get("actorId","") for p in d if "@" in (p.get("actorId"
 
     [[ -n "$dkey" && "$resolve" -ne 1 ]] && date +%s > "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
     sk__table_upsert "$tkey" "$row_title" "$level" "$resolve" "$msg" || true
-    sk__log "sent level=$level key=${dkey:-none} chunks=$total channels=$configured delivered=$delivered talk_rc=$talk_rc tg_rc=${tg_rc:-0} :: $msg"
+    sk__log "sent level=$level key=${tkey:-none} chunks=$total channels=$configured delivered=$delivered talk_rc=$talk_rc tg_rc=${tg_rc:-0} :: $msg"
     [[ "$delivered" -gt 0 ]] && return 0
     return 1
 }
