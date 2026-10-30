@@ -1,0 +1,1 @@
+AI next-step runs now reach the chosen agent: the runner selects the agent with SKAGENT instead of `claude --agent`, which failed with "agent not found" for every SK agent. `agent_run.available_agents()` lists real agents (homes with a soul blueprint) instead of the hardcoded lumina/opus/jarvis.
