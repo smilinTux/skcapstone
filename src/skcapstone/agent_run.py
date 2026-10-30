@@ -33,7 +33,30 @@ from .card_store import CardCore, CardStore
 logger = logging.getLogger("skcapstone.agent_run")
 
 MODES = ("propose", "dry-run", "execute")
+# Fallback when no agent homes can be read. The real list is available_agents().
 AGENTS = ("lumina", "opus", "jarvis")
+
+
+def available_agents(agents_root: Optional[Path] = None) -> list[str]:
+    """Agents a run can be handed to: every agent home with a soul blueprint.
+
+    Agent homes live in ``~/.skcapstone/agents/<name>/``; the same directory
+    also holds review seats and worker scratch homes, so only homes with
+    ``soul/base.json`` count (that is what makes a home an agent). Falls back
+    to ``AGENTS`` when the directory is unreadable or empty.
+    """
+    root = (
+        agents_root
+        or Path(os.environ.get("SKCAPSTONE_AGENTS_DIR", "~/.skcapstone/agents")).expanduser()
+    )
+    try:
+        found = sorted(
+            d.name for d in root.iterdir() if d.is_dir() and (d / "soul" / "base.json").is_file()
+        )
+    except OSError:
+        found = []
+    return found or list(AGENTS)
+
 
 # States
 QUEUED = "queued"
@@ -1020,12 +1043,18 @@ def claude_dispatcher(context: dict) -> dict:
         + "Report concisely what you did."
     )
     timeout_s = 900
+    # The agent identity is selected with SKAGENT (the global agent selector),
+    # not ``claude --agent``: SK agents are skcapstone homes, not Claude Code
+    # agent definitions, and ``--agent lumina`` fails with "agent not found",
+    # which the runner then recorded as the run's summary.
+    env = dict(os.environ, SKAGENT=agent, SKCAPSTONE_AGENT=agent, SKMEMORY_AGENT=agent)
     try:
         proc = subprocess.run(
-            ["claude", "-p", prompt, "--agent", agent],
+            ["claude", "-p", prompt],
             capture_output=True,
             text=True,
             timeout=timeout_s,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return {"summary": f"timed out after {timeout_s}s", "activity": [], "links": {}}

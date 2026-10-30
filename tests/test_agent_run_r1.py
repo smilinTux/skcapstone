@@ -110,3 +110,44 @@ def test_execute_dispatch_available_toggle():
     assert ar.execute_dispatch_available() is True
     ar.set_execute_dispatcher(None)
     assert ar.execute_dispatch_available() is False
+
+
+def test_claude_dispatcher_selects_agent_by_env(monkeypatch):
+    """SK agents are skcapstone homes: the agent is chosen with SKAGENT, never --agent."""
+    import subprocess
+
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["env"] = cmd, kw.get("env") or {}
+
+        class P:
+            stdout, stderr = "ok", ""
+
+        return P()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    out = ar.claude_dispatcher(
+        {
+            "card_id": "c1",
+            "kind": "task",
+            "title": "t",
+            "instruction": "do",
+            "agent": "scholar",
+            "mode": "propose",
+        }
+    )
+    assert "--agent" not in seen["cmd"]
+    assert seen["env"]["SKAGENT"] == "scholar"
+    assert out["summary"] == "ok"
+
+
+def test_available_agents_reads_soul_homes(tmp_path):
+    for name, soul in (("lumina", True), ("scholar", True), ("reviewer-seat", False)):
+        d = tmp_path / name
+        d.mkdir()
+        if soul:
+            (d / "soul").mkdir()
+            (d / "soul" / "base.json").write_text("{}")
+    assert ar.available_agents(tmp_path) == ["lumina", "scholar"]
+    assert ar.available_agents(tmp_path / "missing") == list(ar.AGENTS)
