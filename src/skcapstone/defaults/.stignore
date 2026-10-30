@@ -53,6 +53,14 @@ skcomms/cot-pki/packages
 // stores were drained 2026-08-15, but the exclusion STAYS: syncing an unread,
 // per-host, high-churn token store has no value and only ever risks a flood.
 capauth/security/tokens
+// capauth/fleet-trust: the signature-verification ROSTER (2026-10-30, chi GTD
+// journal). fleet.signing.load_roster() reads <capauth_home>/fleet-trust/*.asc,
+// and the acting agent's capauth home lives INSIDE this synced folder
+// (agents/<agent>/capauth). Its docstring says the roster must never be
+// writable by the thing it authenticates; a synced roster is exactly that, since
+// any peer could drop a key in and get its writes counted as verified. Keys are
+// installed per node by hand (key ceremony) and stay node-local.
+**/capauth/fleet-trust
 
 // --- Vector store / DB indexes (rebuilt locally from the flat files) ---
 // ChromaDB is a live SQLite database. Replicating one corrupts it; every host
