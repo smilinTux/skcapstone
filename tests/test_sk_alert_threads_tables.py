@@ -26,12 +26,27 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "sk-alert"
 
 COLUMNS = [
     {"id": 10, "title": "Alert", "type": "text"},
-    {"id": 11, "title": "Status", "type": "selection",
-     "selectionOptions": [{"id": 0, "label": "open"}, {"id": 1, "label": "ack"},
-                          {"id": 2, "label": "resolved"}, {"id": 3, "label": "fyi"}]},
-    {"id": 12, "title": "Severity", "type": "selection",
-     "selectionOptions": [{"id": 0, "label": "info"}, {"id": 1, "label": "warn"},
-                          {"id": 2, "label": "crit"}]},
+    {
+        "id": 11,
+        "title": "Status",
+        "type": "selection",
+        "selectionOptions": [
+            {"id": 0, "label": "open"},
+            {"id": 1, "label": "ack"},
+            {"id": 2, "label": "resolved"},
+            {"id": 3, "label": "fyi"},
+        ],
+    },
+    {
+        "id": 12,
+        "title": "Severity",
+        "type": "selection",
+        "selectionOptions": [
+            {"id": 0, "label": "info"},
+            {"id": 1, "label": "warn"},
+            {"id": 2, "label": "crit"},
+        ],
+    },
     {"id": 13, "title": "Host", "type": "text"},
     {"id": 14, "title": "Estate", "type": "text"},
     {"id": 15, "title": "First seen", "type": "datetime"},
@@ -90,9 +105,16 @@ class FakeHub:
                         return self._send(500, {})
                     return self._send(200, COLUMNS)
                 if method == "GET" and path.endswith("/rows"):
-                    return self._send(200, [
-                        {"id": rid, "data": [{"columnId": int(k), "value": v} for k, v in d.items()]}
-                        for rid, d in hub.rows.items()])
+                    return self._send(
+                        200,
+                        [
+                            {
+                                "id": rid,
+                                "data": [{"columnId": int(k), "value": v} for k, v in d.items()],
+                            }
+                            for rid, d in hub.rows.items()
+                        ],
+                    )
                 if method == "POST" and path.endswith("/rows"):
                     hub.next_row += 1
                     hub.rows[hub.next_row] = dict(body["data"])
@@ -152,8 +174,9 @@ def run(home: Path, hub: FakeHub, *args: str, table: bool = False):
         "SKCAPSTONE_HOME": str(home),
         "SKALERT_ENV_FILE": "/dev/null",
     }
-    return subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, text=True,
-                          env=e, timeout=60)
+    return subprocess.run(
+        ["bash", str(SCRIPT), *args], capture_output=True, text=True, env=e, timeout=60
+    )
 
 
 def test_first_alert_opens_a_titled_thread_and_repeats_go_inside(tmp_path, hub):
@@ -201,8 +224,8 @@ def test_deleted_root_reopens_a_thread_instead_of_losing_the_alert(tmp_path, hub
     r = run(tmp_path, hub, "-g", "k", "second")
     assert r.returncode == 0, r.stderr
     posts = hub.chat_posts()
-    assert posts[1].get("threadId") == 101          # tried the old thread
-    assert posts[2].get("threadTitle")              # then opened a new one
+    assert posts[1].get("threadId") == 101  # tried the old thread
+    assert posts[2].get("threadTitle")  # then opened a new one
     run(tmp_path, hub, "-g", "k", "third")
     assert hub.chat_posts()[3].get("threadId") == 102
 
@@ -217,12 +240,23 @@ def test_dedup_key_still_suppresses_and_resolve_clears_it(tmp_path, hub):
 
 
 def test_table_row_is_created_updated_and_resolved(tmp_path, hub):
-    run(tmp_path, hub, "-g", "cron/h/job", "--title", "cron job on h", "-l", "crit", "failed", table=True)
+    run(
+        tmp_path,
+        hub,
+        "-g",
+        "cron/h/job",
+        "--title",
+        "cron job on h",
+        "-l",
+        "crit",
+        "failed",
+        table=True,
+    )
     assert len(hub.rows) == 1
     rid, row = next(iter(hub.rows.items()))
     assert row["10"] == "cron job on h"
-    assert row["11"] == 0          # open
-    assert row["12"] == 2          # crit
+    assert row["11"] == 0  # open
+    assert row["12"] == 2  # crit
     assert row["17"] == 1
     assert row["21"] == "cron/h/job"
     assert row["14"] == "test"
@@ -282,16 +316,30 @@ def test_table_cli_reads_rows_back_with_labels(tmp_path, hub):
     run(tmp_path, hub, "-g", "a", "-l", "crit", "a still failing", table=True)
     run(tmp_path, hub, "-g", "b", "--title", "disk low on h", "-l", "warn", "disk", table=True)
     run(tmp_path, hub, "-g", "b", "--resolve", "disk ok", table=True)
-    e = {"HOME": os.environ["HOME"], "PATH": os.environ["PATH"],
-         "SKCAPSTONE_HOME": str(tmp_path), "SKALERT_ENV_FILE": "/dev/null"}
-    r = subprocess.run(["python3", str(TABLE_CLI), "rows", "--status", "open", "--json"],
-                       capture_output=True, text=True, env=e, timeout=60)
+    e = {
+        "HOME": os.environ["HOME"],
+        "PATH": os.environ["PATH"],
+        "SKCAPSTONE_HOME": str(tmp_path),
+        "SKALERT_ENV_FILE": "/dev/null",
+    }
+    r = subprocess.run(
+        ["python3", str(TABLE_CLI), "rows", "--status", "open", "--json"],
+        capture_output=True,
+        text=True,
+        env=e,
+        timeout=60,
+    )
     assert r.returncode == 0, r.stderr
     rows = json.loads(r.stdout)
     assert [x["Alert"] for x in rows] == ["cron a on h"]
     assert rows[0]["Severity"] == "crit" and rows[0]["Alerts sent"] == 2
-    r = subprocess.run(["python3", str(TABLE_CLI), "top", "--since", "1d", "--json"],
-                       capture_output=True, text=True, env=e, timeout=60)
+    r = subprocess.run(
+        ["python3", str(TABLE_CLI), "top", "--since", "1d", "--json"],
+        capture_output=True,
+        text=True,
+        env=e,
+        timeout=60,
+    )
     assert r.returncode == 0, r.stderr
     top = json.loads(r.stdout)
     assert top[0]["condition"] == "cron a on h" and top[0]["alerts_sent"] == 2
