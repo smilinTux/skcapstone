@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""sk-alert-table: this estate's "SK Alerts" table in Nextcloud Tables.
+
+sk-alert writes one row per alert condition into it, so the estate's alert
+history can be queried ("what failed most this week") instead of scrolled.
+
+    sk-alert-table setup --share dknestri     # create once, prints SKALERT_TABLE_ID
+    sk-alert-table share mrarch               # share (read + update: ack, notes)
+    sk-alert-table rows --status open         # what is open now
+    sk-alert-table rows --since 7d --json     # last week, machine-readable
+    sk-alert-table top --since 7d             # what alerted most
+
+Run setup as the account sk-alert posts as (lumina on nor, jarvis on chi), and
+put the printed id in config/alert.env. Credentials are read the way sk-alert
+reads them (config/alert.env, then config/alert.secret, then ~/.hermes/.env)
+and are never printed.
+"""
+
+import argparse
+import base64
+import re
+import time
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+# The column set sk-alert writes. sk-alert finds columns by TITLE, so renaming
+# one in the Tables UI stops that field from being written (nothing breaks).
+STATUS = ["open", "ack", "resolved", "fyi"]
+SEVERITY = ["info", "warn", "crit"]
+COLUMNS = [
+    ("Alert", "text", "line", {}),
+    ("Status", "selection", "", {"opts": STATUS, "default": 0}),
+    ("Severity", "selection", "", {"opts": SEVERITY, "default": 0}),
+    ("Host", "text", "line", {}),
+    ("Estate", "text", "line", {}),
+    ("First seen", "datetime", "", {}),
+    ("Last seen", "datetime", "", {}),
+    ("Alerts sent", "number", "", {}),
+    ("Last message", "text", "long", {}),
+    ("Talk thread", "text", "line", {}),
+    ("Resolved at", "datetime", "", {}),
+    ("Key", "text", "line", {}),
+    ("Notes", "text", "long", {}),
+]
+
+
+def load_env() -> dict:
+    home = Path(os.environ.get("SKCAPSTONE_HOME", Path.home() / ".skcapstone"))
+    env = {}
+    files = [home / "config/alert.env", home / "config/alert.secret",
+             Path(os.environ.get("SKALERT_ENV_FILE", Path.home() / ".hermes/.env"))]
+    for f in files:
+        try:
+            for line in f.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                env.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+        except OSError:
+            pass
+    for k in ("NEXTCLOUD_TALK_SERVER_URL", "NEXTCLOUD_TALK_USERNAME", "NEXTCLOUD_TALK_APP_PASSWORD",
+              "SKALERT_TABLE_ID"):
+        if os.environ.get(k):
+            env[k] = os.environ[k]
+    return env
+
+
+class Api:
+    def __init__(self, env: dict):
+        try:
+            self.url = env["NEXTCLOUD_TALK_SERVER_URL"].rstrip("/")
+            cred = f'{env["NEXTCLOUD_TALK_USERNAME"]}:{env["NEXTCLOUD_TALK_APP_PASSWORD"]}'
+        except KeyError as e:
+            sys.exit(f"sk-alert-table: missing {e.args[0]} (see sk-alert CONFIG RESOLUTION)")
+        self.auth = "Basic " + base64.b64encode(cred.encode()).decode()
+
+    def call(self, method: str, path: str, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(
+            self.url + "/index.php/apps/tables/api/1" + path, data=data, method=method,
+            headers={"Authorization": self.auth, "OCS-APIRequest": "true",
+                     "Accept": "application/json", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read() or b"null")
+        except urllib.error.HTTPError as e:
+            sys.exit(f"sk-alert-table: {method} {path} -> HTTP {e.code} {e.read()[:300]!r}")
+
+
+def create(api: Api, title: str) -> int:
+    table = api.call("POST", "/tables", {"title": title, "emoji": "\U0001F6A8",
+                                         "description": "One row per alert condition, written by sk-alert."})
+    tid = table["id"]
+    for name, typ, sub, extra in COLUMNS:
+        body = {"title": name, "type": typ, "subtype": sub, "mandatory": False}
+        if typ == "selection":
+            body["selectionOptions"] = json.dumps([{"id": i, "label": o} for i, o in enumerate(extra["opts"])])
+            body["selectionDefault"] = str(extra["default"])
+        if typ == "number":
+            body["numberDecimals"] = 0
+        api.call("POST", f"/tables/{tid}/columns", body)
+    return tid
+
+
+def share(api: Api, tid: int, user: str) -> None:
+    api.call("POST", f"/tables/{tid}/shares", {
+        "receiver": user, "receiverType": "user", "permissionRead": True,
+        "permissionCreate": False, "permissionUpdate": True,
+        "permissionDelete": False, "permissionManage": False})
+
+
+def read_rows(api: Api, tid: int) -> list:
+    """Rows as {column title: value}, selection ids turned back into labels."""
+    cols = {c["id"]: c for c in api.call("GET", f"/tables/{tid}/columns")}
+    out = []
+    for r in api.call("GET", f"/tables/{tid}/rows") or []:
+        row = {"id": r["id"]}
+        for cell in r.get("data") or []:
+            c = cols.get(cell.get("columnId"))
+            if not c:
+                continue
+            v = cell.get("value")
+            if c["type"] == "selection":
+                labels = {str(o["id"]): o["label"] for o in c.get("selectionOptions") or []}
+                v = labels.get(str(v), v)
+            row[c["title"]] = v
+        out.append(row)
+    return out
+
+
+def since_cutoff(spec: str) -> str:
+    m = re.fullmatch(r"(\d+)([hdw])", spec or "")
+    if not m:
+        sys.exit("sk-alert-table: --since takes 12h, 7d or 2w")
+    secs = int(m.group(1)) * {"h": 3600, "d": 86400, "w": 604800}[m.group(2)]
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time() - secs))
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s_setup = sub.add_parser("setup", help="create the table (once per estate)")
+    s_setup.add_argument("--title", default="SK Alerts")
+    s_setup.add_argument("--share", action="append", default=[], metavar="USER")
+    s_share = sub.add_parser("share", help="share the table with a user (read + update)")
+    s_share.add_argument("user", nargs="+")
+    for name in ("rows", "top"):
+        q = sub.add_parser(name, help="list rows" if name == "rows" else "conditions that alerted most")
+        q.add_argument("--since", help="only rows seen in the last 12h / 7d / 2w")
+        q.add_argument("--host")
+        q.add_argument("--json", action="store_true")
+        if name == "rows":
+            q.add_argument("--status", choices=STATUS)
+    for q in (s_share,) + tuple(sub.choices[n] for n in ("rows", "top")):
+        q.add_argument("--table", type=int, help="table id (default: SKALERT_TABLE_ID)")
+    a = p.parse_args()
+    env = load_env()
+    api = Api(env)
+
+    if a.cmd == "setup":
+        tid = create(api, a.title)
+        for user in a.share:
+            share(api, tid, user)
+        print(f"SKALERT_TABLE_ID={tid}")
+        return 0
+
+    tid = a.table or int(env.get("SKALERT_TABLE_ID") or 0)
+    if not tid:
+        sys.exit("sk-alert-table: no table (set SKALERT_TABLE_ID in config/alert.env or pass --table)")
+    if a.cmd == "share":
+        for user in a.user:
+            share(api, tid, user)
+            print(f"shared table {tid} with {user}")
+        return 0
+
+    rows = read_rows(api, tid)
+    if a.since:
+        cut = since_cutoff(a.since)
+        rows = [r for r in rows if (r.get("Last seen") or r.get("First seen") or "") >= cut]
+    if a.host:
+        rows = [r for r in rows if r.get("Host") == a.host]
+    if a.cmd == "rows" and a.status:
+        rows = [r for r in rows if r.get("Status") == a.status]
+    rows.sort(key=lambda r: r.get("Last seen") or "", reverse=True)
+
+    if a.cmd == "top":
+        agg = {}
+        for r in rows:
+            k = r.get("Key") or r.get("Alert") or "?"
+            e = agg.setdefault(k, {"condition": r.get("Alert") or k, "key": r.get("Key"),
+                                   "host": r.get("Host"), "incidents": 0, "alerts_sent": 0,
+                                   "open": 0, "last_seen": ""})
+            e["incidents"] += 1
+            e["alerts_sent"] += int(r.get("Alerts sent") or 0)
+            e["open"] += r.get("Status") == "open"
+            e["last_seen"] = max(e["last_seen"], r.get("Last seen") or "")
+        rows = sorted(agg.values(), key=lambda e: (e["alerts_sent"], e["incidents"]), reverse=True)
+        if a.json:
+            print(json.dumps(rows, ensure_ascii=False, indent=1))
+        else:
+            for e in rows:
+                print(f'{e["alerts_sent"]:>4} alerts {e["incidents"]:>3} incidents'
+                      f'{" (open)" if e["open"] else ""}  {e["condition"]}  last {e["last_seen"]}')
+        return 0
+
+    if a.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=1))
+    else:
+        for r in rows:
+            print(f'#{r["id"]} {r.get("Status", "?"):<8} {r.get("Severity", ""):<4} '
+                  f'{r.get("Last seen", ""):<16} {r.get("Alert", "")}  [{r.get("Host", "")}]'
+                  f'  sent {r.get("Alerts sent", 0)}')
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -89,6 +89,10 @@ class FakeHub:
                     if hub.columns_fail:
                         return self._send(500, {})
                     return self._send(200, COLUMNS)
+                if method == "GET" and path.endswith("/rows"):
+                    return self._send(200, [
+                        {"id": rid, "data": [{"columnId": int(k), "value": v} for k, v in d.items()]}
+                        for rid, d in hub.rows.items()])
                 if method == "POST" and path.endswith("/rows"):
                     hub.next_row += 1
                     hub.rows[hub.next_row] = dict(body["data"])
@@ -267,3 +271,28 @@ def test_table_failure_never_fails_the_alert(tmp_path, hub):
     assert len(hub.chat_posts()) == 1
     log = (tmp_path / "logs" / "skalert.log").read_text()
     assert "TABLE FAILED" in log
+
+
+TABLE_CLI = SCRIPT.parent / "sk-alert-table"
+
+
+def test_table_cli_reads_rows_back_with_labels(tmp_path, hub):
+    """Agents answer "what is open / what failed most" with sk-alert-table."""
+    run(tmp_path, hub, "-g", "a", "--title", "cron a on h", "-l", "crit", "a failed", table=True)
+    run(tmp_path, hub, "-g", "a", "-l", "crit", "a still failing", table=True)
+    run(tmp_path, hub, "-g", "b", "--title", "disk low on h", "-l", "warn", "disk", table=True)
+    run(tmp_path, hub, "-g", "b", "--resolve", "disk ok", table=True)
+    e = {"HOME": os.environ["HOME"], "PATH": os.environ["PATH"],
+         "SKCAPSTONE_HOME": str(tmp_path), "SKALERT_ENV_FILE": "/dev/null"}
+    r = subprocess.run(["python3", str(TABLE_CLI), "rows", "--status", "open", "--json"],
+                       capture_output=True, text=True, env=e, timeout=60)
+    assert r.returncode == 0, r.stderr
+    rows = json.loads(r.stdout)
+    assert [x["Alert"] for x in rows] == ["cron a on h"]
+    assert rows[0]["Severity"] == "crit" and rows[0]["Alerts sent"] == 2
+    r = subprocess.run(["python3", str(TABLE_CLI), "top", "--since", "1d", "--json"],
+                       capture_output=True, text=True, env=e, timeout=60)
+    assert r.returncode == 0, r.stderr
+    top = json.loads(r.stdout)
+    assert top[0]["condition"] == "cron a on h" and top[0]["alerts_sent"] == 2
+    assert {t["condition"] for t in top} == {"cron a on h", "disk low on h"}

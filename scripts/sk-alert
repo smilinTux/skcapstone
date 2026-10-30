@@ -359,7 +359,7 @@ except Exception:
 
 # --- Nextcloud Tables: the queryable history ---------------------------------
 # With SKALERT_TABLE_ID set (config/alert.env; create the table once with
-# sk-alert-table-setup) every alert also lands as a row in that table on this
+# sk-alert-table setup) every alert also lands as a row in that table on this
 # estate's skhub: one row per condition (the thread key), updated on each
 # repeat and marked resolved by --resolve; unkeyed alerts get a row each with
 # status "fyi". Columns are found by title, so the table can be reordered or
