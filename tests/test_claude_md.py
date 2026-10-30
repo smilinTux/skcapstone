@@ -19,7 +19,13 @@ import click.testing
 import yaml
 from click.testing import CliRunner
 
-from skcapstone.claude_md import generate_claude_md, write_claude_md
+from skcapstone.claude_md import (
+    generate_agents_md,
+    generate_claude_md,
+    write_agents_md,
+    write_claude_md,
+    write_claude_md_shim,
+)
 from skcapstone.cli import main
 
 # ---------------------------------------------------------------------------
@@ -255,7 +261,9 @@ class TestRefreshContextCli:
 
     def test_dest_dir_writes_claude_md_inside(self, tmp_agent_home: Path, tmp_path: Path):
         """Passing a directory as --dest writes CLAUDE.md inside it."""
-        result = self._run("--dest", str(tmp_path), home=str(tmp_agent_home))
+        result = self._run(
+            "--target", "claude-md", "--dest", str(tmp_path), home=str(tmp_agent_home)
+        )
 
         assert result.exit_code == 0, result.output
         assert (tmp_path / "CLAUDE.md").exists()
@@ -269,10 +277,177 @@ class TestRefreshContextCli:
             with patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
                 result = runner.invoke(
                     main,
-                    ["refresh-context", "--home", str(tmp_agent_home)],
+                    ["refresh-context", "--target", "claude-md", "--home", str(tmp_agent_home)],
                     catch_exceptions=False,
                 )
             written.append(Path(iso_dir) / "CLAUDE.md")
 
         assert result.exit_code == 0, result.output
         assert written[0].exists(), f"Expected CLAUDE.md at {written[0]}"
+
+    def test_default_target_writes_agents_md_only(self, tmp_agent_home: Path, tmp_path: Path):
+        """Default target writes AGENTS.md in cwd and does not create CLAUDE.md."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=tmp_path) as iso_dir:
+            with patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
+                result = runner.invoke(
+                    main,
+                    ["refresh-context", "--home", str(tmp_agent_home)],
+                    catch_exceptions=False,
+                )
+            agents = Path(iso_dir) / "AGENTS.md"
+            claude = Path(iso_dir) / "CLAUDE.md"
+            assert result.exit_code == 0, result.output
+            assert agents.exists()
+            assert "--format agents-md" in agents.read_text(encoding="utf-8")
+            assert not claude.exists()
+
+    def test_agents_md_leaves_existing_claude_md_alone(self, tmp_agent_home: Path, tmp_path: Path):
+        """Writing AGENTS.md does not touch a CLAUDE.md sitting next to it."""
+        (tmp_path / "CLAUDE.md").write_text("hand written", encoding="utf-8")
+
+        result = self._run("--dest", str(tmp_path), home=str(tmp_agent_home))
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "AGENTS.md").exists()
+        assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "hand written"
+
+    def test_both_writes_agents_md_and_claude_shim(self, tmp_agent_home: Path, tmp_path: Path):
+        """--target both writes full AGENTS.md plus a CLAUDE.md @AGENTS.md shim."""
+        result = self._run("--target", "both", "--dest", str(tmp_path), home=str(tmp_agent_home))
+
+        assert result.exit_code == 0, result.output
+        assert "# SKCapstone Agent Context" in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+        assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+
+    def test_both_backup_applies_to_each_file(self, tmp_agent_home: Path, tmp_path: Path):
+        """--backup with --target both backs up both overwritten files."""
+        (tmp_path / "AGENTS.md").write_text("old agents", encoding="utf-8")
+        (tmp_path / "CLAUDE.md").write_text("old claude", encoding="utf-8")
+
+        result = self._run(
+            "--target", "both", "--backup", "--dest", str(tmp_path), home=str(tmp_agent_home)
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "AGENTS.md.bak").read_text(encoding="utf-8") == "old agents"
+        assert (tmp_path / "CLAUDE.md.bak").read_text(encoding="utf-8") == "old claude"
+
+    def test_backup_applies_to_agents_md(self, tmp_agent_home: Path, tmp_path: Path):
+        """--backup with the default target backs up an existing AGENTS.md."""
+        dest = tmp_path / "AGENTS.md"
+        dest.write_text("old agents", encoding="utf-8")
+
+        result = self._run("--backup", "--dest", str(dest), home=str(tmp_agent_home))
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "AGENTS.md.bak").read_text(encoding="utf-8") == "old agents"
+        assert not (tmp_path / "CLAUDE.md").exists()
+
+    def test_both_rejects_claude_md_dest(self, tmp_agent_home: Path, tmp_path: Path):
+        """--target both refuses a --dest that names CLAUDE.md (shim would clobber it)."""
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "refresh-context",
+                "--home",
+                str(tmp_agent_home),
+                "--target",
+                "both",
+                "--dest",
+                str(tmp_path / "CLAUDE.md"),
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert not (tmp_path / "CLAUDE.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# AGENTS.md generation
+# ---------------------------------------------------------------------------
+
+
+class TestAgentsMd:
+    """Tests for generate_agents_md(), write_agents_md() and the CLAUDE.md shim."""
+
+    def test_same_body_tool_neutral_header(self, tmp_agent_home: Path):
+        """AGENTS.md reuses the CLAUDE.md body with a tool-neutral header."""
+        from skcapstone.context_loader import (
+            format_agents_md,
+            format_claude_md,
+            gather_context,
+        )
+
+        ctx = gather_context(tmp_agent_home)
+        agents = format_agents_md(ctx)
+        claude = format_claude_md(ctx)
+
+        assert agents.startswith("# SKCapstone Agent Context")
+        assert "--format agents-md" in agents
+        assert "It gives Claude Code persistent context" not in agents
+        assert agents.split("## Agent Identity", 1)[1] == claude.split("## Agent Identity", 1)[1]
+        assert "--format agents-md" in generate_agents_md(tmp_agent_home)
+
+    def test_write_agents_md_creates_only_agents(self, tmp_agent_home: Path, tmp_path: Path):
+        """write_agents_md() writes AGENTS.md and nothing else."""
+        out_dir = tmp_path / "project"
+        out_dir.mkdir()
+        write_agents_md(tmp_agent_home, out_dir / "AGENTS.md")
+
+        assert sorted(p.name for p in out_dir.iterdir()) == ["AGENTS.md"]
+
+    def test_shim_content(self, tmp_path: Path):
+        """write_claude_md_shim() writes a single @import line."""
+        write_claude_md_shim(tmp_path / "CLAUDE.md")
+
+        assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+
+
+# ---------------------------------------------------------------------------
+# context show / generate with agents-md
+# ---------------------------------------------------------------------------
+
+
+class TestContextCliAgentsMd:
+    """Tests for agents-md in `skcapstone context show/generate`."""
+
+    def test_show_format_agents_md(self, tmp_agent_home: Path):
+        """context show --format agents-md prints the AGENTS.md rendering."""
+        result = CliRunner().invoke(
+            main,
+            ["context", "show", "--home", str(tmp_agent_home), "--format", "agents-md"],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "--format agents-md" in result.output
+
+    def test_generate_target_agents_md(self, tmp_agent_home: Path, tmp_path: Path):
+        """context generate --target agents-md writes only AGENTS.md."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path) as iso_dir:
+            result = runner.invoke(
+                main,
+                ["context", "generate", "--home", str(tmp_agent_home), "--target", "agents-md"],
+                catch_exceptions=False,
+            )
+            assert result.exit_code == 0, result.output
+            assert sorted(p.name for p in Path(iso_dir).iterdir()) == ["AGENTS.md"]
+
+    def test_generate_target_all(self, tmp_agent_home: Path, tmp_path: Path):
+        """context generate --target all writes AGENTS.md, a CLAUDE.md shim and cursor rules."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=tmp_path) as iso_dir:
+            result = runner.invoke(
+                main,
+                ["context", "generate", "--home", str(tmp_agent_home), "--target", "all"],
+                catch_exceptions=False,
+            )
+            root = Path(iso_dir)
+            assert result.exit_code == 0, result.output
+            assert "--format agents-md" in (root / "AGENTS.md").read_text(encoding="utf-8")
+            assert (root / "CLAUDE.md").read_text(encoding="utf-8") == "@AGENTS.md\n"
+            assert (root / ".cursor" / "rules" / "agent.mdc").exists()
