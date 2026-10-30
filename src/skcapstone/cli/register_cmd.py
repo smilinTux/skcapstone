@@ -96,16 +96,22 @@ def register_register_commands(main: click.Group) -> None:
             dry_run=dry_run,
         )
 
-        # Register Claude Code hooks
-        if not dry_run:
-            try:
-                from skmemory.register import register_hooks
-
-                register_hooks(install_hooks=True)
-            except ImportError:
-                pass
-            except Exception:
-                pass
+        # Lifecycle hooks are installed by register_all() via skmemory's
+        # installer (Claude Code, Codex, OpenCode, Pi).
+        hooks = results.get("hooks", {})
+        if hooks.get("harnesses"):
+            for harness, res in hooks["harnesses"].items():
+                action = res.get("action", "?") if isinstance(res, dict) else res
+                style = "red" if str(action).startswith("error") else "green"
+                if action in ("unchanged",):
+                    style = "dim"
+                console.print(f"  [{style}]Hooks ({harness}): {action}[/] {res.get('path', '')}")
+                if isinstance(res, dict) and res.get("backup"):
+                    console.print(f"    [dim]backup: {res['backup']}[/]")
+            console.print()
+        elif hooks:
+            console.print(f"  [dim]Hooks: {hooks.get('reason') or hooks.get('action')}[/]")
+            console.print()
 
         # Show Codex AGENTS.md bootstrap result
         codex_setup = results.get("codex_setup", {})

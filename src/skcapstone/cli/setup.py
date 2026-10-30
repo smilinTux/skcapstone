@@ -106,6 +106,32 @@ def _write_claude_settings(merge: bool = True) -> Optional[Path]:
     raw = raw.replace("{{SKMEMORY_HOOKS_DIR}}", hooks_dir)
     new_settings = json.loads(raw)
 
+    # Newer skmemory owns hook wiring (`skmemory hooks install`): absolute
+    # console-script commands, legacy entries replaced, backups written. Use
+    # it and only merge the template's non-hook defaults here. The template's
+    # hooks/*.sh entries remain the fallback for older skmemory.
+    try:
+        from skmemory.hook_install import install_harness
+    except ImportError:
+        install_harness = None
+    if install_harness is not None:
+        res = install_harness("claude")
+        if str(res.get("action", "")).startswith("error"):
+            return None
+        settings_path = claude_dir / "settings.json"
+        try:
+            existing = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+        changed = False
+        for k, v in new_settings.items():
+            if k != "hooks" and k not in existing:
+                existing[k] = v
+                changed = True
+        if changed:
+            settings_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        return settings_path
+
     settings_path = claude_dir / "settings.json"
     if merge and settings_path.exists():
         try:

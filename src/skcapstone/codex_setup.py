@@ -116,22 +116,15 @@ else
 fi
 
 echo
+# Budgeted ritual v2: identity, FEB, distilled skwhisper whisper.md, GTD,
+# journal, strongest memories. Replaces `skmemory ritual --full` plus a raw
+# whisper.md dump, which together ran to ~30KB.
 echo "## skmemory ritual"
 if command -v skmemory >/dev/null 2>&1; then
-  skmemory ritual --full || skmemory ritual || true
+  skmemory hook session-start --harness generic --agent "$AGENT" </dev/null \
+    || skmemory ritual || true
 else
   echo "skmemory command not found on PATH."
-fi
-
-echo
-echo "## skwhisper context"
-WHISPER_CONTEXT="$AGENT_HOME/skwhisper/whisper.md"
-if [[ -f "$WHISPER_CONTEXT" ]]; then
-  sed -n '1,220p' "$WHISPER_CONTEXT"
-elif command -v skwhisper >/dev/null 2>&1 && [[ -f "$SKWHISPER_CONFIG" ]]; then
-  skwhisper -c "$SKWHISPER_CONFIG" status || true
-else
-  echo "No SKWhisper context found for $AGENT."
 fi
 """
 
@@ -156,8 +149,15 @@ Active agent resolution order: `$SKAGENT`, `$SKCAPSTONE_AGENT`,
 sole installed agent under `{SK_HOME_REF}/agents/`. Configured fallback:
 `{agent or "none (explicit selection required)"}`.
 
-At the start of SK* work, identity/status questions, or tasks involving the
-local sovereign stack, run:
+When `skmemory hooks install` has wired Codex hooks, this context is injected
+automatically at session start (a `# SK agent context:` block). If it is not
+in your context, or for identity/status questions and SK* stack work, run:
+
+```bash
+skmemory hook session-start --harness generic
+```
+
+For the extended SKCapstone status as well, run:
 
 ```bash
 {loader_ref(CODEX_HOME_REF)}
@@ -207,8 +207,7 @@ def has_functional_loader_bootstrap(text: str) -> bool:
         "SKMEMORY_AGENT",
         "SK_CODEX_YOLO",
         "skcapstone",
-        "skmemory",
-        "skwhisper",
+        "skmemory hook session-start",
     )
     return all(token in text for token in required)
 
@@ -297,7 +296,10 @@ environment variables, then an explicitly configured SK_DEFAULT_AGENT, or the
 sole installed agent under `{SK_HOME_REF}/agents/`. Configured fallback:
 `{agent or "none (explicit selection required)"}`.
 
-At the start of SK* work, run:
+When `skmemory hooks install` has added the Pi extension, this context is
+injected into the system prompt automatically (a `# SK agent context:`
+block). If it is missing, run `skmemory hook session-start --harness generic`;
+for the extended SKCapstone status as well, run:
 
 ```bash
 {loader_ref(PI_HOME_REF)}
