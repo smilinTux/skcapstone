@@ -1,0 +1,431 @@
+#!/usr/bin/env bash
+# sk-alert: the alert primitive for an SKWorld estate.
+#
+# Delivers to every channel this node has configured (Nextcloud Talk, Telegram)
+# with priority levels and de-duplication. Source it for the `sk_alert`
+# function, or call the installed `sk-alert` command.
+#
+#   sk_alert "DOSE 1 stock-out flagged"                 # info  (bell)
+#   sk_alert -l warn  "Citicoline out, Prami unpaired"  # warn
+#   sk_alert -l crit  "Backup failed 3x"                # crit
+#   sk_alert -k noopept-break "Noopept break starts today"  # de-dup, once ever
+#   sk_alert -k disk-low -t 21600 "Disk 92%"            # de-dup, re-alert after 6h
+#   sk_alert --assign chef "chiap08: 216 repos non-durable"  # @mention = work
+#   sk_alert --talk / --no-talk / --no-telegram / --talk-room <token>
+#
+# WHY THIS LIVES IN SKCAPSTONE (moved 2026-10-30)
+# -----------------------------------------------
+# It used to live in ~/.hermes/scripts/lib/skalert.sh, reached through a
+# hand-made symlink in ~/.skenv/bin. That put the estate's alert primitive
+# inside ONE agent runtime, and skcapstone's own ops scripts are its biggest
+# consumers: scripts/skcapstone-gfs-backup.sh, scripts/sync-conflict-guard.sh
+# and scripts/fleet/skfleet-auto-rollout.sh all call it. On any node without
+# Hermes the call silently no-opped, because every caller guards with
+# `[ -x "$bin/sk-alert" ]`.
+#
+# That was not hypothetical. On 2026-10-30 all four chi nodes had skcapstone
+# and none had sk-alert (only chiap04 has Hermes at all), so the
+# skcapstone-conflict-guard timer had been finding Syncthing conflicts across
+# that estate every 24h and telling nobody. The framework cannot depend on a
+# runtime for a primitive it needs itself, so the primitive moved down.
+#
+# ALERTS STAY INSIDE THEIR OWN ESTATE (Chef, 2026-10-22)
+# ------------------------------------------------------
+# chi's alerts go to chi's skhub, nor's go to nor's, and neither crosses. Two
+# things make that true:
+#
+#   1. The SERVER comes from this node's own config, never a constant here, so
+#      the same script posts to skhub.skstack01.douno.it on nor and to
+#      skhub.nativeassetmanagement.com on chi.
+#   2. The ROOM must hold only identities LOCAL to that skhub. Any participant
+#      actorId containing '@' is an identity from another skhub. That is the
+#      tell, and --assign refuses to hand work to one (see below).
+#
+# CONFIG RESOLUTION
+# -----------------
+# First value found wins; nothing below overrides something already set.
+#   1. the environment, as the caller exported it
+#   2. $SKCAPSTONE_HOME/config/alert.env     estate-wide, Syncthing-shared,
+#                                            ROUTING ONLY, never secrets
+#   3. $SKCAPSTONE_HOME/config/alert.secret  node-local, mode 600, excluded
+#                                            from Syncthing AND from the GFS
+#                                            backup, because that archive
+#                                            rsyncs off-site
+#   4. ~/.hermes/.env                        legacy, still true on nor
+#
+# The split matters: ~/.skcapstone is itself a Syncthing folder and is in the
+# backup, so routing can live there and a password cannot.
+#
+# Exit 0 when at least one configured channel accepted the message, or when a
+# de-dup key intentionally suppressed it. Non-zero when every configured
+# channel failed, or when nothing is configured at all. Safe to call from a
+# `set -euo pipefail` script.
+
+# --- config ------------------------------------------------------------------
+SKCAPSTONE_HOME="${SKCAPSTONE_HOME:-$HOME/.skcapstone}"
+
+# Estate routing, then node-local secrets, then the legacy Hermes file, each
+# sourced with `set -a` so plain KEY=value lines become environment.
+# Remember what the caller exported first, because that outranks every file.
+_pre_room="${SKALERT_TALK_ROOM:-}"
+_pre_tdef="${SKALERT_TALK_DEFAULT:-}"
+_pre_chat="${SKALERT_CHAT_ID:-}"
+_pre_url="${NEXTCLOUD_TALK_SERVER_URL:-}"
+_pre_user="${NEXTCLOUD_TALK_USERNAME:-}"
+_pre_pass="${NEXTCLOUD_TALK_APP_PASSWORD:-}"
+_pre_tg="${TELEGRAM_BOT_TOKEN:-}"
+
+for _f in "$SKCAPSTONE_HOME/config/alert.env" \
+          "$SKCAPSTONE_HOME/config/alert.secret" \
+          "${SKALERT_ENV_FILE:-$HOME/.hermes/.env}"; do
+    [[ -r "$_f" ]] || continue
+    set -a; # shellcheck disable=SC1090
+    source "$_f" 2>/dev/null || true
+    set +a
+done
+unset _f
+
+[[ -n "$_pre_room" ]] && SKALERT_TALK_ROOM="$_pre_room" || :
+[[ -n "$_pre_tdef" ]] && SKALERT_TALK_DEFAULT="$_pre_tdef" || :
+[[ -n "$_pre_chat" ]] && SKALERT_CHAT_ID="$_pre_chat" || :
+[[ -n "$_pre_url"  ]] && NEXTCLOUD_TALK_SERVER_URL="$_pre_url" || :
+[[ -n "$_pre_user" ]] && NEXTCLOUD_TALK_USERNAME="$_pre_user" || :
+[[ -n "$_pre_pass" ]] && NEXTCLOUD_TALK_APP_PASSWORD="$_pre_pass" || :
+[[ -n "$_pre_tg"   ]] && TELEGRAM_BOT_TOKEN="$_pre_tg" || :
+unset _pre_room _pre_tdef _pre_chat _pre_url _pre_user _pre_pass _pre_tg
+
+# Telegram target. Deliberately NO default. A recipient baked into the code is
+# how this estate once sent a minor's school schedule to the wrong person for
+# weeks, and it cannot be right for two estates at once. Set SKALERT_CHAT_ID in
+# config/alert.env on the estate that wants Telegram; a node that sets neither
+# it nor TELEGRAM_BOT_TOKEN simply does not use that channel.
+SKALERT_CHAT_ID="${SKALERT_CHAT_ID:-}"
+
+# Nextcloud Talk room for THIS estate. No default either: a wrong room is a
+# cross-estate leak, so a node with no room configured does not post to Talk.
+SKALERT_TALK_ROOM="${SKALERT_TALK_ROOM:-}"
+
+# Whether Talk is on without --talk. nor leaves this unset so Talk stays
+# opt-in there (every existing caller would otherwise start posting to a room).
+# An estate that wants its health alerts in the channel sets it to 1.
+SKALERT_TALK_DEFAULT="${SKALERT_TALK_DEFAULT:-0}"
+
+# State and log live under skcapstone, not under a runtime, so they exist on a
+# node that has no Hermes.
+SKALERT_STATE_DIR="${SKALERT_STATE_DIR:-$SKCAPSTONE_HOME/state/skalert}"
+SKALERT_LOG="${SKALERT_LOG:-$SKCAPSTONE_HOME/logs/skalert.log}"
+
+sk__log() {
+    mkdir -p "$(dirname "$SKALERT_LOG")" 2>/dev/null || true
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$SKALERT_LOG" 2>/dev/null || true
+}
+
+# sk_alert [-l info|warn|crit] [-k dedup_key] [-t ttl_seconds] [-c chat_id] MESSAGE...
+# --- Nextcloud Talk -----------------------------------------------------------
+# Routing comes from config (see CONFIG RESOLUTION above); there is no room or
+# server constant here on purpose, because a wrong room is a cross-estate leak.
+#
+# Before trusting a candidate room, list its participants:
+#   auth="$NEXTCLOUD_TALK_USERNAME:$NEXTCLOUD_TALK_APP_PASSWORD"
+#   curl -u "$auth" -H 'OCS-APIRequest: true' \
+#     "$NEXTCLOUD_TALK_SERVER_URL/ocs/v2.php/apps/spreed/api/v4/room/<token>/participants?format=json"
+# Any actorId containing '@' is an identity from another skhub. That is the tell.
+
+# sk__talk_resolve_mention <agent> <url> <user> <pass> <room>
+#   Resolves an agent name to a mention id the TARGET ROOM actually accepts, and
+#   prints "<source> <id>". Needed because --assign used to just prepend
+#   "@$agent" to the text and hope: if the name was not mentionable there, Talk
+#   rendered it as literal text, so a work handoff looked sent and reached
+#   nobody. It also means --assign chef works, resolving to the local id
+#   (dknestri) rather than a guess.
+#   source is "users" for a local account or "federated_users" for one on
+#   another skhub, which is how the estate boundary is detected.
+sk__talk_resolve_mention() {
+    local who="$1" url="$2" user="$3" pass="$4" room="$5" json
+    json="$(curl -sS -m 20 -u "${user}:${pass}" \
+        -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+        --get --data-urlencode "search=${who}" --data-urlencode "format=json" \
+        "${url}/ocs/v2.php/apps/spreed/api/v1/chat/${room}/mentions" 2>/dev/null)" || return 1
+    printf '%s' "$json" | python3 -I -c '
+import json, sys
+want = sys.argv[1].lower()
+try:
+    cands = json.load(sys.stdin)["ocs"]["data"] or []
+except Exception:
+    sys.exit(1)
+# Prefer an exact hit on the id, its local part, or the display label.
+def keys(c):
+    i = (c.get("id") or "").lower()
+    return {i, i.split("@", 1)[0], (c.get("label") or "").lower()}
+for c in cands:
+    if want in keys(c):
+        print(c.get("source", ""), c.get("id", ""))
+        sys.exit(0)
+# Otherwise a single candidate for a prefix search is unambiguous enough.
+if len(cands) == 1:
+    print(cands[0].get("source", ""), cands[0].get("id", ""))
+    sys.exit(0)
+sys.exit(1)
+' "$who"
+}
+
+sk__talk_post() {
+    local text="$1"
+    local url="${NEXTCLOUD_TALK_SERVER_URL:-}" user="${NEXTCLOUD_TALK_USERNAME:-}"
+    local pass="${NEXTCLOUD_TALK_APP_PASSWORD:-}"
+    if [[ -z "$url" || -z "$user" || -z "$pass" ]]; then
+        sk__log "TALK skipped (no NEXTCLOUD_TALK_* credentials): $text"
+        return 1
+    fi
+    local http
+    http="$(curl -sS -m 25 -o /dev/null -w '%{http_code}' -X POST \
+        -u "${user}:${pass}" \
+        -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+        -H 'Content-Type: application/json' \
+        --data-binary @<(printf '%s' "$text" | python3 -c 'import json,sys; print(json.dumps({"message": sys.stdin.read()}))') \
+        "${url}/ocs/v2.php/apps/spreed/api/v1/chat/${SKALERT_TALK_ROOM}?format=json" 2>/dev/null)" || http="000"
+    if [[ "$http" == "201" || "$http" == "200" ]]; then
+        sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http"
+        return 0
+    fi
+    sk__log "TALK FAILED room=$SKALERT_TALK_ROOM http=$http: $text"
+    return 1
+}
+
+sk_alert() {
+    local level="info" dkey="" ttl=0 chat="$SKALERT_CHAT_ID" silent_dedup=1
+    # Talk defaults to the estate's choice: nor leaves SKALERT_TALK_DEFAULT
+    # unset so Talk stays opt-in there, chi sets it to 1 so estate health lands
+    # in the channel without every caller being edited.
+    local to_talk="${SKALERT_TALK_DEFAULT:-0}"
+    local assign="" no_telegram=0 room_override=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -l|--level) level="$2"; shift 2 ;;
+            -k|--key)   dkey="$2";  shift 2 ;;
+            -t|--ttl)   ttl="$2";   shift 2 ;;
+            -c|--chat)  chat="$2";  shift 2 ;;
+            --talk)        to_talk=1; shift ;;
+            --talk-room)   SKALERT_TALK_ROOM="$2"; to_talk=1; room_override=1; shift 2 ;;
+            # --assign hands the alert to an agent as WORK: it @mentions them in
+            # a mention-mode room, which is the only thing Hermes acts on there.
+            --assign)      assign="$2"; to_talk=1; shift 2 ;;
+            --no-telegram) no_telegram=1; to_talk=1; shift ;;
+            --no-talk)     to_talk=0; shift ;;
+            --) shift; break ;;
+            -*) echo "sk_alert: unknown flag $1" >&2; return 2 ;;
+            *) break ;;
+        esac
+    done
+    local msg="$*"
+    [[ -z "$msg" ]] && { echo "sk_alert: empty message" >&2; return 2; }
+
+    # No token means this node does not do Telegram. Decide nothing here: the
+    # single "was anything configured at all" check below owns that verdict, so
+    # there is one place that can report it and one message to maintain.
+    if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
+        no_telegram=1
+    fi
+
+    # De-dup: skip if we've alerted on this key within ttl (ttl=0 => once ever).
+    if [[ -n "$dkey" ]]; then
+        mkdir -p "$SKALERT_STATE_DIR" 2>/dev/null || true
+        local safe stamp now last
+        safe="$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')"
+        stamp="$SKALERT_STATE_DIR/$safe"
+        if [[ -f "$stamp" ]]; then
+            if [[ "$ttl" -le 0 ]]; then
+                sk__log "dedup(once) skip key=$dkey"
+                return 0
+            fi
+            now="$(date +%s)"; last="$(cat "$stamp" 2>/dev/null || echo 0)"
+            if (( now - last < ttl )); then
+                sk__log "dedup(ttl=$ttl) skip key=$dkey"
+                return 0
+            fi
+        fi
+    fi
+
+    local icon
+    case "$level" in
+        crit|critical) icon="🚨" ;;
+        warn|warning)  icon="⚠️" ;;
+        *)             icon="🔔" ;;
+    esac
+
+    local text="${icon} ${msg}"
+
+    # Telegram hard-caps sendMessage at 4096 characters. Anything longer comes
+    # back 400 "message is too long" on BOTH the Markdown attempt and the
+    # plain-text retry, so the alert was dropped entirely. That is how the daily
+    # dream reflection went silent: its report embeds a multi-thousand-token LLM
+    # summary and never fit. Split on line boundaries and send in order instead.
+    local -a chunks=()
+    mapfile -t -d '' chunks < <(SK_ALERT_TEXT="$text" python3 -c '
+import os, sys
+
+LIMIT = 3900  # leaves room under 4096 for the "(n/m)" suffix
+text = os.environ["SK_ALERT_TEXT"]
+parts, cur = [], ""
+for line in text.split("\n"):
+    while len(line) > LIMIT:  # a single oversized line still has to be cut
+        if cur:
+            parts.append(cur)
+            cur = ""
+        parts.append(line[:LIMIT])
+        line = line[LIMIT:]
+    candidate = line if not cur else cur + "\n" + line
+    if len(candidate) > LIMIT:
+        parts.append(cur)
+        cur = line
+    else:
+        cur = candidate
+if cur or not parts:
+    parts.append(cur)
+sys.stdout.write("\0".join(parts))
+')
+
+    local total="${#chunks[@]}" idx=0 chunk payload http body
+    # Talk first, so a Telegram failure cannot swallow the handoff: --assign is
+    # how work reaches an agent, and losing it because the OTHER channel 400'd
+    # would be the worst outcome.
+    local talk_rc=0 tg_rc=0 delivered=0 configured=0
+    # A node with no room configured never posts to Talk. That is the guard
+    # that keeps one estate's alerts out of another estate's skhub.
+    if [[ "$to_talk" -eq 1 && -z "$SKALERT_TALK_ROOM" ]]; then
+        sk__log "TALK skipped (no SKALERT_TALK_ROOM configured for this estate)"
+        to_talk=0
+    fi
+    if [[ "$to_talk" -eq 1 ]]; then
+        configured=$((configured + 1))
+        # An explicit --talk-room is an operator decision, so it is honoured
+        # rather than blocked. But say so when the target holds identities from
+        # another skhub: that is a cross-estate post, and the whole point of the
+        # default is that it never happens by accident.
+        if [[ "$room_override" -eq 1 ]]; then
+            local _foreign _auth
+            # Assemble the credential pair in one variable, the way the rest of
+            # this file does. Spelling it inline as user:password next to `curl`
+            # is the literal shape gitleaks' curl-auth-user rule looks for, and
+            # tripping a secret scanner on a line that holds no secret trains
+            # people to wave the scanner through.
+            _auth="${NEXTCLOUD_TALK_USERNAME:-}:${NEXTCLOUD_TALK_APP_PASSWORD:-}"
+            _foreign="$(curl -sS -m 15 -u "$_auth" \
+                -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+                "${NEXTCLOUD_TALK_SERVER_URL:-}/ocs/v2.php/apps/spreed/api/v4/room/${SKALERT_TALK_ROOM}/participants?format=json" 2>/dev/null \
+                | python3 -I -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)["ocs"]["data"] or []
+except Exception:
+    sys.exit(0)
+print(" ".join(sorted({p.get("actorId","") for p in d if "@" in (p.get("actorId") or "")})))
+' 2>/dev/null)" || _foreign=""
+            if [[ -n "${_foreign// /}" ]]; then
+                sk__log "CROSS-ESTATE room=$SKALERT_TALK_ROOM foreign=$_foreign :: $msg"
+                echo "sk_alert: note: room $SKALERT_TALK_ROOM includes other estates ($_foreign). Posting anyway, you asked for it." >&2
+            fi
+        fi
+        local talk_text="$msg"
+        if [[ -n "$assign" ]]; then
+            # Resolve the mention against the target room instead of trusting
+            # the name. Two failures have to be loud, because both look like a
+            # delivered handoff otherwise:
+            #   not mentionable  -> Talk posts literal "@name" and nobody is
+            #                       notified
+            #   federated        -> the agent lives on ANOTHER estate's skhub,
+            #                       so delivering there would breach the
+            #                       per-estate rule this file is built around
+            local _res _src _mid
+            _res="$(sk__talk_resolve_mention "$assign" \
+                        "${NEXTCLOUD_TALK_SERVER_URL:-}" \
+                        "${NEXTCLOUD_TALK_USERNAME:-}" \
+                        "${NEXTCLOUD_TALK_APP_PASSWORD:-}" \
+                        "$SKALERT_TALK_ROOM")" || _res=""
+            _src="${_res%% *}"; _mid="${_res#* }"
+            if [[ -z "$_res" ]]; then
+                sk__log "ASSIGN REFUSED agent=$assign room=$SKALERT_TALK_ROOM: not mentionable here"
+                echo "sk_alert: '$assign' is not a member of this estate's alert room ($SKALERT_TALK_ROOM)." >&2
+                echo "sk_alert: alerts do not leave their estate. For an agent on another estate use skmail." >&2
+                return 1
+            fi
+            if [[ "$_src" == "federated_users" ]]; then
+                sk__log "ASSIGN REFUSED agent=$assign id=$_mid: federated, would cross the estate boundary"
+                echo "sk_alert: '$assign' resolves to '$_mid', an identity on another skhub." >&2
+                echo "sk_alert: alerts stay inside their estate. Hand cross-estate work over with skmail." >&2
+                return 1
+            fi
+            talk_text="@${_mid} ${msg}"
+        fi
+        if sk__talk_post "$talk_text"; then
+            delivered=$((delivered + 1))
+        else
+            talk_rc=1
+        fi
+    fi
+
+    # Telegram is used only when this node actually has both halves. Missing
+    # credentials mean "this estate does not use Telegram", which is a skip and
+    # not a failure: chi alerts to Talk only and must still exit 0.
+    if [[ "$no_telegram" -eq 1 || -z "${TELEGRAM_BOT_TOKEN:-}" || -z "$chat" ]]; then
+        if [[ "$no_telegram" -ne 1 ]] && [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "$chat" ]]; then
+            sk__log "TELEGRAM skipped (no token or no chat id on this node)"
+        fi
+        if [[ "$configured" -eq 0 ]]; then
+            sk__log "NO CHANNEL configured :: $msg"
+            echo "sk_alert: no delivery channel configured on this node." >&2
+            echo "sk_alert: set SKALERT_TALK_ROOM (and Talk credentials), or TELEGRAM_BOT_TOKEN plus SKALERT_CHAT_ID, in $SKCAPSTONE_HOME/config/alert.env" >&2
+            return 1
+        fi
+        [[ -n "$dkey" ]] && date +%s > "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
+        sk__log "sent level=$level key=${dkey:-none} channels=$configured delivered=$delivered talk_rc=$talk_rc :: $msg"
+        [[ "$delivered" -gt 0 ]] && return 0
+        return 1
+    fi
+    configured=$((configured + 1))
+    for chunk in "${chunks[@]}"; do
+        idx=$((idx + 1))
+        payload="$chunk"
+        if (( total > 1 )); then
+            payload="$chunk"$'\n'"($idx/$total)"
+        fi
+
+        body="$(curl -sS -m 25 -w '\n%{http_code}' -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${chat}" \
+            --data-urlencode "text=${payload}" \
+            --data-urlencode "parse_mode=Markdown" \
+            --data-urlencode "disable_web_page_preview=true" 2>/dev/null)" || true
+        http="$(printf '%s' "$body" | tail -n1)"
+
+        if [[ "$http" != "200" ]]; then
+            # Markdown can 400 on stray chars — retry this chunk as plain text.
+            body="$(curl -sS -m 25 -w '\n%{http_code}' -X POST \
+                "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                --data-urlencode "chat_id=${chat}" \
+                --data-urlencode "text=${payload}" 2>/dev/null)" || true
+            http="$(printf '%s' "$body" | tail -n1)"
+        fi
+
+        if [[ "$http" != "200" ]]; then
+            # Do not discard a Talk delivery that already succeeded: report the
+            # Telegram failure and let the exit code reflect whether ANY
+            # channel got the message through.
+            sk__log "TELEGRAM FAIL http=$http chunk=$idx/$total :: $msg"
+            echo "sk_alert: telegram send failed (http=$http, chunk $idx/$total)" >&2
+            tg_rc=1
+            break
+        fi
+    done
+    [[ "${tg_rc:-0}" -eq 0 ]] && delivered=$((delivered + 1))
+
+    [[ -n "$dkey" ]] && date +%s > "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
+    sk__log "sent level=$level key=${dkey:-none} chunks=$total channels=$configured delivered=$delivered talk_rc=$talk_rc tg_rc=${tg_rc:-0} :: $msg"
+    [[ "$delivered" -gt 0 ]] && return 0
+    return 1
+}
+
+# Allow running as a standalone command: sk-alert [flags] MESSAGE
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    sk_alert "$@"
+fi
