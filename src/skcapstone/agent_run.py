@@ -45,9 +45,10 @@ def available_agents(agents_root: Optional[Path] = None) -> list[str]:
     ``soul/base.json`` count (that is what makes a home an agent). Falls back
     to ``AGENTS`` when the directory is unreadable or empty.
     """
-    root = agents_root or Path(
-        os.environ.get("SKCAPSTONE_AGENTS_DIR", "~/.skcapstone/agents")
-    ).expanduser()
+    root = (
+        agents_root
+        or Path(os.environ.get("SKCAPSTONE_AGENTS_DIR", "~/.skcapstone/agents")).expanduser()
+    )
     try:
         found = sorted(
             d.name for d in root.iterdir() if d.is_dir() and (d / "soul" / "base.json").is_file()
@@ -55,6 +56,7 @@ def available_agents(agents_root: Optional[Path] = None) -> list[str]:
     except OSError:
         found = []
     return found or list(AGENTS)
+
 
 # States
 QUEUED = "queued"

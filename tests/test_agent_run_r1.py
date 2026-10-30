@@ -128,7 +128,14 @@ def test_claude_dispatcher_selects_agent_by_env(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     out = ar.claude_dispatcher(
-        {"card_id": "c1", "kind": "task", "title": "t", "instruction": "do", "agent": "scholar", "mode": "propose"}
+        {
+            "card_id": "c1",
+            "kind": "task",
+            "title": "t",
+            "instruction": "do",
+            "agent": "scholar",
+            "mode": "propose",
+        }
     )
     assert "--agent" not in seen["cmd"]
     assert seen["env"]["SKAGENT"] == "scholar"
