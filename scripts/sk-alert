@@ -10,6 +10,14 @@
 #   sk_alert -l crit  "Backup failed 3x"                # crit
 #   sk_alert -k noopept-break "Noopept break starts today"  # de-dup, once ever
 #   sk_alert -k disk-low -t 21600 "Disk 92%"            # de-dup, re-alert after 6h
+#
+# THREADING: -k also groups. The first alert for a key starts a Talk thread and
+# every later one replies into it, so a recurring condition reads as one
+# collapsible item instead of twenty near-identical lines. The two flags answer
+# different questions, and recurring conditions want both:
+#   -k alone        de-dup suppresses the repeat, so nothing is there to group
+#   -k with -t      the repeat is sent AND lands in the key's thread
+#   neither         posts flat; there is nothing reliable to group on
 #   sk_alert --assign chef "chiap08: 216 repos non-durable"  # @mention = work
 #   sk_alert --talk / --no-talk / --no-telegram / --talk-room <token>
 #
@@ -169,25 +177,109 @@ sys.exit(1)
 ' "$who"
 }
 
+# Threading. Chef asked for repeats and follow-ups to group instead of filling
+# the room with near-identical lines, and Talk 24 reports a real `threads`
+# capability, so a reply carries threadId and the client collapses it.
+#
+# The grouping key is the caller's own de-dup key when there is one, because
+# that is already the estate's name for "the same condition again". Without a
+# key there is nothing reliable to group on (hashing the text would split on an
+# embedded count or percentage and defeat the point), so those post flat. Pass
+# -k to get a thread.
+#
+# Roots expire: a condition that returns months later deserves a new thread
+# rather than an endless one, and a root that has been deleted in Talk would
+# otherwise fail every reply forever.
+SKALERT_THREAD_TTL="${SKALERT_THREAD_TTL:-604800}"   # 7 days
+
+sk__thread_file() {
+    printf '%s/threads/%s__%s' "$SKALERT_STATE_DIR" \
+        "$(printf '%s' "${SKALERT_TALK_ROOM}" | tr -c 'A-Za-z0-9_.-' '_')" \
+        "$(printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_')"
+}
+
+# sk__thread_root <fingerprint> -> prints a still-valid root id, or nothing
+sk__thread_root() {
+    local f root ts now
+    f="$(sk__thread_file "$1")"
+    [[ -r "$f" ]] || return 1
+    read -r root ts < "$f" 2>/dev/null || return 1
+    [[ -n "$root" && -n "$ts" ]] || return 1
+    now="$(date +%s)"
+    if (( now - ts > SKALERT_THREAD_TTL )); then
+        rm -f "$f" 2>/dev/null || true
+        return 1
+    fi
+    printf '%s' "$root"
+}
+
+sk__thread_save() {
+    local f
+    f="$(sk__thread_file "$1")"
+    mkdir -p "$(dirname "$f")" 2>/dev/null || true
+    printf '%s %s\n' "$2" "$(date +%s)" > "$f" 2>/dev/null || true
+}
+
+# sk__talk_post <text> [fingerprint]
+#   Posts to this estate's room. With a fingerprint it threads under that
+#   condition's root, creating the root on first sight.
 sk__talk_post() {
-    local text="$1"
+    local text="$1" fp="${2:-}"
     local url="${NEXTCLOUD_TALK_SERVER_URL:-}" user="${NEXTCLOUD_TALK_USERNAME:-}"
     local pass="${NEXTCLOUD_TALK_APP_PASSWORD:-}"
     if [[ -z "$url" || -z "$user" || -z "$pass" ]]; then
         sk__log "TALK skipped (no NEXTCLOUD_TALK_* credentials): $text"
         return 1
     fi
-    local http
-    http="$(curl -sS -m 25 -o /dev/null -w '%{http_code}' -X POST \
-        -u "${user}:${pass}" \
-        -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
-        -H 'Content-Type: application/json' \
-        --data-binary @<(printf '%s' "$text" | python3 -c 'import json,sys; print(json.dumps({"message": sys.stdin.read()}))') \
-        "${url}/ocs/v2.php/apps/spreed/api/v1/chat/${SKALERT_TALK_ROOM}?format=json" 2>/dev/null)" || http="000"
-    if [[ "$http" == "201" || "$http" == "200" ]]; then
-        sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http"
-        return 0
-    fi
+    local auth="${user}:${pass}"
+    local endpoint="${url}/ocs/v2.php/apps/spreed/api/v1/chat/${SKALERT_TALK_ROOM}?format=json"
+
+    local root=""
+    [[ -n "$fp" ]] && root="$(sk__thread_root "$fp" || true)"
+
+    # One attempt threaded, then one unthreaded if the root is gone. Posting
+    # the alert matters more than where it lands, so a stale root must never
+    # swallow it.
+    local attempt body http id
+    for attempt in 1 2; do
+        body="$(printf '%s' "$text" | SKALERT_REPLY_TO="$root" python3 -I -c '
+import json, os, sys
+payload = {"message": sys.stdin.read()}
+r = os.environ.get("SKALERT_REPLY_TO") or ""
+if r.isdigit():
+    payload["replyTo"] = int(r)
+sys.stdout.write(json.dumps(payload))
+' | curl -sS -m 25 -w '\n%{http_code}' -X POST -u "$auth" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            -H 'Content-Type: application/json' --data-binary @- "$endpoint" 2>/dev/null)" || body=""
+        http="$(printf '%s' "$body" | tail -n1)"
+        if [[ "$http" == "201" || "$http" == "200" ]]; then
+            id="$(printf '%s' "$body" | sed '$d' | python3 -I -c '
+import json, sys
+try:
+    print(json.load(sys.stdin)["ocs"]["data"]["id"])
+except Exception:
+    pass
+' 2>/dev/null)"
+            # First message of a condition becomes its root.
+            if [[ -n "$fp" && -z "$root" && -n "$id" ]]; then
+                sk__thread_save "$fp" "$id"
+                sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http thread_root=$id key=$fp"
+            else
+                sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http${root:+ in_thread=$root}${fp:+ key=$fp}"
+            fi
+            return 0
+        fi
+        if [[ -n "$root" ]]; then
+            # The root is unusable (deleted, or in another room). Forget it and
+            # retry flat, which also re-roots the thread on the next alert.
+            sk__log "TALK thread root $root unusable (http=$http); reposting flat"
+            rm -f "$(sk__thread_file "$fp")" 2>/dev/null || true
+            root=""
+            continue
+        fi
+        break
+    done
     sk__log "TALK FAILED room=$SKALERT_TALK_ROOM http=$http: $text"
     return 1
 }
@@ -357,7 +449,7 @@ print(" ".join(sorted({p.get("actorId","") for p in d if "@" in (p.get("actorId"
             fi
             talk_text="@${_mid} ${msg}"
         fi
-        if sk__talk_post "$talk_text"; then
+        if sk__talk_post "$talk_text" "$dkey"; then
             delivered=$((delivered + 1))
         else
             talk_rc=1

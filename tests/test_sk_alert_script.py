@@ -121,3 +121,82 @@ def test_secret_file_is_not_required_to_exist(tmp_path):
     # No credentials, so nothing can be delivered, but it must fail cleanly.
     assert r.returncode == 1
     assert "Traceback" not in r.stderr
+
+
+def _source_and_eval(tmp_path: Path, snippet: str, env: dict | None = None):
+    """Run a bash snippet with sk-alert sourced, so helpers can be called."""
+    e = {
+        "HOME": os.environ["HOME"],
+        "PATH": os.environ["PATH"],
+        "SKCAPSTONE_HOME": str(tmp_path),
+        "SKALERT_ENV_FILE": "/dev/null",
+    }
+    e.update(env or {})
+    return subprocess.run(
+        ["bash", "-c", f"source {SCRIPT}; {snippet}"],
+        capture_output=True,
+        text=True,
+        env=e,
+        timeout=60,
+    )
+
+
+def test_thread_root_is_remembered_then_expires(tmp_path):
+    """A recurring condition threads under one root until the root ages out.
+
+    Chef asked for repeats and follow-ups to group. The root has to expire or a
+    condition that returns months later would be appended to a stale thread
+    forever.
+    """
+    (tmp_path / "config").mkdir()
+    r = _source_and_eval(
+        tmp_path,
+        "SKALERT_TALK_ROOM=room1; sk__thread_save disk-low 555; "
+        'echo "fresh=$(sk__thread_root disk-low)"; '
+        # backdate the stamp past the TTL rather than sleeping
+        'f="$(sk__thread_file disk-low)"; echo "555 $(( $(date +%s) - 999999 ))" > "$f"; '
+        'echo "expired=$(sk__thread_root disk-low || echo none)"; '
+        'echo "file_removed=$([ -e "$f" ] && echo no || echo yes)"',
+        env={"SKALERT_THREAD_TTL": "600"},
+    )
+    assert r.returncode == 0, r.stderr
+    assert "fresh=555" in r.stdout, r.stdout
+    assert "expired=none" in r.stdout, r.stdout
+    # an expired root is cleared, so the next alert starts a new thread
+    assert "file_removed=yes" in r.stdout, r.stdout
+
+
+def test_thread_state_is_scoped_per_room(tmp_path):
+    """The same key in two rooms must not share a root.
+
+    Rooms belong to different estates, and a message id from one skhub is
+    meaningless on another.
+    """
+    (tmp_path / "config").mkdir()
+    r = _source_and_eval(
+        tmp_path,
+        'SKALERT_TALK_ROOM=roomA; a="$(sk__thread_file k)"; '
+        'SKALERT_TALK_ROOM=roomB; b="$(sk__thread_file k)"; '
+        'echo "same=$([ "$a" = "$b" ] && echo yes || echo no)"',
+    )
+    assert r.returncode == 0, r.stderr
+    assert "same=no" in r.stdout, r.stdout
+
+
+def test_thread_file_cannot_escape_the_threads_dir(tmp_path):
+    """De-dup keys come from callers, so a key must not traverse out.
+
+    The real invariant is not "no dots" (a dot is a legal filename character
+    and `..` inside a longer name is harmless) but that the result is exactly
+    one path segment inside the threads directory.
+    """
+    (tmp_path / "config").mkdir()
+    threads = f"{tmp_path}/state/skalert/threads/"
+    for key in ("../../etc/passwd", "..", "a/b/c", "/abs/path"):
+        r = _source_and_eval(tmp_path, f'SKALERT_TALK_ROOM=r; sk__thread_file "{key}"')
+        assert r.returncode == 0, r.stderr
+        out = r.stdout.strip()
+        assert out.startswith(threads), (key, out)
+        leaf = out[len(threads) :]
+        assert "/" not in leaf, (key, leaf)
+        assert leaf not in ("", ".", ".."), (key, leaf)
