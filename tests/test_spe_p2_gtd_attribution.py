@@ -15,7 +15,8 @@ visible instead of silent:
 
 * ``verified``  signature checks out against the local trust roster
 * ``unsigned``  attributed but not signed (no signer available)
-* ``invalid``   signature present and does not verify
+* ``invalid``   signature present, signer trusted here, and it does not verify
+* ``unverifiable`` no roster, or signed by a key not in this node's roster
 * ``pre-spe``   an event from before attribution existed (P1-era)
 """
 
@@ -236,7 +237,67 @@ def test_verify_counts_verified_and_invalid(monkeypatch):
     assert gtd_journal.verify()["counts"]["verified"] == 1
 
     monkeypatch.setattr(gtd_journal, "_verifier", lambda: (lambda data, sig: False))
+    monkeypatch.setattr(gtd_journal, "_trusted_fingerprints", lambda: None)
     assert gtd_journal.verify()["counts"]["invalid"] == 1
+
+
+def _signed_event_by(fingerprint: str, writer: str = "otherhost") -> None:
+    from skcapstone import gtd_journal
+
+    path = gtd_journal.journal_dir() / f"{writer}@{writer}.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "event_id": f"ev-{writer}",
+                "ts": "2026-10-03T21:54:01+00:00",
+                "writer": writer,
+                "seq": 0,
+                "action": "capture",
+                "item_id": "x1",
+                "to": "inbox",
+                "actor": {"agent": writer, "fingerprint": fingerprint, "resolved": True},
+                "sig": {"suite_id": "capauth-pgp-v1", "signature": "OTHER"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_verify_signer_missing_from_roster_is_unverifiable_not_invalid(monkeypatch):
+    """A valid signature by a host key this node never installed is not tampering."""
+    from skcapstone import gtd_journal
+
+    _signed_event_by("946d76c00bc214f0191983228f6208ec736ca735", writer="chiwk13")
+    monkeypatch.setattr(gtd_journal, "_verifier", lambda: (lambda data, sig: False))
+    monkeypatch.setattr(gtd_journal, "_trusted_fingerprints", lambda: {"C8D406A4"})
+    report = gtd_journal.verify()
+    assert report["counts"]["invalid"] == 0
+    assert report["counts"]["unverifiable"] == 1
+    assert report["problems"] == []
+    assert report["unknown_signers"] == [
+        {
+            "fingerprint": "946D76C00BC214F0191983228F6208EC736CA735",
+            "writers": ["chiwk13"],
+            "events": 1,
+        }
+    ]
+
+
+def test_verify_trusted_signer_that_fails_is_still_invalid(monkeypatch):
+    """The claimed key IS trusted here and the signature fails: that is the alarm."""
+    from skcapstone import gtd_journal
+
+    _signed_event_by("C8D406A46F2DF4894E4FB41580A638570C9D41C4", writer="jarvis")
+    monkeypatch.setattr(gtd_journal, "_verifier", lambda: (lambda data, sig: False))
+    monkeypatch.setattr(
+        gtd_journal,
+        "_trusted_fingerprints",
+        lambda: {"C8D406A46F2DF4894E4FB41580A638570C9D41C4"},
+    )
+    report = gtd_journal.verify()
+    assert report["counts"]["invalid"] == 1
+    assert report["unknown_signers"] == []
 
 
 def test_verify_without_a_verifier_reports_unknown_not_invalid(monkeypatch):

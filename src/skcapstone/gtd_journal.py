@@ -168,6 +168,18 @@ def _verifier():
     return capauth_verifier()
 
 
+def _trusted_fingerprints() -> set[str] | None:
+    """Fingerprints in the local trust roster, or None when they cannot be read.
+
+    Lets ``verify`` tell "signed by a key this node never trusted" apart from
+    "signature does not check out". None keeps the old behaviour (any failure
+    is ``invalid``) rather than guessing.
+    """
+    from .fleet.signing import roster_by_fingerprint
+
+    return {fp.upper() for fp in roster_by_fingerprint()}
+
+
 def canonical_event_bytes(event: dict) -> bytes:
     """Deterministic bytes an event's signature covers.
 
@@ -236,7 +248,11 @@ def _envelope(event: dict, writer: str | None = None) -> dict:
 
 # Verification states. `unverifiable` is deliberately NOT `invalid`: no local
 # trust roster means we cannot judge, and reporting that as a bad signature
-# would cry wolf on every node that has not run the key ceremony.
+# would cry wolf on every node that has not run the key ceremony. The same
+# holds per event: a signature by a key that is not in this node's roster
+# (another host whose key was never installed here) cannot be judged either,
+# so it is `unverifiable` and listed under `unknown_signers`. `invalid` is
+# reserved for an event whose claimed key IS trusted here and still fails.
 VERIFY_STATES = ("verified", "unsigned", "invalid", "unverifiable", "pre-spe")
 
 
@@ -245,8 +261,10 @@ def verify() -> dict:
 
     Returns:
         dict: ``{"total", "counts": {state: n}, "verifier_available": bool,
-        "problems": [...]}``. ``problems`` lists the invalid events only, so
-        the common case stays small.
+        "problems": [...], "unknown_signers": [...]}``. ``problems`` lists the
+        invalid events only, so the common case stays small.
+        ``unknown_signers`` groups events signed by keys missing from the local
+        roster (fingerprint, writers, event count).
     """
     verifier = None
     try:
@@ -254,8 +272,16 @@ def verify() -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Verifier unavailable: %s", exc)
 
+    trusted: set[str] | None = None
+    if verifier is not None:
+        try:
+            trusted = _trusted_fingerprints()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Trust roster fingerprints unavailable: %s", exc)
+
     counts = {state: 0 for state in VERIFY_STATES}
     problems: list[dict] = []
+    unknown_signers: dict[str, dict] = {}
     events = read_all()
     for e in events:
         if not e.get("actor"):
@@ -273,8 +299,18 @@ def verify() -> dict:
         except Exception as exc:  # noqa: BLE001
             ok = False
             logger.warning("Verifier error on %s: %s", e.get("event_id"), exc)
+        claimed = ((e.get("actor") or {}).get("fingerprint") or "").upper()
         if ok:
             counts["verified"] += 1
+        elif trusted is not None and claimed and claimed not in trusted:
+            counts["unverifiable"] += 1
+            entry = unknown_signers.setdefault(
+                claimed, {"fingerprint": claimed, "writers": [], "events": 0}
+            )
+            entry["events"] += 1
+            writer = e.get("writer")
+            if writer and writer not in entry["writers"]:
+                entry["writers"].append(writer)
         else:
             counts["invalid"] += 1
             problems.append(
@@ -291,6 +327,7 @@ def verify() -> dict:
         "counts": counts,
         "verifier_available": verifier is not None,
         "problems": problems,
+        "unknown_signers": list(unknown_signers.values()),
     }
 
 
