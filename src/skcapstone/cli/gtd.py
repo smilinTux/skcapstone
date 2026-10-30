@@ -229,6 +229,12 @@ def register_gtd_commands(main: click.Group) -> None:
                 "\n  [dim]No local trust roster, so signatures could not be judged."
                 " Nothing here is a failure.[/]"
             )
+        for u in report.get("unknown_signers", []):
+            console.print(
+                f"  [cyan]unknown signer[/] {u['fingerprint'][:16]} "
+                f"({', '.join(u['writers'])}): {u['events']} event(s), key not in"
+                " this node's trust roster"
+            )
         for p in report["problems"][:10]:
             console.print(
                 f"  [red]invalid[/] {p['event_id'][:8]} {p['action']} {p['item_id']} "
