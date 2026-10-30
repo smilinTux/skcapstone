@@ -81,7 +81,9 @@ dependencies = [
     # Production versions live in deploy/fleet-constraints.txt (CI and rollout
     # install with -c). Bump the pin there in the same PR; the floor here must
     # never exceed the pin.
-    "skcoord>=0.1.88",
+    # Bumped 2026-10-30: skcoord 0.1.89 completes ITIL-linked GTD items under
+    # the shared store lock (lost-update fix, skcoord #137).
+    "skcoord>=0.1.89",
     "skmemory>=0.11.68",
     "skskills>=0.1.1",
 ]
