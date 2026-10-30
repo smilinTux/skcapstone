@@ -18,6 +18,9 @@
 #   -k alone        de-dup suppresses the repeat, so nothing is there to group
 #   -k with -t      the repeat is sent AND lands in the key's thread
 #   neither         posts flat; there is nothing reliable to group on
+#   sk_alert -g cron/nor/backup --title "cron backup on nor" "..."  # thread, no de-dup
+#   sk_alert -g cron/nor/backup --resolve "backup ok again"   # last word, closes it
+#   sk_alert -g k --table-only "..."     # table row only, nothing delivered
 #   sk_alert --assign chef "chiap08: 216 repos non-durable"  # @mention = work
 #   sk_alert --talk / --no-talk / --no-telegram / --talk-room <token>
 #
@@ -178,19 +181,29 @@ sys.exit(1)
 }
 
 # Threading. Chef asked for repeats and follow-ups to group instead of filling
-# the room with near-identical lines, and Talk 24 reports a real `threads`
-# capability, so a reply carries threadId and the client collapses it.
+# the room with near-identical lines, and then (2026-10-30) to be able to reply
+# to an alert and have the estate's agent work on it inside that alert's thread.
 #
-# The grouping key is the caller's own de-dup key when there is one, because
-# that is already the estate's name for "the same condition again". Without a
-# key there is nothing reliable to group on (hashing the text would split on an
-# embedded count or percentage and defeat the point), so those post flat. Pass
-# -k to get a thread.
+# So each condition gets a REAL Talk thread: the first alert is posted with a
+# threadTitle (which is what creates a thread in Talk 24; a plain replyTo only
+# quotes a message and leaves it in the main timeline), and every later alert
+# for the condition is posted with that thread's id. The alerts are posted as
+# the estate's agent account (lumina on nor, jarvis on chi), so the thread is
+# the agent's own: the Talk bridge treats a person's reply inside an agent's
+# own thread as addressed to it, even in a mention-only room.
 #
-# Roots expire: a condition that returns months later deserves a new thread
-# rather than an endless one, and a root that has been deleted in Talk would
-# otherwise fail every reply forever.
+# The grouping key is --thread KEY, or the caller's de-dup key (-k) when there
+# is one, because that is already the estate's name for "the same condition
+# again". Without a key there is nothing reliable to group on (hashing the text
+# would split on an embedded count or percentage), so those post flat.
+#
+# Roots expire after SKALERT_THREAD_TTL of SILENCE (each threaded post refreshes
+# the stamp): a condition that returns months later deserves a new thread, and a
+# root deleted in Talk would otherwise fail every reply forever.
 SKALERT_THREAD_TTL="${SKALERT_THREAD_TTL:-604800}"   # 7 days
+
+# Set by sk__talk_post: the thread root the last post went into (or created).
+SKALERT_LAST_ROOT=""
 
 sk__thread_file() {
     printf '%s/threads/%s__%s' "$SKALERT_STATE_DIR" \
@@ -203,7 +216,7 @@ sk__thread_root() {
     local f root ts now
     f="$(sk__thread_file "$1")"
     [[ -r "$f" ]] || return 1
-    read -r root ts < "$f" 2>/dev/null || return 1
+    read -r root ts _ < "$f" 2>/dev/null || return 1
     [[ -n "$root" && -n "$ts" ]] || return 1
     now="$(date +%s)"
     if (( now - ts > SKALERT_THREAD_TTL )); then
@@ -213,45 +226,91 @@ sk__thread_root() {
     printf '%s' "$root"
 }
 
+# sk__thread_title <fingerprint> -> the title the thread was created with
+sk__thread_title() {
+    local f root ts title
+    f="$(sk__thread_file "$1")"
+    [[ -r "$f" ]] || return 1
+    read -r root ts title < "$f" 2>/dev/null || return 1
+    printf '%s' "$title"
+}
+
+# sk__thread_save <fingerprint> <root> [title]
 sk__thread_save() {
     local f
     f="$(sk__thread_file "$1")"
     mkdir -p "$(dirname "$f")" 2>/dev/null || true
-    printf '%s %s\n' "$2" "$(date +%s)" > "$f" 2>/dev/null || true
+    printf '%s %s %s\n' "$2" "$(date +%s)" "${3:-}" > "$f" 2>/dev/null || true
 }
 
-# sk__talk_post <text> [fingerprint]
-#   Posts to this estate's room. With a fingerprint it threads under that
-#   condition's root, creating the root on first sight.
+# sk__default_title <message> -> first line, trimmed to fit a thread title
+sk__default_title() {
+    printf '%s' "$1" | head -n1 | cut -c1-90
+}
+
+# sk__talk_call <method> <path> [json-body] -> prints body, then the HTTP code
+# on the last line. Credentials go in one variable, never inline next to curl.
+sk__talk_call() {
+    local method="$1" path="$2" data="${3:-}" auth
+    auth="${NEXTCLOUD_TALK_USERNAME:-}:${NEXTCLOUD_TALK_APP_PASSWORD:-}"
+    if [[ -n "$data" ]]; then
+        printf '%s' "$data" | curl -sS -m 25 -w '\n%{http_code}' -X "$method" -u "$auth" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            "${NEXTCLOUD_TALK_SERVER_URL:-}${path}" 2>/dev/null
+    else
+        curl -sS -m 25 -w '\n%{http_code}' -X "$method" -u "$auth" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NEXTCLOUD_TALK_SERVER_URL:-}${path}" 2>/dev/null
+    fi
+}
+
+# sk__talk_post <text> [fingerprint] [title] [resolve]
+#   Posts to this estate's room. With a fingerprint it posts inside that
+#   condition's thread, creating the thread (titled) on first sight. With
+#   resolve=1 the post is the condition's last word: the thread title gets the
+#   check mark the Talk bridge uses for a closed thread, and the root is
+#   forgotten so the next incident opens a fresh thread.
 sk__talk_post() {
-    local text="$1" fp="${2:-}"
-    local url="${NEXTCLOUD_TALK_SERVER_URL:-}" user="${NEXTCLOUD_TALK_USERNAME:-}"
-    local pass="${NEXTCLOUD_TALK_APP_PASSWORD:-}"
-    if [[ -z "$url" || -z "$user" || -z "$pass" ]]; then
+    local text="$1" fp="${2:-}" title="${3:-}" resolve="${4:-0}"
+    SKALERT_LAST_ROOT=""
+    if [[ -z "${NEXTCLOUD_TALK_SERVER_URL:-}" || -z "${NEXTCLOUD_TALK_USERNAME:-}" \
+          || -z "${NEXTCLOUD_TALK_APP_PASSWORD:-}" ]]; then
         sk__log "TALK skipped (no NEXTCLOUD_TALK_* credentials): $text"
         return 1
     fi
-    local auth="${user}:${pass}"
-    local endpoint="${url}/ocs/v2.php/apps/spreed/api/v1/chat/${SKALERT_TALK_ROOM}?format=json"
+    local path="/ocs/v2.php/apps/spreed/api/v1/chat/${SKALERT_TALK_ROOM}?format=json"
 
-    local root=""
-    [[ -n "$fp" ]] && root="$(sk__thread_root "$fp" || true)"
+    local root="" known_title=""
+    if [[ -n "$fp" ]]; then
+        root="$(sk__thread_root "$fp" || true)"
+        known_title="$(sk__thread_title "$fp" || true)"
+    fi
+    [[ -z "$title" ]] && title="${known_title:-$(sk__default_title "$text")}"
+    # A recovery with no open thread has nothing to close: post it flat rather
+    # than opening a thread whose only message says it is over.
+    local open_new=1
+    [[ "$resolve" -eq 1 ]] && open_new=0
 
-    # One attempt threaded, then one unthreaded if the root is gone. Posting
-    # the alert matters more than where it lands, so a stale root must never
-    # swallow it.
-    local attempt body http id
+    # One attempt into the known thread, then (if that root is gone) one that
+    # opens a new thread or posts flat. Posting the alert matters more than
+    # where it lands, so a stale root must never swallow it.
+    local attempt body http id payload
     for attempt in 1 2; do
-        body="$(printf '%s' "$text" | SKALERT_REPLY_TO="$root" python3 -I -c '
+        payload="$(printf '%s' "$text" | SKALERT_THREAD_ID="$root" \
+            SKALERT_THREAD_TITLE="$([[ -n "$fp" && -z "$root" && "$open_new" -eq 1 ]] && printf '%s' "$title")" \
+            python3 -I -c '
 import json, os, sys
 payload = {"message": sys.stdin.read()}
-r = os.environ.get("SKALERT_REPLY_TO") or ""
-if r.isdigit():
-    payload["replyTo"] = int(r)
+t = os.environ.get("SKALERT_THREAD_ID") or ""
+title = (os.environ.get("SKALERT_THREAD_TITLE") or "").strip()
+if t.isdigit():
+    payload["threadId"] = int(t)
+elif title:
+    payload["threadTitle"] = title[:200]
 sys.stdout.write(json.dumps(payload))
-' | curl -sS -m 25 -w '\n%{http_code}' -X POST -u "$auth" \
-            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
-            -H 'Content-Type: application/json' --data-binary @- "$endpoint" 2>/dev/null)" || body=""
+')"
+        body="$(sk__talk_call POST "$path" "$payload")" || body=""
         http="$(printf '%s' "$body" | tail -n1)"
         if [[ "$http" == "201" || "$http" == "200" ]]; then
             id="$(printf '%s' "$body" | sed '$d' | python3 -I -c '
@@ -261,19 +320,33 @@ try:
 except Exception:
     pass
 ' 2>/dev/null)"
-            # First message of a condition becomes its root.
-            if [[ -n "$fp" && -z "$root" && -n "$id" ]]; then
-                sk__thread_save "$fp" "$id"
+            if [[ -n "$fp" && -z "$root" && -n "$id" && "$open_new" -eq 1 ]]; then
+                # First message of a condition becomes its thread root.
+                sk__thread_save "$fp" "$id" "$title"
+                SKALERT_LAST_ROOT="$id"
                 sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http thread_root=$id key=$fp"
+            elif [[ -n "$root" ]]; then
+                SKALERT_LAST_ROOT="$root"
+                if [[ "$resolve" -eq 1 ]]; then
+                    sk__talk_call PUT \
+                        "/ocs/v2.php/apps/spreed/api/v1/chat/${SKALERT_TALK_ROOM}/threads/${root}?format=json" \
+                        "$(SKALERT_T="✅ ${title#✅ }" python3 -I -c 'import json,os; print(json.dumps({"threadTitle": os.environ["SKALERT_T"][:200]}))')" \
+                        >/dev/null || true
+                    rm -f "$(sk__thread_file "$fp")" 2>/dev/null || true
+                    sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http in_thread=$root key=$fp resolved"
+                else
+                    sk__thread_save "$fp" "$root" "$title"   # refresh the silence clock
+                    sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http in_thread=$root key=$fp"
+                fi
             else
-                sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http${root:+ in_thread=$root}${fp:+ key=$fp}"
+                sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http${fp:+ key=$fp}"
             fi
             return 0
         fi
         if [[ -n "$root" ]]; then
             # The root is unusable (deleted, or in another room). Forget it and
-            # retry flat, which also re-roots the thread on the next alert.
-            sk__log "TALK thread root $root unusable (http=$http); reposting flat"
+            # retry, which opens a new thread for the condition.
+            sk__log "TALK thread root $root unusable (http=$http); opening a new thread"
             rm -f "$(sk__thread_file "$fp")" 2>/dev/null || true
             root=""
             continue
@@ -284,8 +357,138 @@ except Exception:
     return 1
 }
 
+# --- Nextcloud Tables: the queryable history ---------------------------------
+# With SKALERT_TABLE_ID set (config/alert.env; create the table once with
+# sk-alert-table setup) every alert also lands as a row in that table on this
+# estate's skhub: one row per condition (the thread key), updated on each
+# repeat and marked resolved by --resolve; unkeyed alerts get a row each with
+# status "fyi". Columns are found by title, so the table can be reordered or
+# extended in the Tables UI. A Tables failure is logged and never fails the
+# alert: the row is history, the Talk/Telegram post is the delivery.
+SKALERT_TABLE_ID="${SKALERT_TABLE_ID:-}"
+SKALERT_ESTATE="${SKALERT_ESTATE:-}"
+
+# sk__table_upsert <key> <title> <level> <resolve> <message>
+sk__table_upsert() {
+    [[ -n "$SKALERT_TABLE_ID" ]] || return 0
+    if [[ -z "${NEXTCLOUD_TALK_SERVER_URL:-}" || -z "${NEXTCLOUD_TALK_USERNAME:-}" \
+          || -z "${NEXTCLOUD_TALK_APP_PASSWORD:-}" ]]; then
+        sk__log "TABLE skipped (no NEXTCLOUD_TALK_* credentials)"
+        return 1
+    fi
+    local key="$1" title="$2" level="$3" resolve="$4" msg="$5" rowfile="" link="" out
+    if [[ -n "$key" ]]; then
+        rowfile="$SKALERT_STATE_DIR/rows/$(printf '%s' "$SKALERT_TABLE_ID" | tr -c 'A-Za-z0-9_.-' '_')__$(printf '%s' "$key" | tr -c 'A-Za-z0-9_.-' '_')"
+        mkdir -p "$(dirname "$rowfile")" 2>/dev/null || true
+    fi
+    if [[ -n "$SKALERT_LAST_ROOT" && -n "$SKALERT_TALK_ROOM" ]]; then
+        link="${NEXTCLOUD_TALK_SERVER_URL%/}/call/${SKALERT_TALK_ROOM}#message_${SKALERT_LAST_ROOT}"
+    fi
+    out="$(SKT_KEY="$key" SKT_TITLE="$title" SKT_LEVEL="$level" SKT_RESOLVE="$resolve" \
+        SKT_MSG="$msg" SKT_ROWFILE="$rowfile" SKT_LINK="$link" SKT_HOST="$(hostname)" \
+        SKT_ESTATE="$SKALERT_ESTATE" SKT_TABLE="$SKALERT_TABLE_ID" \
+        SKT_URL="${NEXTCLOUD_TALK_SERVER_URL%/}" SKT_USER="$NEXTCLOUD_TALK_USERNAME" \
+        SKT_PASS="$NEXTCLOUD_TALK_APP_PASSWORD" python3 -I -c '
+import base64, json, os, sys, time, urllib.error, urllib.request
+E = os.environ
+base = E["SKT_URL"] + "/index.php/apps/tables/api/1"
+auth = "Basic " + base64.b64encode((E["SKT_USER"] + ":" + E["SKT_PASS"]).encode()).decode()
+
+def call(method, path, body=None):
+    req = urllib.request.Request(base + path, method=method,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Authorization": auth, "OCS-APIRequest": "true",
+                 "Accept": "application/json", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read() or b"null")
+
+try:
+    cols = {c["title"]: c for c in call("GET", "/tables/%s/columns" % E["SKT_TABLE"])}
+except Exception as e:
+    print("ERR columns: %s" % e); sys.exit(1)
+
+def put(data, title, value):
+    c = cols.get(title)
+    if c is None or value is None:
+        return
+    if c["type"] == "selection":
+        ids = {o["label"]: o["id"] for o in c.get("selectionOptions") or []}
+        if value not in ids:
+            return
+        value = ids[value]
+    data[str(c["id"])] = value
+
+now_t = time.time()
+now = time.strftime("%Y-%m-%d %H:%M", time.localtime(now_t))
+level = {"critical": "crit", "warning": "warn"}.get(E["SKT_LEVEL"], E["SKT_LEVEL"])
+resolve = E["SKT_RESOLVE"] == "1"
+key, rowfile = E["SKT_KEY"], E["SKT_ROWFILE"]
+row_id, count = None, 0
+if rowfile and os.path.exists(rowfile):
+    try:
+        parts = open(rowfile).read().split()
+        row_id, count = int(parts[0]), int(parts[1])
+    except Exception:
+        row_id, count = None, 0
+status = "resolved" if resolve else ("open" if key else "fyi")
+
+data = {}
+put(data, "Status", status)
+put(data, "Last seen", now)
+put(data, "Last message", E["SKT_MSG"][:4000])
+if E["SKT_LINK"]:
+    put(data, "Talk thread", E["SKT_LINK"])
+if resolve:
+    put(data, "Resolved at", now)
+else:
+    count += 1
+    put(data, "Severity", level if level in ("info", "warn", "crit") else "info")
+    put(data, "Alerts sent", count)
+
+done = None
+if row_id is not None:
+    try:
+        done = call("PUT", "/rows/%d" % row_id, {"data": data})
+    except Exception:
+        done = None   # row deleted in the UI: start a new one
+if done is None:
+    if resolve and not key:
+        sys.exit(0)
+    put(data, "Alert", E["SKT_TITLE"][:200])
+    put(data, "Key", key or None)
+    put(data, "Host", E["SKT_HOST"])
+    put(data, "Estate", E["SKT_ESTATE"] or None)
+    put(data, "First seen", now)
+    if resolve:
+        put(data, "Alerts sent", count or 0)
+    try:
+        done = call("POST", "/tables/%s/rows" % E["SKT_TABLE"], {"data": data})
+    except urllib.error.HTTPError as e:
+        print("ERR create: HTTP %s" % e.code); sys.exit(1)
+    except Exception as e:
+        print("ERR create: %s" % e); sys.exit(1)
+rid = done.get("id") if isinstance(done, dict) else None
+if rowfile:
+    if resolve:
+        try: os.remove(rowfile)
+        except OSError: pass
+    elif rid:
+        with open(rowfile + ".tmp", "w") as f:
+            f.write("%s %s\n" % (rid, count))
+        os.replace(rowfile + ".tmp", rowfile)
+print("ROW %s %s" % (rid, status))
+' 2>&1)"
+    if [[ "$out" == ROW* ]]; then
+        sk__log "TABLE ok table=$SKALERT_TABLE_ID ${out#ROW }${key:+ key=$key}"
+        return 0
+    fi
+    sk__log "TABLE FAILED table=$SKALERT_TABLE_ID${key:+ key=$key}: $(printf '%s' "$out" | tail -n1 | cut -c1-200)"
+    return 1
+}
+
 sk_alert() {
     local level="info" dkey="" ttl=0 chat="$SKALERT_CHAT_ID" silent_dedup=1
+    local gkey="" title="" resolve=0 table_only=0
     # Talk defaults to the estate's choice: nor leaves SKALERT_TALK_DEFAULT
     # unset so Talk stays opt-in there, chi sets it to 1 so estate health lands
     # in the channel without every caller being edited.
@@ -297,6 +500,17 @@ sk_alert() {
             -k|--key)   dkey="$2";  shift 2 ;;
             -t|--ttl)   ttl="$2";   shift 2 ;;
             -c|--chat)  chat="$2";  shift 2 ;;
+            # --thread groups WITHOUT de-dup, for callers that own their own
+            # repeat policy (sk-cron-run re-alerts every 6h while failing).
+            -g|--thread)   gkey="$2"; shift 2 ;;
+            --title)       title="$2"; shift 2 ;;
+            # --resolve: this alert is the condition's last word. It lands in
+            # the thread, marks the thread title and the table row resolved,
+            # and clears the de-dup stamp so a new incident alerts at once.
+            --resolve)     resolve=1; shift ;;
+            # --table-only: record/refresh the table row, deliver nothing
+            # (backfilling conditions that were already alerted).
+            --table-only)  table_only=1; shift ;;
             --talk)        to_talk=1; shift ;;
             --talk-room)   SKALERT_TALK_ROOM="$2"; to_talk=1; room_override=1; shift 2 ;;
             # --assign hands the alert to an agent as WORK: it @mentions them in
@@ -311,6 +525,20 @@ sk_alert() {
     done
     local msg="$*"
     [[ -z "$msg" ]] && { echo "sk_alert: empty message" >&2; return 2; }
+    # The thread / table key: an explicit --thread, else the de-dup key.
+    local tkey="${gkey:-$dkey}"
+    # Talk keeps a thread's original title on repeats, so only the table row
+    # needs a fallback here; sk__talk_post resolves the thread's own.
+    local row_title="${title:-$(sk__default_title "$msg")}"
+
+    if [[ "$table_only" -eq 1 ]]; then
+        if [[ -z "$SKALERT_TABLE_ID" ]]; then
+            echo "sk_alert: --table-only needs SKALERT_TABLE_ID in $SKCAPSTONE_HOME/config/alert.env" >&2
+            return 1
+        fi
+        sk__table_upsert "$tkey" "$row_title" "$level" "$resolve" "$msg"
+        return $?
+    fi
 
     # No token means this node does not do Telegram. Decide nothing here: the
     # single "was anything configured at all" check below owns that verdict, so
@@ -319,8 +547,12 @@ sk_alert() {
         no_telegram=1
     fi
 
+    # A resolve clears the de-dup stamp: the next occurrence is a new incident.
+    if [[ "$resolve" -eq 1 && -n "$dkey" ]]; then
+        rm -f "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
+    fi
     # De-dup: skip if we've alerted on this key within ttl (ttl=0 => once ever).
-    if [[ -n "$dkey" ]]; then
+    if [[ -n "$dkey" && "$resolve" -ne 1 ]]; then
         mkdir -p "$SKALERT_STATE_DIR" 2>/dev/null || true
         local safe stamp now last
         safe="$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')"
@@ -449,7 +681,7 @@ print(" ".join(sorted({p.get("actorId","") for p in d if "@" in (p.get("actorId"
             fi
             talk_text="@${_mid} ${msg}"
         fi
-        if sk__talk_post "$talk_text" "$dkey"; then
+        if sk__talk_post "$talk_text" "$tkey" "$title" "$resolve"; then
             delivered=$((delivered + 1))
         else
             talk_rc=1
@@ -469,8 +701,9 @@ print(" ".join(sorted({p.get("actorId","") for p in d if "@" in (p.get("actorId"
             echo "sk_alert: set SKALERT_TALK_ROOM (and Talk credentials), or TELEGRAM_BOT_TOKEN plus SKALERT_CHAT_ID, in $SKCAPSTONE_HOME/config/alert.env" >&2
             return 1
         fi
-        [[ -n "$dkey" ]] && date +%s > "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
-        sk__log "sent level=$level key=${dkey:-none} channels=$configured delivered=$delivered talk_rc=$talk_rc :: $msg"
+        [[ -n "$dkey" && "$resolve" -ne 1 ]] && date +%s > "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
+        sk__table_upsert "$tkey" "$row_title" "$level" "$resolve" "$msg" || true
+        sk__log "sent level=$level key=${tkey:-none} channels=$configured delivered=$delivered talk_rc=$talk_rc :: $msg"
         [[ "$delivered" -gt 0 ]] && return 0
         return 1
     fi
@@ -511,8 +744,9 @@ print(" ".join(sorted({p.get("actorId","") for p in d if "@" in (p.get("actorId"
     done
     [[ "${tg_rc:-0}" -eq 0 ]] && delivered=$((delivered + 1))
 
-    [[ -n "$dkey" ]] && date +%s > "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
-    sk__log "sent level=$level key=${dkey:-none} chunks=$total channels=$configured delivered=$delivered talk_rc=$talk_rc tg_rc=${tg_rc:-0} :: $msg"
+    [[ -n "$dkey" && "$resolve" -ne 1 ]] && date +%s > "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
+    sk__table_upsert "$tkey" "$row_title" "$level" "$resolve" "$msg" || true
+    sk__log "sent level=$level key=${tkey:-none} chunks=$total channels=$configured delivered=$delivered talk_rc=$talk_rc tg_rc=${tg_rc:-0} :: $msg"
     [[ "$delivered" -gt 0 ]] && return 0
     return 1
 }
