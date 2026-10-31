@@ -192,3 +192,13 @@ def test_suggestions_route(home):
     client = TestClient(create_app(home))
     d = client.get("/api/card/t1/ai-suggestions?llm=0").json()
     assert d["suggestions"] and d["source"] == "heuristic"
+
+
+def test_clip_summary_keeps_the_beginning():
+    from skcapstone.agent_run import _clip_summary
+
+    assert _clip_summary("short") == "short"
+    text = "First line of the report.\n" + "x" * 200
+    out = _clip_summary(text, limit=100)
+    assert out.startswith("First line of the report.")
+    assert "trimmed" in out
