@@ -798,6 +798,22 @@ def build_scheduler(
     except Exception:
         logger.debug("ITIL scheduled tasks not available - skipped")
 
+    # PRES-6 presence loop - off unless SKCAPSTONE_PRESENCE_ENABLED, dry-run by default
+    try:
+        from .presence_loop import make_presence_task
+
+        presence = make_presence_task(home)
+        if presence is not None:
+            interval, callback = presence
+            scheduler.register(
+                name="presence_loop",
+                interval_seconds=interval,
+                callback=callback,
+                delay_first_run=60,
+            )
+    except Exception as exc:  # noqa: BLE001 - presence must never block daemon start
+        logger.warning("presence_loop not registered: %s", exc)
+
     import socket
 
     from .scheduler_jobs import current_host_aliases, load_jobs_with_dropins
