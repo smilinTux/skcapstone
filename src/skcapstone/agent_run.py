@@ -1061,12 +1061,28 @@ def claude_dispatcher(context: dict) -> dict:
     except FileNotFoundError:
         return {"summary": "claude CLI not found; cannot dispatch", "activity": [], "links": {}}
     out = (proc.stdout or "").strip()
-    summary = out[-1500:] if out else (proc.stderr or "no output")[-500:]
+    summary = _clip_summary(out) if out else (proc.stderr or "no output")[-500:]
     return {
         "summary": summary,
         "activity": [{"atype": "action", "text": "ran claude -p"}],
         "links": {},
     }
+
+
+# ``claude -p`` prints only the agent's final reply, so the whole reply is the
+# report. It used to be cut to its last 1500 characters, which made review
+# summaries start mid-sentence. Keep the beginning and say when it was cut.
+SUMMARY_MAX = 12000
+
+
+def _clip_summary(text: str, limit: int = SUMMARY_MAX) -> str:
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    cut = head.rfind("\n")
+    if cut > limit // 2:
+        head = head[:cut]
+    return head.rstrip() + f"\n... (trimmed, {len(text) - len(head)} more characters)"
 
 
 def run_ai_runner_job() -> None:
