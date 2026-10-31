@@ -48,6 +48,15 @@ CHECK_TIMEOUT = 3
 # failures (refused/http-error/unreachable) are not retried - those are real.
 RETRY_ON_TIMEOUT = 1
 
+# Timeout (seconds) for the retry attempt only. Retrying with the same 3s budget
+# does not help when the first timeout came from host memory pressure: a
+# swapped-out idle service has to page back in before it can answer, and that can
+# take longer than 3s twice in a row (inc-fe2c6910: skchat-webui-opus never
+# stopped, 0 restarts, yet two sweeps on 2026-10-27 filed it down while the host
+# had 22 of 27 GiB swap in use). The first attempt keeps CHECK_TIMEOUT so a
+# healthy sweep stays fast; only a probe that already timed out waits longer.
+RETRY_TIMEOUT = 10
+
 # Hostname tag used to attribute one-time state-transition notes (e.g. a
 # service recovering) to the reporting node. Recurring "still down" notes are
 # intentionally never written - see _create_incident_for_down_service and
@@ -193,6 +202,18 @@ def _load_syncthing_config() -> tuple[str | None, str | None]:
 # ---------------------------------------------------------------------------
 
 
+def _probe_with_timeout(probe: Callable[..., dict[str, Any]], timeout: float) -> dict[str, Any]:
+    """Call *probe* with *timeout*, falling back to a zero-arg call.
+
+    Probes wired in by this module accept an optional ``timeout`` parameter;
+    ad-hoc zero-arg probes (including test doubles) are called without one.
+    """
+    try:
+        return probe(timeout)
+    except TypeError:
+        return probe()
+
+
 def _retry_on_timeout(probe: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     """Run *probe*, retrying up to :data:`RETRY_ON_TIMEOUT` times on a timeout.
 
@@ -215,12 +236,12 @@ def _retry_on_timeout(probe: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         and attempts <= RETRY_ON_TIMEOUT
     ):
         logger.debug(
-            "Probe %s timed out (attempt %d/%d); retrying",
+            "Probe %s timed out (attempt %d/%d); retrying with a longer timeout",
             result.get("name"),
             attempts,
             RETRY_ON_TIMEOUT + 1,
         )
-        result = probe()
+        result = _probe_with_timeout(probe, RETRY_TIMEOUT)
         attempts += 1
     if attempts > 1 and result.get("status") == "up":
         result["retried"] = True
@@ -241,9 +262,12 @@ def _http_check(
     :func:`_retry_on_timeout` so a single cold-start timeout does not flap a
     healthy service to "down". See :func:`_http_check_once` for the probe itself.
     """
-    return _retry_on_timeout(
-        lambda: _http_check_once(name, url, headers=headers, version_key=version_key)
-    )
+    def probe(timeout: float = CHECK_TIMEOUT) -> dict[str, Any]:
+        return _http_check_once(
+            name, url, headers=headers, version_key=version_key, timeout=timeout
+        )
+
+    return _retry_on_timeout(probe)
 
 
 def _http_check_once(
@@ -252,6 +276,7 @@ def _http_check_once(
     *,
     headers: dict[str, str] | None = None,
     version_key: str | None = None,
+    timeout: float = CHECK_TIMEOUT,
 ) -> dict[str, Any]:
     """Perform a single HTTP GET health check against *url*.
 
@@ -275,7 +300,7 @@ def _http_check_once(
     req = urllib.request.Request(url, headers=headers or {})
     t0 = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=CHECK_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             latency = (time.monotonic() - t0) * 1000
             result["latency_ms"] = round(latency, 1)
             result["status"] = "up"
@@ -308,10 +333,19 @@ def _tcp_check(name: str, host: str, port: int) -> dict[str, Any]:
 
     Thin wrapper over :func:`_tcp_check_once` (see :func:`_retry_on_timeout`).
     """
-    return _retry_on_timeout(lambda: _tcp_check_once(name, host, port))
+    def probe(timeout: float = CHECK_TIMEOUT) -> dict[str, Any]:
+        return _tcp_check_once(name, host, port, timeout=timeout)
+
+    return _retry_on_timeout(probe)
 
 
-def _tcp_check_once(name: str, host: str, port: int) -> dict[str, Any]:
+def _tcp_check_once(
+    name: str,
+    host: str,
+    port: int,
+    *,
+    timeout: float = CHECK_TIMEOUT,
+) -> dict[str, Any]:
     """Perform a single raw TCP connect check.
 
     Args:
@@ -333,7 +367,7 @@ def _tcp_check_once(name: str, host: str, port: int) -> dict[str, Any]:
     }
     t0 = time.monotonic()
     try:
-        sock = socket.create_connection((host, port), timeout=CHECK_TIMEOUT)
+        sock = socket.create_connection((host, port), timeout=timeout)
         latency = (time.monotonic() - t0) * 1000
         sock.close()
         result["latency_ms"] = round(latency, 1)
