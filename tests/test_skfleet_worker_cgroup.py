@@ -46,6 +46,7 @@ def test_launch_command_creates_a_collected_user_service() -> None:
         "--unit",
         "skfleet-worker-codex-3b227de2.service",
         "--property=KillMode=control-group",
+        "--setenv=SKMEMORY_HOOKS=off",
         "--working-directory",
         "/workspace",
         # Deployed dispatcher 997b9795 separates systemd options from argv.
