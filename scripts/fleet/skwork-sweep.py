@@ -42,6 +42,19 @@ def git_config(repo, key):
     raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
 
 
+def git_branch(repo):
+    """Return the branch label and whether HEAD is validly detached."""
+    command = ["git", "-C", repo, "symbolic-ref", "--quiet", "--short", "HEAD"]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode == 0:
+        return result.stdout.strip(), False
+    if result.returncode == 1:
+        git(repo, "rev-parse", "--verify", "HEAD^{commit}")
+        return "HEAD (detached)", True
+    detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+    raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
+
+
 def scan(roots):
     findings = []
     for root in roots:
@@ -54,10 +67,10 @@ def scan(roots):
             modified = [line for line in lines if line[:2].strip() in ("M", "MM", "AM")]
             untracked = [line for line in lines if line.startswith("??")]
             deleted = [line for line in lines if line[:2].strip() in ("D", "AD")]
-            branch = git(d, "symbolic-ref", "--quiet", "--short", "HEAD")
-            remote = git_config(d, "branch.%s.remote" % branch)
-            merge = git_config(d, "branch.%s.merge" % branch)
-            has_upstream = remote is not None and merge is not None
+            branch, detached = git_branch(d)
+            remote = None if detached else git_config(d, "branch.%s.remote" % branch)
+            merge = None if detached else git_config(d, "branch.%s.merge" % branch)
+            has_upstream = not detached and remote is not None and merge is not None
             if has_upstream:
                 git(d, "rev-parse", "--abbrev-ref", "@{u}")
                 unpushed = git(d, "log", "--oneline", "@{u}..")
@@ -80,7 +93,7 @@ def scan(roots):
                 issues.append("modified=%d" % len(modified))
             if unpushed and unpushed != "NO_UPSTREAM":
                 issues.append("unpushed=%d" % len(unpushed.split("\n")))
-            if unpushed == "NO_UPSTREAM" and branch not in ("main", "master"):
+            if unpushed == "NO_UPSTREAM" and not detached and branch not in ("main", "master"):
                 issues.append("branch has no upstream")
             if behind and behind != "0":
                 issues.append("behind_upstream=%s" % behind)

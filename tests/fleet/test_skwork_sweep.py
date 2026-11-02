@@ -92,6 +92,32 @@ def test_repository_without_upstream_is_a_finding(tmp_path: Path) -> None:
     ]
 
 
+def test_detached_head_is_legitimate(tmp_path: Path) -> None:
+    """Continue scanning a valid detached checkout without inventing an issue."""
+    repo = tmp_path / "detached"
+    repo.mkdir()
+    _git("init", "--initial-branch=main", cwd=repo)
+    _git("config", "user.name", "Sweep Test", cwd=repo)
+    _git("config", "user.email", "sweep@example.invalid", cwd=repo)
+    (repo / "tracked.txt").write_text("tracked\n")
+    _git("add", "tracked.txt", cwd=repo)
+    _git("commit", "-m", "initial", cwd=repo)
+    _git("checkout", "--detach", cwd=repo)
+
+    assert skwork_sweep.scan([str(repo)]) == []
+
+
+def test_detached_head_still_requires_valid_revision(tmp_path: Path) -> None:
+    """Reject status-1 symbolic-ref results whose HEAD cannot be resolved."""
+    repo = tmp_path / "invalid-detached"
+    repo.mkdir()
+    _git("init", "--initial-branch=main", cwd=repo)
+    (repo / ".git" / "HEAD").write_text("0" * 40 + "\n")
+
+    with pytest.raises(RuntimeError, match=r"rev-parse --verify HEAD\^\{commit\}"):
+        skwork_sweep.git_branch(str(repo))
+
+
 def test_corrupt_repository_fails_report_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
