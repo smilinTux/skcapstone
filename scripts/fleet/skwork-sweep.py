@@ -20,9 +20,26 @@ import subprocess
 import sys
 
 
-def git(repo, *a):
-    r = subprocess.run(["git", "-C", repo] + list(a), capture_output=True, text=True)
-    return r.stdout.strip() if r.returncode == 0 else ""
+def git(repo, *args):
+    """Run a required git command and preserve operational failures."""
+    command = ["git", "-C", repo, *args]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+        raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
+    return result.stdout.strip()
+
+
+def git_config(repo, key):
+    """Read optional git configuration, distinguishing absence from failure."""
+    command = ["git", "-C", repo, "config", "--get", key]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode == 0:
+        return result.stdout.strip()
+    if result.returncode == 1:
+        return None
+    detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+    raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
 
 
 def scan(roots):
@@ -37,12 +54,15 @@ def scan(roots):
             modified = [line for line in lines if line[:2].strip() in ("M", "MM", "AM")]
             untracked = [line for line in lines if line.startswith("??")]
             deleted = [line for line in lines if line[:2].strip() in ("D", "AD")]
-            branch = git(d, "rev-parse", "--abbrev-ref", "HEAD")
-            unpushed = (
-                git(d, "log", "--oneline", "@{u}..")
-                if git(d, "rev-parse", "--abbrev-ref", "@{u}")
-                else "NO_UPSTREAM"
-            )
+            branch = git(d, "symbolic-ref", "--quiet", "--short", "HEAD")
+            remote = git_config(d, "branch.%s.remote" % branch)
+            merge = git_config(d, "branch.%s.merge" % branch)
+            has_upstream = remote is not None and merge is not None
+            if has_upstream:
+                git(d, "rev-parse", "--abbrev-ref", "@{u}")
+                unpushed = git(d, "log", "--oneline", "@{u}..")
+            else:
+                unpushed = "NO_UPSTREAM"
             behind = (
                 git(d, "rev-list", "--count", "HEAD..@{u}") if unpushed != "NO_UPSTREAM" else ""
             )

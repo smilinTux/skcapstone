@@ -1,6 +1,7 @@
 """Exit-code regressions for the read-only work-durability sweep."""
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -52,6 +53,56 @@ def test_report_only_does_not_swallow_runtime_errors(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(skwork_sweep, "scan", fail_scan)
     monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--report-only"])
     with pytest.raises(RuntimeError, match="synthetic scan failure"):
+        skwork_sweep.main()
+
+
+def _git(*args: str, cwd: Path) -> None:
+    """Run a real git command for repository-level sweep regressions."""
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+
+def test_unborn_repository_is_legitimate(tmp_path: Path) -> None:
+    """Do not treat an initialized main branch without a first commit as broken."""
+    repo = tmp_path / "unborn"
+    repo.mkdir()
+    _git("init", "--initial-branch=main", cwd=repo)
+
+    assert skwork_sweep.scan([str(repo)]) == []
+
+
+def test_repository_without_upstream_is_a_finding(tmp_path: Path) -> None:
+    """Keep a committed feature branch without an upstream as a normal finding."""
+    repo = tmp_path / "missing-upstream"
+    repo.mkdir()
+    _git("init", "--initial-branch=feature", cwd=repo)
+    _git("config", "user.name", "Sweep Test", cwd=repo)
+    _git("config", "user.email", "sweep@example.invalid", cwd=repo)
+    (repo / "tracked.txt").write_text("tracked\n")
+    _git("add", "tracked.txt", cwd=repo)
+    _git("commit", "-m", "initial", cwd=repo)
+
+    assert skwork_sweep.scan([str(repo)]) == [
+        {
+            "repo": "missing-upstream",
+            "path": str(repo),
+            "branch": "feature",
+            "issues": ["branch has no upstream"],
+            "untracked_sample": [],
+        }
+    ]
+
+
+def test_corrupt_repository_fails_report_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Propagate a real git operational error through report-only mode."""
+    repo = tmp_path / "corrupt"
+    repo.mkdir()
+    _git("init", "--initial-branch=main", cwd=repo)
+    (repo / ".git" / "HEAD").write_text("not a valid symbolic ref\n")
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), "--roots", str(repo), "--report-only"])
+
+    with pytest.raises(RuntimeError, match="git .*status --porcelain"):
         skwork_sweep.main()
 
 

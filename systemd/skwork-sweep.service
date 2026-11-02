@@ -4,4 +4,3 @@ Description=Report repositories holding non-durable work
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 %h/.local/bin/skwork-sweep.py --skmail --to jarvis --report-only
-
