@@ -1,0 +1,1 @@
+- Add an explicit `--report-only` mode and use it in the tracked `skwork-sweep.service`, so delivered findings no longer mark the chi reporting oneshots failed while operational errors remain failures.
