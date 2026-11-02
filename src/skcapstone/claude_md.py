@@ -1,11 +1,14 @@
-"""CLAUDE.md auto-regeneration for the sovereign agent.
+"""CLAUDE.md / AGENTS.md auto-regeneration for the sovereign agent.
 
-Provides generate_claude_md() as the canonical public API for producing
-CLAUDE.md content from live agent state, and write_claude_md() for
-persisting it to disk.
+Provides generate_claude_md() and generate_agents_md() as the canonical
+public API for producing context-file content from live agent state, and
+write_claude_md() / write_agents_md() for persisting it to disk.
+write_claude_md_shim() writes a thin CLAUDE.md that just imports
+AGENTS.md (``@AGENTS.md``), as Claude Code's docs recommend, so the
+content lives in one file.
 
 Delegates to context_loader for data gathering and formatting so that
-all four formatters (text, json, claude-md, cursor-rules) stay in one
+all formatters (text, json, claude-md, agents-md, cursor-rules) stay in one
 place while this module acts as the dedicated entry-point for CLAUDE.md
 generation.
 
@@ -15,6 +18,7 @@ Usage:
 
     md = generate_claude_md(Path("~/.skcapstone").expanduser())
     write_claude_md(Path("~/.skcapstone").expanduser(), Path("CLAUDE.md"))
+    write_agents_md(Path("~/.skcapstone").expanduser(), Path("AGENTS.md"))
 """
 
 from __future__ import annotations
@@ -51,6 +55,47 @@ def generate_claude_md(home: Path, memory_limit: int = 10) -> str:
     return format_claude_md(ctx)
 
 
+def generate_agents_md(home: Path, memory_limit: int = 10) -> str:
+    """Generate AGENTS.md content from current agent state.
+
+    Same content as :func:`generate_claude_md` with a tool-neutral header.
+
+    Args:
+        home: Agent home directory (typically ``~/.skcapstone``).
+        memory_limit: Maximum number of recent memories to embed.
+
+    Returns:
+        Full AGENTS.md contents as a string.
+    """
+    from .context_loader import format_agents_md, gather_context
+
+    ctx = gather_context(home, memory_limit=memory_limit)
+    return format_agents_md(ctx)
+
+
+def _write_file(dest: Path, content: str, *, backup: bool) -> Path:
+    """Write *content* to *dest*, optionally renaming an existing file to .bak.
+
+    Args:
+        dest: Destination file path.
+        content: Text to write.
+        backup: Rename an existing *dest* to ``<dest>.bak`` first.
+
+    Returns:
+        The resolved destination path.
+    """
+    dest = dest.expanduser().resolve()
+
+    if backup and dest.exists():
+        bak = dest.with_name(dest.name + ".bak")
+        dest.rename(bak)
+        logger.info("Backed up existing %s -> %s", dest, bak)
+
+    dest.write_text(content, encoding="utf-8")
+    logger.info("Wrote %s (%d bytes)", dest, len(content))
+    return dest
+
+
 def write_claude_md(
     home: Path,
     dest: Path,
@@ -70,13 +115,39 @@ def write_claude_md(
         backup: Rename existing file to .bak before overwriting.
     """
     content = generate_claude_md(home, memory_limit=memory_limit)
+    _write_file(dest, content, backup=backup)
 
-    dest = dest.expanduser().resolve()
 
-    if backup and dest.exists():
-        bak = dest.with_suffix(".md.bak")
-        dest.rename(bak)
-        logger.info("Backed up existing %s → %s", dest, bak)
+def write_agents_md(
+    home: Path,
+    dest: Path,
+    memory_limit: int = 10,
+    *,
+    backup: bool = False,
+) -> None:
+    """Generate and write AGENTS.md to *dest*.
 
-    dest.write_text(content, encoding="utf-8")
-    logger.info("Wrote CLAUDE.md to %s (%d bytes)", dest, len(content))
+    Never creates a CLAUDE.md alongside it; use :func:`write_claude_md_shim`
+    for that.
+
+    Args:
+        home: Agent home directory (typically ``~/.skcapstone``).
+        dest: Destination file path (e.g. ``Path("AGENTS.md")``).
+        memory_limit: Maximum number of recent memories to embed.
+        backup: Rename existing file to .bak before overwriting.
+    """
+    content = generate_agents_md(home, memory_limit=memory_limit)
+    _write_file(dest, content, backup=backup)
+
+
+def write_claude_md_shim(
+    dest: Path, agents_name: str = "AGENTS.md", *, backup: bool = False
+) -> None:
+    """Write a thin CLAUDE.md that imports AGENTS.md instead of duplicating it.
+
+    Args:
+        dest: Destination CLAUDE.md path.
+        agents_name: AGENTS.md path relative to *dest*'s directory.
+        backup: Rename existing file to .bak before overwriting.
+    """
+    _write_file(dest, f"@{agents_name}\n", backup=backup)

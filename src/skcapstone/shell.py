@@ -72,7 +72,7 @@ CHAT_SUBCOMMANDS = ["send", "inbox"]
 SYNC_SUBCOMMANDS = ["push", "pull", "status"]
 TRUST_SUBCOMMANDS = ["graph", "status", "rehydrate", "calibrate"]
 JOURNAL_SUBCOMMANDS = ["write", "read"]
-CONTEXT_FORMATS = ["text", "json", "claude-md", "cursor-rules"]
+CONTEXT_FORMATS = ["text", "json", "claude-md", "agents-md", "cursor-rules"]
 
 
 def _completer(text: str, state: int) -> Optional[str]:

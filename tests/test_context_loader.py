@@ -291,6 +291,7 @@ class TestFormattersRegistry:
         assert "text" in FORMATTERS
         assert "json" in FORMATTERS
         assert "claude-md" in FORMATTERS
+        assert "agents-md" in FORMATTERS
         assert "cursor-rules" in FORMATTERS
 
     def test_all_formatters_callable(self):
