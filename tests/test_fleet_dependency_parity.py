@@ -180,9 +180,9 @@ class TestSkwhisperTracked:
     0.1.0 while every host ran 0.6.2 from git, so a pin would either have been
     unresolvable or would have downgraded the fleet. smilinTux/skwhisper#1 added
     the missing publish workflow and a PyPI Trusted Publisher was configured, so
-    0.6.2 reached the index and the pin now matches what the fleet runs. These
-    tests moved with that: the pin is now REQUIRED, and required to be >= what
-    the hosts run.
+    the fleet release reached the index and the pin now matches what the fleet
+    runs. These tests moved with that: the pin is now REQUIRED, and required to
+    be >= what the hosts run.
     """
 
     def test_skwhisper_is_tracked_by_version_check(self):
@@ -191,7 +191,7 @@ class TestSkwhisperTracked:
         assert "skwhisper" in ECOSYSTEM_PACKAGES
 
     def test_skwhisper_is_pinned_to_what_the_fleet_runs(self):
-        """Now that the index has 0.6.2, the pin must exist and must not go backwards.
+        """Now that the fleet release is indexed, the pin must not go backwards.
 
         A pin below what the hosts run would make the rollout DOWNGRADE every
         node's subconscious layer, which is the failure this guards against.
@@ -210,8 +210,8 @@ class TestSkwhisperTracked:
         pin = next((p for p in pins if p.startswith("skwhisper==")), None)
         assert pin, "skwhisper must be pinned in fleet-constraints.txt"
         assert Version(pin.split("==", 1)[1]) >= Version(
-            "0.6.2"
-        ), f"{pin} is below the 0.6.2 every chi host runs: the rollout would downgrade them"
+            "0.6.4"
+        ), f"{pin} is below the 0.6.4 upgraded fleet version: rollout would downgrade it"
 
     def test_skmemory_pin_matches_what_the_fleet_runs(self):
         """The pin is what rollout installs; a stale pin reverts a deployed fix."""
@@ -219,4 +219,4 @@ class TestSkwhisperTracked:
 
         root = Path(__file__).resolve().parents[1]
         text = (root / "deploy" / "fleet-constraints.txt").read_text(encoding="utf-8")
-        assert "skmemory==0.11.73" in text
+        assert "skmemory==0.11.75" in text

@@ -83,7 +83,10 @@ dependencies = [
     # never exceed the pin.
     # Bumped 2026-10-30: skcoord 0.1.89 completes ITIL-linked GTD items under
     # the shared store lock (lost-update fix, skcoord #137).
-    "skcoord>=0.1.89",
+    # Bumped 2026-11-02: skcoord 0.1.90 contains the reviewed root-cause fix
+    # from skcoord #138; keeping this floor prevents reconciliation from
+    # downgrading task1-3 to a release that lacks it.
+    "skcoord>=0.1.90",
     "skmemory>=0.11.68",
     "skskills>=0.1.1",
 ]
