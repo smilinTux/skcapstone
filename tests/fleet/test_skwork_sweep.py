@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).parents[2] / "scripts" / "fleet" / "skwork-sweep.py"
-SERVICE = SCRIPT.parent / "systemd" / "skwork-sweep.service"
+SERVICE = Path(__file__).parents[2] / "systemd" / "skwork-sweep.service"
 SPEC = importlib.util.spec_from_file_location("skwork_sweep_under_test", SCRIPT)
 assert SPEC and SPEC.loader
 skwork_sweep = importlib.util.module_from_spec(SPEC)
