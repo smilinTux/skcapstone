@@ -55,6 +55,26 @@ def git_branch(repo):
     raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
 
 
+def git_upstream(repo, branch):
+    """Return the verified upstream ref, or None when it was validly pruned."""
+    upstream = git(repo, "for-each-ref", "--format=%(upstream)", "refs/heads/%s" % branch)
+    if not upstream:
+        return None
+    command = ["git", "-C", repo, "show-ref", "--verify", "--quiet", upstream]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode == 1:
+        return None
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+        raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
+    command = ["git", "-C", repo, "rev-parse", "--verify", "--quiet", "%s^{commit}" % upstream]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode == 0:
+        return upstream
+    detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+    raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
+
+
 def scan(roots):
     findings = []
     for root in roots:
@@ -71,13 +91,15 @@ def scan(roots):
             remote = None if detached else git_config(d, "branch.%s.remote" % branch)
             merge = None if detached else git_config(d, "branch.%s.merge" % branch)
             has_upstream = not detached and remote is not None and merge is not None
-            if has_upstream:
-                git(d, "rev-parse", "--abbrev-ref", "@{u}")
-                unpushed = git(d, "log", "--oneline", "@{u}..")
+            upstream = git_upstream(d, branch) if has_upstream else None
+            if upstream is not None:
+                unpushed = git(d, "log", "--oneline", "%s.." % upstream)
             else:
                 unpushed = "NO_UPSTREAM"
             behind = (
-                git(d, "rev-list", "--count", "HEAD..@{u}") if unpushed != "NO_UPSTREAM" else ""
+                git(d, "rev-list", "--count", "HEAD..%s" % upstream)
+                if upstream is not None
+                else ""
             )
             issues = []
             # every tracked file deleted is the signature of an emptied worktree

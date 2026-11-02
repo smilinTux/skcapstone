@@ -92,6 +92,62 @@ def test_repository_without_upstream_is_a_finding(tmp_path: Path) -> None:
     ]
 
 
+@pytest.mark.parametrize(("args", "expected_exit"), [((), 1), (("--report-only",), 0)])
+def test_pruned_upstream_is_a_finding_with_expected_exit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    args: tuple[str, ...],
+    expected_exit: int,
+) -> None:
+    """Treat a configured but pruned upstream as a reportable missing ref."""
+    remote = tmp_path / "remote.git"
+    repo = tmp_path / "pruned-upstream"
+    _git("init", "--bare", str(remote), cwd=tmp_path)
+    _git("init", "--initial-branch=feature", str(repo), cwd=tmp_path)
+    _git("config", "user.name", "Sweep Test", cwd=repo)
+    _git("config", "user.email", "sweep@example.invalid", cwd=repo)
+    (repo / "tracked.txt").write_text("tracked\n")
+    _git("add", "tracked.txt", cwd=repo)
+    _git("commit", "-m", "initial", cwd=repo)
+    _git("remote", "add", "origin", str(remote), cwd=repo)
+    _git("push", "--set-upstream", "origin", "feature", cwd=repo)
+    _git("update-ref", "-d", "refs/remotes/origin/feature", cwd=repo)
+
+    findings = skwork_sweep.scan([str(repo)])
+
+    assert findings == [
+        {
+            "repo": "pruned-upstream",
+            "path": str(repo),
+            "branch": "feature",
+            "issues": ["branch has no upstream"],
+            "untracked_sample": [],
+        }
+    ]
+    assert _run(monkeypatch, findings, *args) == expected_exit
+
+
+def test_corrupt_upstream_ref_is_an_operational_error(tmp_path: Path) -> None:
+    """Reject upstream refs whose named object is corrupt rather than absent."""
+    repo = tmp_path / "corrupt-upstream"
+    repo.mkdir()
+    _git("init", "--initial-branch=feature", cwd=repo)
+    _git("config", "user.name", "Sweep Test", cwd=repo)
+    _git("config", "user.email", "sweep@example.invalid", cwd=repo)
+    (repo / "tracked.txt").write_text("tracked\n")
+    _git("add", "tracked.txt", cwd=repo)
+    _git("commit", "-m", "initial", cwd=repo)
+    _git("remote", "add", "origin", str(tmp_path / "remote.git"), cwd=repo)
+    _git("config", "branch.feature.remote", "origin", cwd=repo)
+    _git("config", "branch.feature.merge", "refs/heads/feature", cwd=repo)
+    upstream_ref = repo / ".git" / "refs" / "remotes" / "origin" / "feature"
+    upstream_ref.parent.mkdir(parents=True)
+    upstream_ref.write_text("0" * 40 + "\n")
+
+    with pytest.raises(RuntimeError, match=r"show-ref --verify --quiet"):
+        skwork_sweep.scan([str(repo)])
+
+
 def test_detached_head_is_legitimate(tmp_path: Path) -> None:
     """Continue scanning a valid detached checkout without inventing an issue."""
     repo = tmp_path / "detached"
