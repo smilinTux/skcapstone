@@ -320,6 +320,53 @@ def _apply_profile_defaults(dry_run: bool) -> dict:
     return out
 
 
+_ENV_TO_HARNESS = {"claude-code": "claude", "codex": "codex", "opencode": "opencode", "pi": "pi"}
+
+
+def register_harness_hooks(environments: Optional[list[str]], dry_run: bool = False) -> dict:
+    """Install skmemory's lifecycle hooks (ritual, saves) into each harness.
+
+    skmemory owns the hook entrypoint (`skmemory hook <event>`) and its
+    installer; skcapstone only asks it to run. Uses the in-process API when
+    the installed skmemory has it, else the `skmemory hooks install` CLI,
+    else reports that skmemory is too old.
+    """
+    harnesses = sorted({_ENV_TO_HARNESS[e] for e in (environments or []) if e in _ENV_TO_HARNESS})
+    if not harnesses:
+        return {"action": "skip", "reason": "no supported harness detected"}
+    target = ",".join(harnesses)
+    try:
+        from skmemory.hook_install import install as _install_hooks
+    except ImportError:
+        _install_hooks = None
+    if _install_hooks is not None:
+        try:
+            return {"action": "ok", "harnesses": _install_hooks(target, dry_run=dry_run)}
+        except Exception as exc:  # noqa: BLE001 - registration must not abort
+            return {"action": f"error: {exc}"}
+    import shutil
+    import subprocess
+
+    exe = shutil.which("skmemory")
+    if not exe:
+        return {"action": "skip", "reason": "skmemory not installed"}
+    cmd = [exe, "hooks", "install", "--harness", target, "--json"]
+    if dry_run:
+        cmd.append("--dry-run")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"action": f"error: {exc}"}
+    if proc.returncode != 0:
+        return {"action": "skip", "reason": "skmemory has no `hooks install` (upgrade skmemory)"}
+    try:
+        import json
+
+        return {"action": "ok", "harnesses": json.loads(proc.stdout)}
+    except ValueError:
+        return {"action": "ok", "output": proc.stdout[-2000:]}
+
+
 def register_all(
     workspace: Optional[Path] = None,
     environments: Optional[list[str]] = None,
@@ -382,6 +429,8 @@ def register_all(
                 "action": "updated" if actions else "exists",
                 "actions": actions,
             }
+
+    results["hooks"] = register_harness_hooks(environments, dry_run=dry_run)
 
     results.update(_apply_profile_defaults(dry_run))
 
