@@ -128,6 +128,7 @@ def sandbox_command(
         "PATH": str(runtime) + ":/usr/bin:/bin",
         "LANG": "C.UTF-8",
         "SKAGENT": owner,
+        "SKMEMORY_HOOKS": "off",
         "SKFLEET_CARD_ID": card,
         "SKFLEET_CLAIM_REVISION": claim,
         "SKFLEET_SESSION_ID": owner,

@@ -1618,6 +1618,7 @@ def worker_command(request: dict, owner: str, claim_revision: str, workspace: Pa
         f"SKAGENT={owner}",
         f"SKCAPSTONE_AGENT={owner}",
         f"SKCAPSTONE_HOME={sovereign_home}",
+        "SKMEMORY_HOOKS=off",
         f"SKFLEET_CARD_ID={request['card_id']}",
         f"SKFLEET_CLAIM_REVISION={claim_revision}",
         f"SKFLEET_OPERATOR_ROLE={request.get('operator_role', '')}",

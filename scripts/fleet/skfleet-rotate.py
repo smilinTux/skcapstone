@@ -755,6 +755,7 @@ def _worker_launch_command(unit, workspace, inner):
     return [
         "systemd-run", "--user", "--quiet", "--collect", "--service-type=exec",
         "--unit", unit, "--property=KillMode=control-group",
+        "--setenv=SKMEMORY_HOOKS=off",
         *(worker_resource_properties(PRODUCTION_POLICY, HOST, "glm"
                                      if unit.startswith("skfleet-worker-glm-") else None)
           if globals().get("PRODUCTION_POLICY") else []),

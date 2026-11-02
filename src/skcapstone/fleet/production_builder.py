@@ -374,6 +374,7 @@ def launch_review(paths, home, request, card, handoff, workspace, *, launcher=No
         "SKCAPSTONE_HOME=" + str(home),
         "SKAGENT=" + owner,
         "SKCAPSTONE_AGENT=" + owner,
+        "SKMEMORY_HOOKS=off",
         "SKFLEET_CARD_ID=" + card.id,
         "SKFLEET_CLAIM_REVISION=" + claim,
         "SKFLEET_SESSION_ID=" + owner,
