@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **`cmdb reconcile --apply` refused every run from 2026-10-22 to 2026-11-06.**
+  Discovery emitted an `activates` edge for `.socket` units, which skcoord's
+  validator rejects, failing the whole run. It now emits `depends_on` in the same
+  direction; `unit_role` keeps the socket precision. Local artifacts also carry a
+  `drift` summary (`count`, `by_kind`, `by_severity`) for SKBrain's
+  `CmdbDriftBounded`.
+
 - **`skcapstone doctor` could not see a laptop sitting on 23,525 undetected
   memory orphans for six months.** Card: skmemory sqlite-only-orphans,
   2026-10-16. skmemory's `health()` has carried a drift signal
