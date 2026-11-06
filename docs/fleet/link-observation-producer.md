@@ -32,14 +32,46 @@ visible to Link but cannot satisfy merge eligibility, which requires exact
 independent PASS.
 
 The service supplies the exact lifecycle repository scope through
-`SKFLEET_LINK_REPOSITORIES`: `smilinTux/skcapstone`,
-`smilinTux/skdashboard`, `smilinTux/skworld`, and
-`smilinTux/sk-standards`, with the optional exact private route
-`https://skgit.skstack01.douno.it/smilinTux/sklegal`. These four GitHub
-repositories remain mandatory. Both lineage discovery and feed observation use
-the same forge selector. The producer fails closed before connector access
-when this setting is empty, malformed, duplicated, missing a product, or
-contains any other repository. Missing or malformed checks remain unknown.
+`SKFLEET_LINK_REPOSITORIES`, and the producer requires that environment to
+equal the estate's declared scope exactly, optionally plus the private route
+`https://skgit.skstack01.douno.it/smilinTux/sklegal`. The environment is what
+the producer actually fetches, so an environment narrower than the declaration
+would publish a feed that looks complete while ignoring whole repositories.
+The producer fails closed before connector access when this setting is empty,
+malformed, duplicated, missing a product, or contains any other repository.
+Missing or malformed checks remain unknown.
+
+An estate declares its own scope in `<home>/coordination/link-scope.json`, a
+`skfleet.link-scope/v1` document:
+
+```json
+{
+  "schema": "skfleet.link-scope/v1",
+  "repositories": [
+    "smilinTux/skcapstone",
+    "smilinTux/skdashboard",
+    "smilinTux/skworld",
+    "smilinTux/sk-standards"
+  ]
+}
+```
+
+With no such file the packaged scope applies, which is those same four GitHub
+repositories, so a node that has declared nothing behaves as it always has.
+A file that is present but malformed fails closed with
+`repository_scope_unreadable` rather than falling back: quietly substituting
+the packaged default for a scope the operator believes is in force is worse
+than a hard failure. The scope used to live only in the producer script, which
+meant any estate watching a different set could not be configured at all.
+
+Bounded exclusion records live in
+`<home>/coordination/link-lineage-exclusions.json`. The producer passes that
+file to `link-lineage.py --exclude` when it exists and omits the flag when it
+does not, so an estate that excludes nothing is unaffected. The file's contents
+are an operator decision: `docs/fleet/link-lineage-reconciliation.md` forbids
+excluding a PR by inference from title, age, author or repository history, and
+each record is bound to the PR's current head and base SHA, so an exclusion
+lapses as soon as the PR moves.
 
 The service template includes the private route and reads the optional producer-only
 `%h/api-keys/link-skgit.env` environment file. Its
