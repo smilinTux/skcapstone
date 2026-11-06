@@ -715,7 +715,9 @@ _WORKER_UNIT_RE = re.compile(
 
 def _worker_unit_name(lane, cid):
     """Return the transient service name for one newly launched worker."""
-    if lane not in {"codex", "glm", "deepseek", "qwen", "claude", "kimi", "escalate"} or not re.fullmatch(
+    if lane not in {
+        "codex", "glm", "deepseek", "qwen", "claude", "kimi", "escalate"
+    } or not re.fullmatch(
         r"[0-9a-f]{8}", cid
     ):
         raise ValueError("invalid worker unit identity")
@@ -8718,7 +8720,8 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
         # their explicit meaning.
         _disabled={name for name,row in (_policy.get("lanes") or {}).items()
                    if isinstance(row,dict) and row.get("enabled") is not True}
-        required-={lane for lane in ("codex","qwen","glm","deepseek","claude") if lane in _disabled}
+        required-={lane for lane in ("codex","qwen","glm","deepseek","claude")
+                   if lane in _disabled}
     if normalized & {"kimi", "kimi-only", "kimi-suitable", "kimi-lane"}:
         required.add("kimi")
     if qwen_exclusive:
