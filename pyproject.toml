@@ -206,6 +206,7 @@ where = ["src"]
 [tool.setuptools]
 script-files = [
     "scripts/sk-alert",
+    "scripts/sk-cron-run",
     "scripts/sk-alert-table",
     "scripts/fleet/pi-cardstore-guard.mjs",
     "scripts/fleet/pi-gateway-retry.mjs",
