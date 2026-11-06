@@ -11,6 +11,12 @@ from urllib.parse import urlsplit
 
 SCHEMA = "skfleet.production/v1"
 LANES = frozenset({"codex", "glm", "deepseek", "qwen"})
+#: Rows a policy may omit. Absent means disabled, so a policy file written before
+#: a lane existed stays valid (an exact lane set would stop dispatch fleet-wide).
+OPTIONAL_LANES = frozenset({"gateway", "cursor", "claude"})
+#: Hard fleet-wide worker ceiling for a lane whose provider has few shared slots.
+#: Claude has 4 gateway slots, shared with human panes. Not policy-editable.
+LANE_WORKER_CEILINGS = {"claude": 4}
 LEGACY_CEILING_VARIABLES = frozenset(
     {
         "SKFLEET_TARGET",
@@ -98,9 +104,9 @@ def load_production_policy(path: Path, *, host: str) -> dict:
     if not valid_url:
         raise ValueError("production policy gateway URL is invalid")
     lanes = value["lanes"]
-    if not isinstance(lanes, dict) or set(lanes) - {"gateway", "cursor"} != {*LANES, "kimi"}:
+    if not isinstance(lanes, dict) or set(lanes) - OPTIONAL_LANES != {*LANES, "kimi"}:
         raise ValueError("production policy lanes are invalid")
-    for lane in LANES | ({"gateway"} & set(lanes)):
+    for lane in LANES | ({"gateway", "claude"} & set(lanes)):
         row = lanes[lane]
         if (
             not isinstance(row, dict)
@@ -133,7 +139,7 @@ def load_production_policy(path: Path, *, host: str) -> dict:
             raise ValueError("production policy worker resources are invalid")
     lane_runtime = value.get("lane_runtime_max_seconds", {})
     if not isinstance(lane_runtime, dict) or any(
-        lane not in LANES | {"cursor"}
+        lane not in LANES | {"cursor", "claude"}
         or type(seconds) is not int
         or seconds <= 0
         or seconds > _MAX_LANE_RUNTIME_SECONDS

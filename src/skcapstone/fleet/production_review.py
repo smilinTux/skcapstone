@@ -16,6 +16,8 @@ _ALIASES = {
     "skgw-zai": "zai",
     "deepseek": "deepseek",
     "skgw-deepseek": "deepseek",
+    "claude": "claude",
+    "anthropic": "claude",
     "qwen": "qwen",
     "kimi": "kimi",
     "skgw-qwen": "qwen",
@@ -31,7 +33,7 @@ _ALIASES = {
     "sk-xl": "gateway",
 }
 _IDENTITY = re.compile(
-    r"pi-(codex|glm|zai|deepseek|qwen|escalate|gateway|cursor)-[a-z0-9][a-z0-9._-]*\Z"
+    r"pi-(codex|glm|zai|deepseek|qwen|claude|escalate|gateway|cursor)-[a-z0-9][a-z0-9._-]*\Z"
 )
 _GLM_DISTINCT_REVIEW_LABELS = {"review", "glm-only", "review-distinct-agent"}
 
@@ -44,6 +46,7 @@ def provider_family(provider: object) -> str | None:
 _REVIEW_FAMILY_PINS = {
     "glm-only": "zai",
     "deepseek-only": "deepseek",
+    "claude-only": "claude",
     "qwen-only": "qwen",
     "kimi-only": "kimi",
 }

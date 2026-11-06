@@ -23,6 +23,7 @@ either one alone fails `docs / docs-check`.
 | Codex lane model default | `SKFLEET_CODEX_LANE_MODEL` fallback in `scripts/fleet/skfleet-rotate.py` | **sk-codex-mid** |
 | Qwen lane session target default | `SKFLEET_QWEN_TARGET` fallback, same file | **6** |
 | Kimi lane session target default | `SKFLEET_KIMI_TARGET` fallback, same file | **0** |
+| Claude lane (optional policy row `lanes.claude`, absent means disabled) | `src/skcapstone/fleet/production_policy.py` `LANE_WORKER_CEILINGS` | **4 workers fleet-wide**, models `claude-sonnet-5-5` (S, M) and `claude-opus-5-5` (L, XL) |
 | Escalation lane model default | `SKFLEET_ESC_MODEL` fallback, same file | **gpt-5.6-sol** |
 | Launches per rotation cycle | `SKFLEET_MAX_LAUNCH` fallback, same file | **11** |
 | Package daemon port | `DEFAULT_PORT` in `src/skcapstone/__init__.py` | **9383** |

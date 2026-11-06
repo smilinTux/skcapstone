@@ -27,6 +27,7 @@ from . import production_builder, scheduler, store
 from .churn_breaker import ClaimRefusedError, assert_claim_permitted
 from .node_controller import NodeView, node_views
 from .paths import SOVEREIGN_HOME, FleetPaths, valid_name
+from .production_policy import LANE_WORKER_CEILINGS
 from .refusal_log import reason_of, refuse
 
 ROLE = "builder-standby"
@@ -341,8 +342,18 @@ def _node_capacity(paths: FleetPaths, node: str) -> int:
     return capacity if capacity > 0 else BUILDER_CAPACITY
 
 
-def _node_load(paths: FleetPaths, node: str, *, production: bool = False) -> int:
-    """Count occupied cards using the selected admission boundary."""
+def _node_load(
+    paths: FleetPaths, node: str, *, production: bool = False, family: str | None = None
+) -> int:
+    """Count occupied cards using the selected admission boundary.
+
+    ``family`` restricts the count to dispatches bound to one provider family.
+    """
+
+    def counts(*sources: dict) -> bool:
+        bound = next((s.get("production") for s in sources if s.get("production")), None)
+        return family is None or (bound or {}).get("family") == family
+
     active: set[str] = set()
     statuses = _dispatch_statuses(paths, node)
     directory = paths.root / "dispatch" / node
@@ -356,11 +367,62 @@ def _node_load(paths: FleetPaths, node: str, *, production: bool = False) -> int
             continue
         if production and not status and _lease_expired(request, _now()):
             continue
-        active.add(card_id or path.stem)
+        if counts(status, request):
+            active.add(card_id or path.stem)
     active.update(
-        card_id for card_id, status in statuses.items() if status.get("state") == "running"
+        card_id
+        for card_id, status in statuses.items()
+        if status.get("state") == "running" and counts(status)
     )
     return len(active)
+
+
+def family_load(paths: FleetPaths, family: str) -> int:
+    """Count one family's active builder dispatches across every node."""
+    directory = paths.root / "dispatch"
+    nodes = [p.name for p in directory.iterdir() if p.is_dir()] if directory.exists() else []
+    return sum(_node_load(paths, n, production=True, family=family) for n in nodes)
+
+
+def local_worker_count(family: str) -> int:
+    """Count this host's running lane workers for a family; unknown fails closed."""
+    try:
+        out = subprocess.run(
+            [
+                "systemctl",
+                "--user",
+                "list-units",
+                "--type=service",
+                "--state=running",
+                "--no-legend",
+                "--plain",
+                f"skfleet-worker-{family}-*.service",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return LANE_WORKER_CEILINGS.get(family, 0)
+    return sum(1 for line in out.splitlines() if line.strip())
+
+
+def capped_families(loads: dict[str, int]) -> set[str]:
+    """Families whose fleet-wide worker ceiling is already reached."""
+    return {f for f, cap in LANE_WORKER_CEILINGS.items() if loads.get(f, 0) >= cap}
+
+
+def _capped(paths: FleetPaths, policy: dict | None) -> set[str]:
+    """Builder plus lane workers, because both draw on the same provider slots."""
+    lanes = (policy or {}).get("lanes", {})
+    return capped_families(
+        {
+            f: family_load(paths, f) + local_worker_count(f)
+            for f in LANE_WORKER_CEILINGS
+            if (lanes.get(f) or {}).get("enabled") is True
+        }
+    )
 
 
 def _under_capacity(paths: FleetPaths, ready: list[NodeView]) -> list[NodeView]:
@@ -710,7 +772,12 @@ def _offer(paths, core, labels, *, writer, now=None):
         try:
             binding.update(
                 production_builder.route_binding(
-                    production, card_id, route, normalized_labels, host=binding["host"]
+                    production,
+                    card_id,
+                    route,
+                    normalized_labels,
+                    host=binding["host"],
+                    exclude_families=_capped(paths, production),
                 )
             )
         except production_builder.production_routes.RouteUnavailableError as exc:
@@ -998,7 +1065,11 @@ def decline_reason(
             return "builders-resource-headroom-or-reservations"
         try:
             production_builder.route_binding(
-                production, card_id, logical_route(labels), normalized_labels
+                production,
+                card_id,
+                logical_route(labels),
+                normalized_labels,
+                exclude_families=_capped(paths, production),
             )
         except ValueError:
             return "gateway-card-route-unavailable"

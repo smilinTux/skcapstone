@@ -59,6 +59,7 @@ from skcapstone.fleet.production_dispatch import (
 )
 from skcapstone.fleet import pool_fold_cache
 from skcapstone.fleet.production_review import independent_review_routes
+from skcapstone.fleet.production_policy import LANE_WORKER_CEILINGS
 from skcapstone.fleet.cycle_deadline import CycleDeadline
 from skcapstone.fleet.lane_health import (
     effective_lanes_line,
@@ -708,13 +709,15 @@ if not DRY:
 def sh(*a): return subprocess.run(a,capture_output=True,text=True).stdout
 
 _WORKER_UNIT_RE = re.compile(
-    r"^skfleet-worker-(codex|glm|deepseek|qwen|kimi|escalate)-([0-9a-f]{8})\.service$"
+    r"^skfleet-worker-(codex|glm|deepseek|qwen|claude|kimi|escalate)-([0-9a-f]{8})\.service$"
 )
 
 
 def _worker_unit_name(lane, cid):
     """Return the transient service name for one newly launched worker."""
-    if lane not in {"codex", "glm", "deepseek", "qwen", "kimi", "escalate"} or not re.fullmatch(
+    if lane not in {
+        "codex", "glm", "deepseek", "qwen", "claude", "kimi", "escalate"
+    } or not re.fullmatch(
         r"[0-9a-f]{8}", cid
     ):
         raise ValueError("invalid worker unit identity")
@@ -5708,10 +5711,10 @@ def _parse_worker_owner(owner, cid, expected_seat=None):
     if not re.fullmatch(r"[0-9a-f]{8}", cid):
         return None
     for host in FLEET_WORKER_HOSTS:
-        for lane in ("codex", "glm", "deepseek", "qwen", "kimi", "gateway"):
+        for lane in ("codex", "glm", "deepseek", "qwen", "claude", "kimi", "gateway"):
             if owner == "pi-%s-builder-node-%s-%s" % (lane, host, cid):
                 return "builder", lane, host
-        for lane in ("codex", "glm", "deepseek", "qwen", "kimi", "escalate"):
+        for lane in ("codex", "glm", "deepseek", "qwen", "claude", "kimi", "escalate"):
             if owner == "pi-%s-%s-%s" % (lane, host, cid):
                 return "lane", lane, host
         for lane in ("codex", "glm"):
@@ -8663,6 +8666,7 @@ _LANE_ONLY_LABELS={
     "qwen-only":"qwen",
     "glm-only":"glm",
     "deepseek-only":"deepseek",
+    "claude-only":"claude",
     "kimi-only":"kimi",
     "escalation-only":"escalate",
 }
@@ -8716,7 +8720,8 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
         # their explicit meaning.
         _disabled={name for name,row in (_policy.get("lanes") or {}).items()
                    if isinstance(row,dict) and row.get("enabled") is not True}
-        required-={lane for lane in ("codex","qwen","glm","deepseek") if lane in _disabled}
+        required-={lane for lane in ("codex","qwen","glm","deepseek","claude")
+                   if lane in _disabled}
     if normalized & {"kimi", "kimi-only", "kimi-suitable", "kimi-lane"}:
         required.add("kimi")
     if qwen_exclusive:
@@ -8746,7 +8751,7 @@ def lane_compatibility(labels, escalation_required=False, qwen_allowed=True,
         return (lane,),"required-lane:%s"%lane
     ordinary=("qwen","glm","codex") if qwen_allowed else ("glm","codex")
     if globals().get("PRODUCTION_POLICY"):
-        ordinary=tuple(name for name in ("qwen","glm","deepseek","codex")
+        ordinary=tuple(name for name in ("qwen","glm","deepseek","codex","claude")
                        )
     return ordinary,"ordinary"
 
@@ -8980,7 +8985,7 @@ def _has_launchable_pick(picks, remaining, elastic_remaining, lane_order,
 picks=[]; _i=0
 _pick_admission={}
 remaining={lane["name"]:lane["free"] for lane in LANES}
-_LANE_RANK={"qwen":0,"glm":1,"deepseek":2,"codex":3,"kimi":4,"escalate":5}
+_LANE_RANK={"qwen":0,"glm":1,"deepseek":2,"codex":3,"claude":4,"kimi":5,"escalate":6}
 lane_order=sorted(LANES,key=lambda lane:_LANE_RANK.get(lane["name"],9))
 _esc_waiting=0
 _lane_deferred=collections.Counter()
@@ -9306,6 +9311,13 @@ launched=0
 launch_receipts=0
 processed_picks=0
 launch_remaining={lane["name"]:lane["free"] for lane in LANES}
+# A lane with a hard fleet-wide ceiling (claude: 4 gateway slots shared with human
+# panes) counts its running workers plus builder dispatches, after this cycle's offers.
+for _lane_name,_cap in LANE_WORKER_CEILINGS.items():
+    if _lane_name in launch_remaining:
+        launch_remaining[_lane_name]=max(0,min(launch_remaining[_lane_name],_cap-
+            builder_dispatch.local_worker_count(_lane_name)-
+            builder_dispatch.family_load(default_fleet_paths(),_lane_name)))
 _review_route_reservations={}
 logdir=os.path.join(HOME,".skcapstone/fleet/logs"); os.makedirs(logdir,exist_ok=True)
 #: Keep the launch budget inside the Niobe wrapper's 270-second deadline: reserve

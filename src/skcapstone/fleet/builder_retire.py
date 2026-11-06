@@ -197,7 +197,7 @@ def preclaim_source_failure(request, status):
     """Recognize only exhausted source preparation with no execution identity."""
     return (
         isinstance(request.get("production"), dict)
-        and request["production"].get("family") in {"codex", "glm", "deepseek", "qwen"}
+        and request["production"].get("family") in {"codex", "glm", "deepseek", "qwen", "claude"}
         and valid_name(request["production"].get("host", ""))
         and status.get("state") == "failed"
         and status.get("attempt") == builder.MAX_ATTEMPTS

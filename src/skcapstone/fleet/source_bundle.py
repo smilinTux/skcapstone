@@ -469,11 +469,13 @@ def _review_manifest(core: dict, repository: str, head: str) -> tuple[dict, Path
         raise SourceBundleError("review source head binding invalid")
     path = root / (head + ".json")
     producer = _binding(core, "producer_identity") or ""
-    if not path.exists() and re.match(r"pi-(codex|glm|deepseek|qwen)-builder-", producer):
+    if not path.exists() and re.match(r"pi-(codex|glm|deepseek|qwen|claude)-builder-", producer):
         from .source_transport import pull
 
         pull(home, card, head)
-    if not path.exists() and not re.match(r"pi-(codex|glm|deepseek|qwen)-builder-", producer):
+    if not path.exists() and not re.match(
+        r"pi-(codex|glm|deepseek|qwen|claude)-builder-", producer
+    ):
         return None
     try:
         manifest = json.loads(_read(path, MAX_EVIDENCE))

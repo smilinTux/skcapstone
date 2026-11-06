@@ -279,7 +279,15 @@ def test_existing_holds_reservations_capacity_and_cadence_remain() -> None:
         and any(isinstance(t, ast.Name) and t.id == "_LANE_RANK" for t in node.targets)
     )
     ranks = ast.literal_eval(rank_node.value)
-    assert sorted(ranks, key=ranks.get) == ["qwen", "glm", "deepseek", "codex", "kimi", "escalate"]
+    assert sorted(ranks, key=ranks.get) == [
+        "qwen",
+        "glm",
+        "deepseek",
+        "codex",
+        "claude",
+        "kimi",
+        "escalate",
+    ]
     assert "chiap01 chiap02 chiap03 chiap04 chiap08" in watch
     assert "sleep 300" in watch
 
