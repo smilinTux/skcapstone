@@ -388,9 +388,20 @@ def local_worker_count(family: str) -> int:
     """Count this host's running lane workers for a family; unknown fails closed."""
     try:
         out = subprocess.run(
-            ["systemctl", "--user", "list-units", "--type=service", "--state=running",
-             "--no-legend", "--plain", f"skfleet-worker-{family}-*.service"],
-            capture_output=True, text=True, timeout=20, check=True,
+            [
+                "systemctl",
+                "--user",
+                "list-units",
+                "--type=service",
+                "--state=running",
+                "--no-legend",
+                "--plain",
+                f"skfleet-worker-{family}-*.service",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=True,
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return LANE_WORKER_CEILINGS.get(family, 0)

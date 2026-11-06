@@ -8,7 +8,6 @@ from .production_policy import load_production_policy
 from .production_review import provider_family
 from .review_capacity import eligible_gateway_routes
 
-
 #: Claude is reached by exact model id (no sk-claude-* alias exists, and it is
 #: deliberately outside the generic sk-s/m/l buckets): sonnet for S and M, opus above.
 CLAUDE_MODEL_BY_SIZE = {
