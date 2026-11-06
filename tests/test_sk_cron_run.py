@@ -312,7 +312,7 @@ SELECTORS = ("SKAGENT", "SKCAPSTONE_AGENT", "SKMEMORY_AGENT", "SK_DEFAULT_AGENT"
 PRINT_SELECTORS = [
     "/bin/sh",
     "-c",
-    'for v in SKAGENT SKCAPSTONE_AGENT SKMEMORY_AGENT SK_DEFAULT_AGENT UNRELATED; do '
+    "for v in SKAGENT SKCAPSTONE_AGENT SKMEMORY_AGENT SK_DEFAULT_AGENT UNRELATED; do "
     'eval "printf \'%s=%s\\n\' \\"$v\\" \\"\\${$v:-<unset>}\\""; done',
 ]
 
@@ -333,9 +333,7 @@ def agent_env(tmp_path):
 
 
 def _selectors_from(proc):
-    return dict(
-        ln.split("=", 1) for ln in proc.stdout.splitlines() if "=" in ln
-    )
+    return dict(ln.split("=", 1) for ln in proc.stdout.splitlines() if "=" in ln)
 
 
 def test_a_cron_job_with_no_selector_derives_the_declared_agent(rig, agent_env):
@@ -364,7 +362,10 @@ def test_an_explicit_agent_overrides_the_whole_file_not_part_of_it(rig, agent_en
     run, _, _, _ = rig
     cleared = {name: "" for name in SELECTORS}
     proc = run(
-        PRINT_SELECTORS, job="agent", SK_AGENT_ENV=str(agent_env), **{**cleared, "SKAGENT": "lumina"}
+        PRINT_SELECTORS,
+        job="agent",
+        SK_AGENT_ENV=str(agent_env),
+        **{**cleared, "SKAGENT": "lumina"},
     )
     got = _selectors_from(proc)
     assert got["SKAGENT"] == "lumina"
@@ -388,9 +389,7 @@ def test_a_partially_declared_environment_is_also_left_alone(rig, agent_env):
 def test_a_node_with_no_declaration_file_still_runs_the_job(rig, tmp_path):
     run, _, _, _ = rig
     cleared = {name: "" for name in SELECTORS}
-    proc = run(
-        OK, job="no-decl", SK_AGENT_ENV=str(tmp_path / "absent.conf"), **cleared
-    )
+    proc = run(OK, job="no-decl", SK_AGENT_ENV=str(tmp_path / "absent.conf"), **cleared)
     assert proc.returncode == 0
     assert "error" not in proc.stderr.lower(), proc.stderr
 
