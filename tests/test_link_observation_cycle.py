@@ -115,6 +115,129 @@ def test_real_producer_failure_is_propagated(tmp_path: Path, monkeypatch) -> Non
     assert MODULE.run(home=tmp_path) == 78
 
 
+def _scope_file(home: Path, repositories: tuple[str, ...]) -> None:
+    path = home / MODULE.REPOSITORY_SCOPE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {"schema": MODULE.REPOSITORY_SCOPE_SCHEMA, "repositories": list(repositories)}
+        ),
+        encoding="utf-8",
+    )
+
+
+def _no_subprocess(monkeypatch) -> None:
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("executed")),
+    )
+
+
+def test_an_estate_with_no_scope_file_keeps_the_packaged_scope(tmp_path: Path) -> None:
+    """An un-migrated node must behave exactly as before, not fail closed."""
+    assert MODULE.declared_repositories(tmp_path) == MODULE.REQUIRED_REPOSITORIES
+
+
+def test_an_estate_scope_file_replaces_the_packaged_scope(tmp_path: Path, monkeypatch) -> None:
+    """The packaged set is right for nor and wrong for any estate watching
+    different repositories, and it used to be the only set the producer would
+    accept: anything else exited 78, so a second estate could not be configured
+    without editing the script."""
+    elsewhere = ("smilinTux/other-one", "smilinTux/other-two")
+    _scope_file(tmp_path, elsewhere)
+    configure(monkeypatch)
+    _no_subprocess(monkeypatch)
+
+    monkeypatch.setenv("SKFLEET_LINK_REPOSITORIES", ",".join(REPOSITORIES))
+    assert MODULE.run(home=tmp_path) == 78  # the packaged set is no longer declared
+
+    monkeypatch.setenv("SKFLEET_LINK_REPOSITORIES", ",".join(elsewhere))
+    assert MODULE.repository_scope(tmp_path) == elsewhere
+
+
+def test_a_declared_scope_still_has_to_match_the_environment_exactly(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Moving the declaration out of the script must not weaken the check. The
+    environment is what the producer actually fetches, so a narrower
+    environment would publish a feed that looks complete while ignoring whole
+    repositories."""
+    declared = ("smilinTux/one", "smilinTux/two", "smilinTux/three")
+    _scope_file(tmp_path, declared)
+    configure(monkeypatch)
+    _no_subprocess(monkeypatch)
+    for scope in (
+        ",".join(declared[:-1]),
+        ",".join((*declared, "smilinTux/extra")),
+        ",".join((*declared, declared[0])),
+        ",".join(declared) + ",",
+    ):
+        monkeypatch.setenv("SKFLEET_LINK_REPOSITORIES", scope)
+        assert MODULE.run(home=tmp_path) == 78
+    monkeypatch.setenv("SKFLEET_LINK_REPOSITORIES", ",".join((*declared, SKGIT_REPOSITORY)))
+    assert MODULE.repository_scope(tmp_path) == (*declared, SKGIT_REPOSITORY)
+
+
+def test_a_malformed_scope_file_fails_closed_instead_of_falling_back(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Silently substituting the packaged default for a scope the operator
+    believes is in force is worse than a hard failure."""
+    configure(monkeypatch)
+    _no_subprocess(monkeypatch)
+    path = tmp_path / MODULE.REPOSITORY_SCOPE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for body in (
+        "{ not json",
+        json.dumps({"repositories": list(REPOSITORIES)}),
+        json.dumps({"schema": "skfleet.link-scope/v0", "repositories": list(REPOSITORIES)}),
+        json.dumps({"schema": MODULE.REPOSITORY_SCOPE_SCHEMA, "repositories": []}),
+        json.dumps({"schema": MODULE.REPOSITORY_SCOPE_SCHEMA, "repositories": ["  "]}),
+        json.dumps({"schema": MODULE.REPOSITORY_SCOPE_SCHEMA, "repositories": ["a", "a"]}),
+        json.dumps({"schema": MODULE.REPOSITORY_SCOPE_SCHEMA, "repositories": "a,b"}),
+    ):
+        path.write_text(body, encoding="utf-8")
+        assert MODULE.run(home=tmp_path) == 78
+
+
+def test_exclusions_are_passed_to_the_reconciler_when_the_estate_has_them(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """link-lineage.py has accepted --exclude all along, but the producer never
+    passed it, so the bounded exclusion record the reconciliation doc requires
+    was unreachable from the one path that actually runs the reconciler."""
+    configure(monkeypatch)
+    exclusions = tmp_path / MODULE.EXCLUSIONS_FILE
+    exclusions.parent.mkdir(parents=True, exist_ok=True)
+    exclusions.write_text("[]", encoding="utf-8")
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(MODULE.subprocess, "run", run)
+    assert MODULE.run(home=tmp_path) == 0
+    assert "--exclude" in calls[0]
+    assert str(exclusions) in calls[0]
+    assert calls[0][calls[0].index("--exclude") + 1] == str(exclusions)
+
+
+def test_no_exclusion_file_means_no_exclude_flag(tmp_path: Path, monkeypatch) -> None:
+    """An estate that excludes nothing behaves exactly as before."""
+    configure(monkeypatch)
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(MODULE.subprocess, "run", run)
+    assert MODULE.run(home=tmp_path) == 0
+    assert "--exclude" not in calls[0]
+
+
 def test_packaged_units_are_identical() -> None:
     root = Path(__file__).parents[1]
     for suffix in ("service", "timer"):
