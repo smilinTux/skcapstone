@@ -119,9 +119,7 @@ def _scope_file(home: Path, repositories: tuple[str, ...]) -> None:
     path = home / MODULE.REPOSITORY_SCOPE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(
-            {"schema": MODULE.REPOSITORY_SCOPE_SCHEMA, "repositories": list(repositories)}
-        ),
+        json.dumps({"schema": MODULE.REPOSITORY_SCOPE_SCHEMA, "repositories": list(repositories)}),
         encoding="utf-8",
     )
 
