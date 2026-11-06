@@ -8985,7 +8985,7 @@ def _has_launchable_pick(picks, remaining, elastic_remaining, lane_order,
 picks=[]; _i=0
 _pick_admission={}
 remaining={lane["name"]:lane["free"] for lane in LANES}
-_LANE_RANK={"qwen":0,"glm":1,"deepseek":2,"codex":3,"claude":3,"kimi":4,"escalate":5}
+_LANE_RANK={"qwen":0,"glm":1,"deepseek":2,"codex":3,"claude":4,"kimi":5,"escalate":6}
 lane_order=sorted(LANES,key=lambda lane:_LANE_RANK.get(lane["name"],9))
 _esc_waiting=0
 _lane_deferred=collections.Counter()
