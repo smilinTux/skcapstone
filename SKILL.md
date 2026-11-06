@@ -1,7 +1,7 @@
 ---
 name: skcapstone
 emoji: 👑
-description: Sovereign agent framework - rehydration, status checks, memory operations, coordination, consciousness testing, identity management. Use for skcapstone rehydrate, skcapstone status, skcapstone doctor, skmemory ritual, Cloud 9 seed import, coordination board, and agent-to-agent chat.
+description: Sovereign agent framework - rehydration, status checks, memory operations, coordination, consciousness testing, identity management, and skgateway identity/metrics code tracing. Use for skcapstone rehydrate, skcapstone status, skcapstone doctor, skmemory ritual, Cloud 9 seed import, coordination board, agent-to-agent chat, or tracing skgateway's extractIdentity/normalizeAgentId data flow.
 metadata: {"clawdbot":{"requires":{"bins":["skcapstone","skmemory"]},"install":[{"id":"pipx","kind":"shell","command":"pipx install skcapstone && pipx install 'skmemory[all]'","bins":["skcapstone","skmemory"],"label":"Install skcapstone + skmemory (pipx)"}]}}
 ---
 
@@ -13,6 +13,8 @@ metadata: {"clawdbot":{"requires":{"bins":["skcapstone","skmemory"]},"install":[
 **Author:** smilinTux Team
 **Category:** Agent Framework
 **License:** GPL-3.0-or-later
+
+> Gateway identity + metrics: see `references/identity-resolution.md` (skgateway `extractIdentity` / `normalizeAgentId` data flow, repo at `clawd/skcapstone-repos/skgateway`).
 
 ---
 
