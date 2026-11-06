@@ -299,3 +299,109 @@ def test_a_node_without_skos_still_gets_the_ledger_and_the_alert(rig, tmp_path):
     assert alerts() and "cron FAILED" in alerts()[0]
     ledger = tmp_path / "home" / ".skcapstone" / "logs" / "cron-ledger.jsonl"
     assert json.loads(ledger.read_text().splitlines()[0])["exit"] == 3
+
+
+# ── the acting agent, declared once per node and derived here ───────────────
+#
+# cron reads neither environment.d nor .bashrc, so without this a crontab job
+# arrives with no selector and skmemory's get_active_agent() returns None.
+
+
+SELECTORS = ("SKAGENT", "SKCAPSTONE_AGENT", "SKMEMORY_AGENT", "SK_DEFAULT_AGENT")
+
+PRINT_SELECTORS = [
+    "/bin/sh",
+    "-c",
+    'for v in SKAGENT SKCAPSTONE_AGENT SKMEMORY_AGENT SK_DEFAULT_AGENT UNRELATED; do '
+    'eval "printf \'%s=%s\\n\' \\"$v\\" \\"\\${$v:-<unset>}\\""; done',
+]
+
+
+@pytest.fixture
+def agent_env(tmp_path):
+    """A node's agent declaration, in environment.d's literal KEY=VALUE form."""
+    path = tmp_path / "10-skagent.conf"
+    path.write_text(
+        "# the acting agent for this node\n"
+        "SKAGENT=jarvis\n"
+        "SKCAPSTONE_AGENT=jarvis\n"
+        "SKMEMORY_AGENT=jarvis\n"
+        "SK_DEFAULT_AGENT=jarvis\n"
+        "UNRELATED=must-not-leak\n"
+    )
+    return path
+
+
+def _selectors_from(proc):
+    return dict(
+        ln.split("=", 1) for ln in proc.stdout.splitlines() if "=" in ln
+    )
+
+
+def test_a_cron_job_with_no_selector_derives_the_declared_agent(rig, agent_env):
+    run, _, _, _ = rig
+    cleared = {name: "" for name in SELECTORS}
+    proc = run(PRINT_SELECTORS, job="agent", SK_AGENT_ENV=str(agent_env), **cleared)
+    got = _selectors_from(proc)
+    assert [got[name] for name in SELECTORS] == ["jarvis"] * 4, proc.stdout
+
+
+def test_only_the_four_selectors_are_taken_from_the_file(rig, agent_env):
+    run, _, _, _ = rig
+    cleared = {name: "" for name in SELECTORS}
+    proc = run(PRINT_SELECTORS, job="agent", SK_AGENT_ENV=str(agent_env), **cleared)
+    assert _selectors_from(proc)["UNRELATED"] == "<unset>", proc.stdout
+
+
+def test_an_explicit_agent_overrides_the_whole_file_not_part_of_it(rig, agent_env):
+    """Half a declaration resolves to None just as surely as none at all.
+
+    get_active_agent() requires every selector that is set to agree, so deriving
+    three values from the file beside a caller's one would manufacture exactly
+    the conflict this is supposed to prevent. One set selector therefore leaves
+    the file entirely untouched.
+    """
+    run, _, _, _ = rig
+    cleared = {name: "" for name in SELECTORS}
+    proc = run(
+        PRINT_SELECTORS, job="agent", SK_AGENT_ENV=str(agent_env), **{**cleared, "SKAGENT": "lumina"}
+    )
+    got = _selectors_from(proc)
+    assert got["SKAGENT"] == "lumina"
+    assert [got[n] for n in SELECTORS[1:]] == ["<unset>"] * 3, proc.stdout
+
+
+def test_a_partially_declared_environment_is_also_left_alone(rig, agent_env):
+    run, _, _, _ = rig
+    cleared = {name: "" for name in SELECTORS}
+    proc = run(
+        PRINT_SELECTORS,
+        job="agent",
+        SK_AGENT_ENV=str(agent_env),
+        **{**cleared, "SKMEMORY_AGENT": "opus"},
+    )
+    got = _selectors_from(proc)
+    assert got["SKMEMORY_AGENT"] == "opus"
+    assert got["SKAGENT"] == "<unset>", proc.stdout
+
+
+def test_a_node_with_no_declaration_file_still_runs_the_job(rig, tmp_path):
+    run, _, _, _ = rig
+    cleared = {name: "" for name in SELECTORS}
+    proc = run(
+        OK, job="no-decl", SK_AGENT_ENV=str(tmp_path / "absent.conf"), **cleared
+    )
+    assert proc.returncode == 0
+    assert "error" not in proc.stderr.lower(), proc.stderr
+
+
+def test_the_declaration_is_not_shell_parsed(rig, tmp_path):
+    """environment.d is literal KEY=VALUE. The systemd generator does not shell-
+    parse it, so neither may we: a value two readers expand differently drifts."""
+    path = tmp_path / "10-skagent.conf"
+    path.write_text("SKAGENT=$(touch /tmp/sk-cron-run-pwned)\n")
+    run, _, _, _ = rig
+    cleared = {name: "" for name in SELECTORS}
+    proc = run(PRINT_SELECTORS, job="literal", SK_AGENT_ENV=str(path), **cleared)
+    assert _selectors_from(proc)["SKAGENT"] == "$(touch /tmp/sk-cron-run-pwned)"
+    assert not os.path.exists("/tmp/sk-cron-run-pwned")

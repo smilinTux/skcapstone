@@ -45,6 +45,42 @@ if [ -e "$SCHEDULE_ENV" ]; then
   fi
   set -a; . "$SCHEDULE_ENV"; set +a
 fi
+# Declare the acting agent for cron, which the systemd path already gets for free.
+#
+# Every scheduled job that touches skmemory or skcapstone has to resolve WHICH
+# agent it is acting as. That is declared once per node in
+# ~/.config/environment.d/10-skagent.conf. The systemd user manager reads
+# environment.d and hands those values to every user unit, so the timer half of
+# the estate is already correct. CRON IS NOT THE SYSTEMD USER MANAGER: it reads
+# neither environment.d nor .bashrc, so a crontab job arrives with no selector
+# at all, and skmemory.agents.get_active_agent() then returns None, because with
+# several agents installed it refuses to guess. Callers that read None as "use
+# the template" land on lumina-template. Measured on noroc2027 2026-11-06:
+# 21 wrapped crontab jobs, every one resolving to None.
+#
+# Derived, never pasted: the crontab carries no agent name, so a node that
+# changes agent changes one file. Parsed literally as environment.d is (KEY=VALUE,
+# '#' comments, NO shell expansion) rather than sourced, because this file is
+# shared with the systemd generator, which does not shell-parse it either, and a
+# value that two readers interpret differently is a value that drifts.
+#
+# ALL OR NOTHING, deliberately. If any selector is already set the file is left
+# untouched, because get_active_agent() requires every selector that IS set to
+# agree: mixing one caller-supplied SKAGENT with three derived from the file
+# produces conflicting selectors, and a conflict also resolves to None. Half a
+# declaration is worse than none, so `SKAGENT=jarvis sk-cron-run ...` and a
+# systemd unit's own Environment= override the whole block, not part of it.
+AGENT_ENV="${SK_AGENT_ENV:-$HOME/.config/environment.d/10-skagent.conf}"
+if [ -z "${SKAGENT:-}${SKCAPSTONE_AGENT:-}${SKMEMORY_AGENT:-}${SK_DEFAULT_AGENT:-}" ] \
+   && [ -r "$AGENT_ENV" ]; then
+  while IFS= read -r sk_line || [ -n "$sk_line" ]; do
+    case "$sk_line" in
+      SKAGENT=*|SKCAPSTONE_AGENT=*|SKMEMORY_AGENT=*|SK_DEFAULT_AGENT=*)
+        export "$sk_line" ;;
+    esac
+  done < "$AGENT_ENV"
+  unset sk_line
+fi
 JOB="${1:?usage: sk-cron-run <job-name> <command...>}"; shift
 LEDGER="$HOME/.skcapstone/logs/cron-ledger.jsonl"
 # Interpreter + host derive from the environment (no machine-specific literals):
