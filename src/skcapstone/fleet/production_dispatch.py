@@ -9,6 +9,16 @@ from .production_review import provider_family
 from .review_capacity import eligible_gateway_routes
 
 
+#: Claude is reached by exact model id (no sk-claude-* alias exists, and it is
+#: deliberately outside the generic sk-s/m/l buckets): sonnet for S and M, opus above.
+CLAUDE_MODEL_BY_SIZE = {
+    "S": "claude-sonnet-5-5",
+    "M": "claude-sonnet-5-5",
+    "L": "claude-opus-5-5",
+    "XL": "claude-opus-5-5",
+}
+
+
 def production_policy_from_environment(environment: Mapping[str, str], host: str):
     """Load explicit production configuration without inventing fallback policy."""
     configured = environment.get("SKFLEET_PRODUCTION_POLICY")
@@ -26,6 +36,7 @@ def production_lanes(policy, scan_budget):
         "codex": ("codex",),
         "glm": ("zai",),
         "deepseek": ("deepseek",),
+        "claude": ("anthropic",),
         "qwen": ("chiap08-qwen38", "chiap01-qwen38"),
         "kimi": (),
         "gateway": ("sk-s", "sk-m", "sk-l", "sk-xl"),
@@ -122,6 +133,7 @@ def resolve_production_routes(routes, *, policy, required_size, labels, lane=Non
         "escalation-only": "codex",
         "glm-only": "zai",
         "deepseek-only": "deepseek",
+        "claude-only": "claude",
         "qwen-only": "qwen",
         "kimi-only": "kimi",
     }
@@ -158,6 +170,10 @@ def resolve_production_routes(routes, *, policy, required_size, labels, lane=Non
         if required and family not in required:
             continue
         if model_pin is not None and row["model_or_bucket"] != model_pin:
+            continue
+        if family == "claude" and row["model_or_bucket"] != (
+            CLAUDE_MODEL_BY_SIZE.get(required_size)
+        ):
             continue
         result.append({**row, "family": family, "lane": "glm" if family == "zai" else family})
     return result

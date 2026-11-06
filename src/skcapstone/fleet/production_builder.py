@@ -82,6 +82,7 @@ def route_binding(
     family=None,
     model=None,
     host="chiap08",
+    exclude_families=(),
 ) -> dict:
     """Select the smallest qualified route from actual card and gateway requirements."""
     from .production_cursor import candidate
@@ -95,6 +96,7 @@ def route_binding(
         row
         for row in production_routes.candidates(value, route, labels)
         if family in (None, row["family"])
+        and row["family"] not in exclude_families
         and ("qwen-first" not in labels or row["family"] == "qwen")
         and model in (None, row["model"])
     ]
