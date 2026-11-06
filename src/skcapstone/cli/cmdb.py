@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib
 import json as _json
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -455,8 +456,13 @@ def register_cmdb_commands(main: click.Group) -> None:
             if apply or record_run:
                 ended = datetime.now(timezone.utc)
                 run_scan_id = next((item.scan_id for item in found if item.scan_id), None)
+                scan_id = run_scan_id or uuid.uuid4().hex
+                orch = _orchestration()
+                # SKBrain's CmdbDriftBounded reads drift only from this
+                # checksummed artifact, never from a live scan.
+                drift = orch.normalize_drift(disc.drift(found, mgr), scan_id, True, "local")
                 run_envelope = {
-                    "scan_id": run_scan_id or uuid.uuid4().hex,
+                    "scan_id": scan_id,
                     "started_at": started.isoformat(),
                     "ended_at": ended.isoformat(),
                     "duration_seconds": (ended - started).total_seconds(),
@@ -479,8 +485,15 @@ def register_cmdb_commands(main: click.Group) -> None:
                         "failure_budget_exceeded": False,
                     },
                     "reconcile": report_data,
+                    "drift": {
+                        "count": len(drift),
+                        "by_kind": dict(Counter(item.kind for item in drift)),
+                        "by_severity": {
+                            severity: sum(item.severity == severity for item in drift)
+                            for severity in ("high", "medium", "low")
+                        },
+                    },
                 }
-                orch = _orchestration()
                 artifact_path, checksum = orch.write_run_artifact(home, run_envelope)
                 report_data["artifact"] = {
                     "path": str(artifact_path),

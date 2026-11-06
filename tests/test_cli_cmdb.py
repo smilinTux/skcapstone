@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 from skcoord.cmdb import CMDBManager
+from skcoord.discovery_drift import DriftFinding
 
 from skcapstone.cli import main
 
@@ -240,6 +241,28 @@ def test_local_record_run_persists_artifact_without_applying(home: Path) -> None
     assert (
         artifact_json["completeness"]["complete"] is False
     ), "a dry-run artifact must not look like a successful apply to `cmdb status`"
+
+
+@needs_discovery
+def test_local_artifact_carries_a_drift_summary(home: Path) -> None:
+    """SKBrain's CmdbDriftBounded reads drift from the checksummed artifact only."""
+    (home / "registry").mkdir(parents=True)
+    (home / "registry" / "svc.json").write_text(json.dumps({"name": "svc"}))
+    findings = [
+        DriftFinding("ci-a", "declared_not_observed", "a"),
+        DriftFinding("ci-b", "stored_not_discovered", "b"),
+        DriftFinding("ci-c", "stored_not_discovered", "c"),
+    ]
+
+    with patch("skcapstone.cmdb_discovery.drift", return_value=findings):
+        run("reconcile", "--no-local", "--apply", "--json")
+
+    artifact = json.loads(next((home / "cmdb" / "reconcile-runs").glob("*.json")).read_text())
+    assert artifact["drift"] == {
+        "count": 3,
+        "by_kind": {"declared_not_observed": 1, "stored_not_discovered": 2},
+        "by_severity": {"high": 1, "medium": 2, "low": 0},
+    }
 
 
 @needs_discovery
