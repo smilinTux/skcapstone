@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-from skcoord.cmdb import CMDBManager
+from skcoord.cmdb import ALLOWED_RELATIONSHIPS, CMDBManager
 from skcoord.discovery_systemd import (
     collect_systemd_units as collect_upstream_systemd_units,
 )
@@ -142,7 +142,15 @@ def test_exact_systemd_units_keep_distinct_role_aware_identities() -> None:
     assert by_role["gateway"].ci_id != by_role["socket"].ci_id
     assert by_role["gateway"].attributes["systemd_unit"] == gateway
     assert by_role["socket"].attributes["systemd_unit"] == socket
-    assert any(rel == "activates" for rel, _ in by_role["socket"].relationships)
+    socket_edges = [
+        target for rel, target in by_role["socket"].relationships if rel == "depends_on"
+    ]
+    assert socket_edges.count(by_role["gateway"].ci_id) == 1, "socket edge must not duplicate"
+    # Every emitted type must survive the reconcile validator, or --apply refuses
+    # the whole run: `activates` did exactly that for 15 days from 2026-10-22.
+    for item in found:
+        for rel, _ in item.relationships:
+            assert rel in ALLOWED_RELATIONSHIPS, f"{item.name}: {rel}"
     assert any(rel == "depends_on" for rel, _ in by_role["proxy"].relationships)
     assert any(rel == "depends_on" for rel, _ in by_role["firewall"].relationships)
     assert not any(rel == "proxies_to" for rel, _ in by_role["proxy"].relationships)

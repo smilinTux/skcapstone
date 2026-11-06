@@ -190,19 +190,13 @@ def collect_systemd_units(
             role = roles[unit_id]
             identity = _service_identity(runner.host, scope, unit_id)
             relationships = [("runs_on", make_ci_id(CIType.HOST.value, runner.host))]
-            if kind == "socket":
-                target = f"{unit}.service"
-                if target in observed_ids:
-                    relationships.append(
-                        (
-                            "activates",
-                            make_ci_id(
-                                CIType.SERVICE.value,
-                                _service_identity(runner.host, scope, target),
-                            ),
-                        )
-                    )
-            for dependency in sorted(dependencies.get(unit_id, set()) - {unit_id}):
+            unit_dependencies = dependencies.get(unit_id, set()) - {unit_id}
+            if kind == "socket" and f"{unit}.service" in observed_ids:
+                # Observed edges stay depends_on: skcoord rejects any other type,
+                # and one rejected edge fails the whole --apply. unit_role keeps
+                # the socket precision.
+                unit_dependencies = unit_dependencies | {f"{unit}.service"}
+            for dependency in sorted(unit_dependencies):
                 if dependency not in observed_ids:
                     continue
                 relationships.append(
