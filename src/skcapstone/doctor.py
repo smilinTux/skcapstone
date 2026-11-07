@@ -170,6 +170,7 @@ def run_diagnostics(
     report.checks.extend(_check_scheduler(home))
     report.checks.extend(_check_systemd_runtime(home))
     report.checks.extend(_check_store_integrity(home))
+    report.checks.extend(_check_crontab_targets())
     report.checks.extend(_check_estate(home))
     report.checks.extend(_check_codex())
     report.checks.extend(_check_harness_env(home))
@@ -935,6 +936,48 @@ def _check_scheduler(home: Path) -> list[Check]:
             )
         )
     return checks
+
+
+def _check_crontab_targets() -> list[Check]:
+    """Report user crontab entries whose target script does not exist.
+
+    Read-only (``crontab -l`` only). Never fails hard: no crontab is a pass,
+    and an unavailable ``crontab`` binary is ``unknown``. Removal of dead
+    entries is a separate operation, this only reports them.
+    """
+    from skcapstone.cron_audit import audit_crontab, read_crontab
+
+    name, desc = "cron:missing-targets", "Crontab entries point at existing scripts"
+    text, note = read_crontab()
+    if text is None:
+        return [Check(name, desc, True, note, category="cron", unknown=True)]
+    if not text.strip():
+        return [Check(name, desc, True, note or "crontab is empty", category="cron")]
+    try:
+        audit = audit_crontab(text)
+    except Exception as exc:  # parser bug must never break doctor
+        return [
+            Check(name, desc, True, f"crontab parse error: {exc}", category="cron", unknown=True)
+        ]
+    if not audit.findings:
+        detail = f"{audit.entries} entries, all targets exist"
+        if audit.unresolved:
+            detail += f" ({audit.unresolved} unresolvable variable targets skipped)"
+        return [Check(name, desc, True, detail, category="cron")]
+    shown = "; ".join(f"line {f.line_no}: {f.target}" for f in audit.findings[:10])
+    more = len(audit.findings) - 10
+    if more > 0:
+        shown += f"; +{more} more"
+    return [
+        Check(
+            name,
+            desc,
+            False,
+            f"{len(audit.findings)} of {audit.entries} entries missing a target: {shown}",
+            fix="Review `crontab -l`: restore the script or remove the entry.",
+            category="cron",
+        )
+    ]
 
 
 def _systemd_unit_files(unit_dir: Path) -> list[str]:
