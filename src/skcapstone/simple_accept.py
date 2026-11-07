@@ -43,9 +43,10 @@ _SHA40 = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _PASS = re.compile(r"PASS(?![_A-Za-z0-9])")
 # Final pytest/vitest summary lines look like "== 12 passed, 1 skipped in 3s ==",
-# "12 passed in 3.2s" or vitest "Tests  12 passed (12)".
+# "12 passed in 3.2s", vitest "Tests  12 passed (12)" or cargo "test result: ok. 12 passed; 0 failed".
 _PASSED = re.compile(r"\b\d+ passed\b")
-_BAD = re.compile(r"\b\d+ (failed|errors?)\b|\bFAILED\b", re.I)
+# A zero count is not a failure: cargo always prints "0 failed". FAILED stays case-sensitive (pytest's per-test line).
+_BAD = re.compile(r"(?i:\b[1-9]\d* (failed|errors?)\b)|\bFAILED\b")
 _SKIPPED = re.compile(r"\b[1-9]\d* skipped\b")
 _SUMMARY_TAIL = 8
 DEFAULT_TARGET_REF = "origin/main"

@@ -313,3 +313,11 @@ def test_skipped_tests_refused_and_allowed_with_flag(tmp_path, gitrepo):
     assert _status(store, SRC) != "done"
     assert "accepted" in _acc(tmp_path, gitrepo, gitrepo.ff, allow_skips=True)
     assert CardStore(tmp_path).fold(SRC).links["accepted_allow_skips"] == "true"
+
+
+def test_log_summary_parser_cargo_and_failures():
+    assert log_shows_success("test result: ok. 42 passed; 0 failed\ntest result: ok. 8 passed; 0 failed\n")
+    assert not log_shows_success("test result: FAILED. 41 passed; 1 failed\n")
+    assert not log_shows_success("== 3 failed, 9 passed in 2s ==\n")
+    assert not log_shows_success("FAILED tests/test_x.py::test_y\n== 9 passed in 2s ==\n")
+    assert not log_shows_success("== 9 passed, 2 errors in 2s ==\n")
