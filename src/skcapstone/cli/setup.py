@@ -292,6 +292,9 @@ def register_setup_commands(main: click.Group) -> None:
             skip_preflight=skip_preflight,
             path=install_path,
         )
+        from ..gtd_intentions import seed_weekly_review
+
+        seed_weekly_review()
 
     @main.command("uninstall")
     @click.option("--home", default=AGENT_HOME, help="Agent home directory.", type=click.Path())
