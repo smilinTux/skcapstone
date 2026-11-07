@@ -336,3 +336,25 @@ def test_active_call_on_a_host_defers_without_touching_it(fleet, tmp_path):
     ]
     assert hosts == ["h1"]
     assert not Path(fleet["env"]["SKFLEET_AUTO_ROLLOUT_STATE"]).exists()
+
+
+def _fake_ssh_down(fleet, down: str) -> None:
+    calls = fleet["calls"]
+    _write_exe(
+        Path(fleet["env"]["SSH_BIN"]),
+        f'echo "ssh $*" >> {calls}\ncase "$*" in *ConnectTimeout*{down}*) exit 255 ;; esac\n',
+    )
+
+
+def test_unreachable_host_is_skipped_alerted_once_and_ring_continues(fleet, tmp_path):
+    _advance_origin(fleet["origin"])
+    _fake_ssh_down(fleet, "h2")
+    _write_exe(tmp_path / "bin" / "sk-alert", f'echo "alert $*" >> {fleet["calls"]}\n')
+    env = dict(fleet["env"], SK_ALERT_BIN=str(tmp_path / "bin" / "sk-alert"))
+    assert _run(env).returncode == 0
+    assert _run(env).returncode == 0
+    calls = _calls(fleet["calls"])
+    hosts = [c.split("--node ")[1].split()[0] for c in calls if c.startswith("rollout")]
+    assert hosts == ["h1", "h3"]  # h2 skipped, h1/h3 not re-rolled on the second tick
+    assert sum(c.startswith("alert") and "h2" in c for c in calls) == 1
+    assert not (tmp_path / "state" / "rolled-main").exists()  # h2 still owes the main

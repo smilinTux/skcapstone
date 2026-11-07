@@ -20,7 +20,7 @@
 set -uo pipefail
 
 REPO="${SKFLEET_AUTO_ROLLOUT_REPO:-$HOME/deploy/skcapstone}"
-HOSTS="${SKFLEET_AUTO_ROLLOUT_HOSTS:-chiap08 chiap03 chiap01 chiap02 chiap04}"
+HOSTS="${SKFLEET_AUTO_ROLLOUT_HOSTS:-chiap08 chiap03 chiap01 chiap02 chiap04 chiap10}"
 SKCAPSTONE="${SKCAPSTONE_BIN:-skcapstone}"
 SSH="${SSH_BIN:-ssh}"
 SKMAIL="${SKMAIL_BIN:-skmail}"
@@ -44,6 +44,15 @@ ROLLED_STATE="${SKFLEET_AUTO_ROLLOUT_STATE:-${XDG_STATE_HOME:-$HOME/.local/state
 # episode (deduped by source-ref) and send an ESCALATE skmail.
 HALT_STREAK="$(dirname "$ROLLED_STATE")/halt-streak"
 HALT_ESCALATE="${SKFLEET_AUTO_ROLLOUT_HALT_ESCALATE:-5}"
+# Reachability pre-filter: an unreachable host is skipped (and alerted once per
+# host per ALERT_EVERY seconds) instead of failing the whole ring. Per-host
+# rolled shas let a skipped host catch up on a later tick without re-rolling
+# the hosts that already passed.
+PROBE_TIMEOUT="${SKFLEET_AUTO_ROLLOUT_PROBE_TIMEOUT:-5}"
+ALERT_EVERY="${SKFLEET_AUTO_ROLLOUT_ALERT_EVERY:-3600}"
+SK_ALERT="${SK_ALERT_BIN:-sk-alert}"
+HOST_STATE="$(dirname "$ROLLED_STATE")/host-rolled"
+ALERT_STATE="$(dirname "$ROLLED_STATE")/unreachable-alert"
 # Never restart services on a host while an agent is in a live call.
 CALL_UNITS="${SKFLEET_AUTO_ROLLOUT_CALL_UNITS:-skcall-join@*}"
 
@@ -91,7 +100,7 @@ rolled_sha=$(cat "$ROLLED_STATE" 2>/dev/null || true)
 if [ "$rolled_sha" = "$target" ]; then
   exit 0
 fi
-if [ -z "$rolled_sha" ] && [ "$head" = "$target" ]; then
+if [ -z "$rolled_sha" ] && [ "$head" = "$target" ] && [ ! -d "$HOST_STATE" ]; then
   # First run with state tracking: trust the checkout once, then record it.
   mkdir -p "$(dirname "$ROLLED_STATE")" && printf '%s\n' "$target" > "$ROLLED_STATE"
   exit 0
@@ -143,6 +152,22 @@ record_halt() {
   fi
 }
 
+reachable() {
+  "$SSH" -o BatchMode=yes -o ConnectTimeout="$PROBE_TIMEOUT" "$1" true >/dev/null 2>&1
+}
+
+alert_unreachable() {
+  local host="$1" stamp="$ALERT_STATE/$1" now last=0
+  now=$(date +%s)
+  [ -r "$stamp" ] && read -r last < "$stamp"
+  if [ $(( now - ${last:-0} )) -ge "$ALERT_EVERY" ]; then
+    mkdir -p "$ALERT_STATE" && printf '%s\n' "$now" > "$stamp"
+    command -v "$SK_ALERT" >/dev/null 2>&1 \
+      && "$SK_ALERT" send "auto-rollout: $host unreachable over ssh, skipped main ${target:0:8}; it keeps the old main until it answers" >/dev/null 2>&1
+    return 0
+  fi
+}
+
 call_active() {
   # Captured, not piped into grep -q: under pipefail an early grep exit can
   # SIGPIPE ssh and turn a live call into "no call".
@@ -152,8 +177,19 @@ call_active() {
 }
 
 rolled=()
+skipped=()
 for host in $HOSTS; do
   ok=0
+  if [ "$(cat "$HOST_STATE/$host" 2>/dev/null)" = "$target" ]; then
+    rolled+=("$host")
+    continue
+  fi
+  if ! reachable "$host"; then
+    log "$host unreachable (ssh probe, ${PROBE_TIMEOUT}s); skipping, ring continues"
+    alert_unreachable "$host"
+    skipped+=("$host")
+    continue
+  fi
   if [ -n "$CALL_UNITS" ] && call_active "$host"; then
     log "$host has an active call ($CALL_UNITS); deferring main ${target:0:8} there and after to the next tick"
     exit 0
@@ -180,11 +216,19 @@ for host in $HOSTS; do
     exit 1
   fi
   "$SSH" -o BatchMode=yes "$host" 'systemctl --user daemon-reload; systemctl --user restart sknoded.service' >/dev/null 2>&1 || log "$host: sknoded restart reported an error"
+  mkdir -p "$HOST_STATE" && printf '%s\n' "$target" > "$HOST_STATE/$host"
   rolled+=("$host")
 done
 
+if [ "${#skipped[@]}" -gt 0 ]; then
+  # Do not record the main as rolled: skipped hosts must catch up next tick.
+  log "PARTIAL main ${target:0:8}: rolled ${rolled[*]:-none}; unreachable, retried next tick: ${skipped[*]}"
+  exit 0
+fi
+
 mkdir -p "$(dirname "$ROLLED_STATE")" && printf '%s\n' "$target" > "$ROLLED_STATE"
 rm -f "$HALT_STREAK"
+rm -rf "$HOST_STATE"
 log "ROLLED main ${target:0:8} to: ${rolled[*]}"
 notify "ROLLED main ${target:0:8}" "$subject -> ${rolled[*]} (gates passed)"
 exit 0
