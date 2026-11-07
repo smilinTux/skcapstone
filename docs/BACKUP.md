@@ -58,7 +58,7 @@ It archives `~/.skcapstone` - every agent's **flat memory tiers**
 (`short/mid/long-term`), soul, identity, trust, seeds, config, coordination,
 journal, song anchors - and **excludes the rebuildable or transient bulk**:
 
-- Chroma vector store, `index.db` + WAL - a *local working index* rebuilt from
+- Any leftover Chroma dir, `index.db` + WAL - a *local working index* rebuilt from
   the flat memory tiers (see [Memory Architecture](ARCHITECTURE.md)).
 - Worship-session media, `voices/` - regenerable renders.
 - Comms queues (`inbox`/`outbox`/`acks`), `logs/`, `skwhisper/` cache - transient.

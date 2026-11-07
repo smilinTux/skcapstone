@@ -132,7 +132,7 @@ security = [
     "sksecurity>=1.2.0",
 ]
 memory = [
-    "skmemory[skvector]>=0.11.68",
+    "skmemory>=0.11.68",
 ]
 seed = [
     "skseed>=0.1.0",
@@ -159,7 +159,7 @@ docker = [
 all = [
     "capauth>=0.2.5",
     "sksecurity>=1.2.0",
-    "skmemory[skvector]>=0.11.68",
+    "skmemory>=0.11.68",
     "skseed>=0.1.0",
     "skwhisper>=0.6.2",
     "skchat-sovereign>=0.1.1",

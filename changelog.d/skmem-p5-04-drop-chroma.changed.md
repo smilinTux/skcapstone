@@ -1,0 +1,1 @@
+skcapstone no longer describes ChromaDB as part of the memory stack (vectors live in Postgres). The `memory/chroma` ignore rules stay, commented as leftover-dir protection until the fleet cleanup lands. The `memory` and `all` extras now require plain `skmemory` instead of `skmemory[skvector]`, which is being retired.

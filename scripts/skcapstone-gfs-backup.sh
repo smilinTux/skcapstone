@@ -18,7 +18,7 @@ sk_notify() {
 # skcapstone-gfs-backup.sh: GFS backup of ~/.skcapstone plus ~/.hermes config
 # ============================================================================
 # Backs up the IRREPLACEABLE sovereign state as compressed tarballs on a GFS
-# rotation. Excludes rebuildable/transient bulk (Chroma vector store, index.db,
+# rotation. Excludes rebuildable/transient bulk (leftover Chroma dir, index.db,
 # WAL, worship-session media, comms queues, logs, skwhisper cache) — those
 # reconstruct from the flat memory tiers on restore.
 #
