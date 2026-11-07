@@ -24,7 +24,7 @@ UMask=0077
 Type=oneshot
 Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=SKFLEET_AUTO_ROLLOUT_REPO=%h/deploy/skcapstone
-Environment="SKFLEET_AUTO_ROLLOUT_HOSTS=chiap08 chiap03 chiap01 chiap02 chiap04"
+Environment="SKFLEET_AUTO_ROLLOUT_HOSTS=chiap08 chiap03 chiap01 chiap02 chiap04 chiap10"
 ExecStart=/usr/bin/env bash %h/deploy/skcapstone/scripts/fleet/skfleet-auto-rollout.sh
 TimeoutStartSec=1800
 
