@@ -323,3 +323,12 @@ def test_log_summary_parser_cargo_and_failures():
     assert not log_shows_success("== 3 failed, 9 passed in 2s ==\n")
     assert not log_shows_success("FAILED tests/test_x.py::test_y\n== 9 passed in 2s ==\n")
     assert not log_shows_success("== 9 passed, 2 errors in 2s ==\n")
+    # cargo --no-fail-fast: the FAILED result line scrolled out, lowercase lines remain
+    assert not log_shows_success(
+        "test result: ok. 2 passed; 0 failed; 0 ignored\n"
+        "test result: ok. 0 passed; 0 failed\n"
+        "error: 1 target failed:\n    `--lib`\n"
+    )
+    assert not log_shows_success(
+        "test result: ok. 2 passed; 0 failed\nerror: test failed, to rerun\n"
+    )
