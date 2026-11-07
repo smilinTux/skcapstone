@@ -43,9 +43,13 @@ _SHA40 = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _PASS = re.compile(r"PASS(?![_A-Za-z0-9])")
 # Final pytest/vitest summary lines look like "== 12 passed, 1 skipped in 3s ==",
-# "12 passed in 3.2s" or vitest "Tests  12 passed (12)".
+# "12 passed in 3.2s", vitest "Tests  12 passed (12)" or
+# cargo "test result: ok. 12 passed; 0 failed".
 _PASSED = re.compile(r"\b\d+ passed\b")
 _BAD = re.compile(r"\b\d+ (failed|errors?)\b|\bFAILED\b", re.I)
+# A zero count is not a failure (cargo always prints "0 failed"); it is removed
+# before _BAD runs, so every other failed/FAILED/error line still refuses.
+_ZERO_COUNT = re.compile(r"\b0+ (failed|errors?)\b", re.I)
 _SKIPPED = re.compile(r"\b[1-9]\d* skipped\b")
 _SUMMARY_TAIL = 8
 DEFAULT_TARGET_REF = "origin/main"
@@ -59,7 +63,7 @@ def log_shows_success(text: str) -> bool:
     """True if the log's final summary lines show 'passed' and no failure/error."""
     lines = [line for line in text.splitlines() if line.strip()][-_SUMMARY_TAIL:]
     tail = "\n".join(lines)
-    return bool(_PASSED.search(tail)) and not _BAD.search(tail)
+    return bool(_PASSED.search(tail)) and not _BAD.search(_ZERO_COUNT.sub("", tail))
 
 
 def _norm(value: object) -> str:
