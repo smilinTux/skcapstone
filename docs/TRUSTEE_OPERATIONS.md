@@ -338,7 +338,7 @@ Restart, rotate, and logs take an `agent_name`; scale takes an
 Trustee identity and signing keys are not rotated through the `trustee_*`
 tools. Key material is managed by the KMS surface. Rotate keys with the KMS
 MCP tools (`kms_list_keys`, `kms_rotate`, `kms_status`) or the CapAuth identity
-flow described in the repo `CLAUDE.md`. Run `skcapstone doctor` after any
+flow described in the repo `AGENTS.md`. Run `skcapstone doctor` after any
 identity or key change to re-validate the unified identity layer.
 `trustee_rotate` rotates an agent's runtime context (snapshot + redeploy); it
 does not touch cryptographic keys. Keep the two operations distinct.

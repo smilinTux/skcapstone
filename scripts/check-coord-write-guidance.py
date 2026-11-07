@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = (
     ROOT / "AGENTS.md",
-    ROOT / "CLAUDE.md",
+    ROOT / "docs" / "COORD_AGENT_GUIDE.md",
     ROOT / "scripts" / "fleet",
     ROOT / "systemd",
     ROOT / "src" / "skcapstone" / "codex_setup.py",
