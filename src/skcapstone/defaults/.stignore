@@ -63,11 +63,12 @@ capauth/security/tokens
 **/capauth/fleet-trust
 
 // --- Vector store / DB indexes (rebuilt locally from the flat files) ---
-// ChromaDB is a live SQLite database. Replicating one corrupts it; every host
-// rebuilds its own from the flat-file memories, which ARE synced.
+// The vector store now lives in Postgres (skmem-pg); skmemory no longer writes
+// a ChromaDB dir. Keep ignoring a leftover memory/chroma/ (a live SQLite db that
+// corrupts if replicated) until the fleet cleanup removes them everywhere.
 **/memory/chroma
 **/chroma.bak*
-// ChromaDB runtime state JSON: updated constantly, per-host
+// Legacy Chroma runtime state JSON (leftover only): per-host
 **/memory/chroma-state.json
 // index.db is rebuilt from flat files (source of truth) on each host
 **/memory/index.db

@@ -92,7 +92,7 @@ GiB that exists only on .158 is dominated by one thing:
 | `file-transfer/` | 70 | 26,306 | `file-transfer` |
 | `coordination/itil/_legacy/` | 20 | 11,976 | `(?d)coordination/itil/_legacy` |
 
-Remaining small classes, each also covered by a rule: `**/memory/chroma`,
+Remaining small classes, each also covered by a rule: `**/memory/chroma` (leftover dir, no longer written),
 `**/memory/chroma-state.json`, `**/memory/index.db{,-shm,-wal}`, `__pycache__`,
 `(?d)**/*.tmp` (the `.syncthing.*.tmp` staging files), `daemon.pid`,
 `**/skwhisper/state.json`, `**/daemon.log`, `**/comms/outbox`,

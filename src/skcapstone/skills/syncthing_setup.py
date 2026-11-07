@@ -20,7 +20,7 @@ SYNC_DIR = AGENT_HOME / "sync"
 SHARED_FOLDER_ID = "skcapstone-sync"
 
 # Reason: the .stignore both protects private keys AND keeps derived/runtime
-# state (chroma, DB indexes, logs, sessions, pidfiles, comms/archive) from
+# state (leftover chroma dir, DB indexes, logs, sessions, pidfiles, comms/archive) from
 # pinning the Syncthing scanner. It is the SAME bundled template that
 # skcapstone.ensure_skeleton installs - loaded here so the two never drift.
 _STIGNORE_TEMPLATE = Path(__file__).resolve().parent.parent / "defaults" / ".stignore"
@@ -43,6 +43,7 @@ security/tokens
 **/telegram.session
 
 // Derived / runtime state (never source of truth)
+// Leftover Chroma dir: no longer written, ignored until fleet cleanup lands
 **/memory/chroma
 **/chroma.bak*
 **/memory/index.db
