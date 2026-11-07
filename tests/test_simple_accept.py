@@ -316,7 +316,9 @@ def test_skipped_tests_refused_and_allowed_with_flag(tmp_path, gitrepo):
 
 
 def test_log_summary_parser_cargo_and_failures():
-    assert log_shows_success("test result: ok. 42 passed; 0 failed\ntest result: ok. 8 passed; 0 failed\n")
+    assert log_shows_success(
+        "test result: ok. 42 passed; 0 failed\ntest result: ok. 8 passed; 0 failed\n"
+    )
     assert not log_shows_success("test result: FAILED. 41 passed; 1 failed\n")
     assert not log_shows_success("== 3 failed, 9 passed in 2s ==\n")
     assert not log_shows_success("FAILED tests/test_x.py::test_y\n== 9 passed in 2s ==\n")
