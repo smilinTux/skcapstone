@@ -178,7 +178,7 @@ def test_sweep_is_idempotent_and_selective(fake):
 
 def test_sweep_unavailable_raises(monkeypatch):
     monkeypatch.setattr(gi, "_load_api", lambda: None)
-    with pytest.raises(gi.IntentionsUnavailable):
+    with pytest.raises(gi.IntentionsUnavailableError):
         gi.sweep_waiting([_waiting("a", 30)], NOW)
 
 

@@ -93,7 +93,7 @@ def register_gtd_commands(main: click.Group) -> None:
         default=None,
         help="Create a skmemory reminder at this time (ISO date/time or 'in N days').",
     )
-    def gtd_capture(text, source, privacy, context, source_ref, due, remind):
+    def gtd_capture(text, source, privacy, context, source_ref, due=None, remind=None):
         """Capture an item to the GTD inbox.
 
         Example: skcapstone gtd capture "Buy milk" --context @errands --due "in 2 days"
@@ -152,7 +152,7 @@ def register_gtd_commands(main: click.Group) -> None:
                 gtd_intentions.ensure_intention(
                     payload["id"], purpose, f"{label}: {payload.get('text') or text}", dt
                 )
-            except gtd_intentions.IntentionsUnavailable as exc:
+            except gtd_intentions.IntentionsUnavailableError as exc:
                 intention_error = str(exc)
                 break
 
@@ -832,7 +832,7 @@ def register_gtd_commands(main: click.Group) -> None:
 
         try:
             made = gtd_intentions.sweep_waiting(_load_list("waiting-for"))
-        except gtd_intentions.IntentionsUnavailable as exc:
+        except gtd_intentions.IntentionsUnavailableError as exc:
             raise click.ClickException(str(exc)) from exc
         console.print(f"\n  Waiting-for sweep: {len(made)} new intention(s).\n")
 

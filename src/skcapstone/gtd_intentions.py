@@ -6,7 +6,7 @@ intentions; ``gtd next`` / ``gtd waiting`` list the overdue ones.
 skmemory is imported lazily, at call time, and never at module import: the
 fleet pins ``skmemory==0.11.75`` (deploy/fleet-constraints.txt), which predates
 intentions, and a pyproject floor must never exceed its pin. When the module is
-absent every writer raises :class:`IntentionsUnavailable` (callers turn that into
+absent every writer raises :class:`IntentionsUnavailableError` (callers turn that into
 a clear error that never loses the already-captured GTD item) and every reader
 returns an empty list (the section is simply omitted).
 
@@ -35,7 +35,7 @@ _IN_RE = re.compile(
 _UNIT = {"m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
 
 
-class IntentionsUnavailable(RuntimeError):
+class IntentionsUnavailableError(RuntimeError):
     """The installed skmemory has no intentions module."""
 
 
@@ -62,7 +62,7 @@ def available() -> bool:
 def _require() -> _Api:
     api = _load_api()
     if api is None:
-        raise IntentionsUnavailable(
+        raise IntentionsUnavailableError(
             "skmemory intentions are not available in this install (needs a skmemory "
             "newer than the pinned one); the GTD item was kept, no reminder was created"
         )
