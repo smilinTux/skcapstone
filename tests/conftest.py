@@ -57,6 +57,17 @@ def _reset_dreaming_job_loop_registry():
 
 
 @pytest.fixture(autouse=True)
+def _no_real_skmemory_intentions(monkeypatch):
+    """GTD intentions default to unavailable so no test opens the live agent store.
+
+    A test that exercises intentions injects a fake via ``gtd_intentions._load_api``.
+    """
+    from skcapstone import gtd_intentions
+
+    monkeypatch.setattr(gtd_intentions, "_load_api", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_skmail(monkeypatch):
     """Never deliver test fixtures to a real mailbox.
 

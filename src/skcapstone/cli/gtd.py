@@ -31,6 +31,22 @@ def _print_queued(data: dict, title: str) -> bool:
     return True
 
 
+def _print_overdue_intentions() -> None:
+    """List overdue skmemory intentions first; silently nothing when unavailable."""
+    from ..gtd_intentions import overdue_intentions
+
+    rows = overdue_intentions()
+    if not rows:
+        return
+    console.print()
+    console.print(f"  [bold red]Overdue intentions ({len(rows)})[/]")
+    for r in rows:
+        console.print(
+            f"  [red]![/] [cyan]{r['id']}[/] {r['title']} "
+            f"[dim](due {r['due_at'].date()}, {r['overdue_days']}d overdue)[/]"
+        )
+
+
 def register_gtd_commands(main: click.Group) -> None:
     """Register the gtd command group."""
 
@@ -67,17 +83,37 @@ def register_gtd_commands(main: click.Group) -> None:
         default=None,
         help="Stable de-duplication key for this source, e.g. a mail thread id.",
     )
-    def gtd_capture(text, source, privacy, context, source_ref):
+    @click.option(
+        "--due",
+        default=None,
+        help="Create a skmemory time intention due then (ISO date/time or 'in N days').",
+    )
+    @click.option(
+        "--remind",
+        default=None,
+        help="Create a skmemory reminder at this time (ISO date/time or 'in N days').",
+    )
+    def gtd_capture(text, source, privacy, context, source_ref, due=None, remind=None):
         """Capture an item to the GTD inbox.
 
-        Example: skcapstone gtd capture "Buy milk" --context @errands
+        Example: skcapstone gtd capture "Buy milk" --context @errands --due "in 2 days"
 
         SPE P1.5 (card 4082d990): this used to inline its own
         load-append-save, taking no store lock and doing no dedupe, so two
         concurrent captures could lose one. It now goes through the same
         handler the MCP tool uses, which is the locked, atomic, deduped sink.
         """
+        from .. import gtd_intentions
         from ..mcp_tools.gtd_tools import _handle_gtd_capture
+
+        # Validate times BEFORE capturing: a typo must not half-do the command.
+        when = {}
+        for purpose, raw in (("due", due), ("remind", remind)):
+            if raw is not None:
+                try:
+                    when[purpose] = gtd_intentions.parse_when(raw)
+                except ValueError as exc:
+                    raise click.ClickException(f"--{purpose}: {exc}") from exc
 
         payload = json.loads(
             asyncio.run(
@@ -102,10 +138,32 @@ def register_gtd_commands(main: click.Group) -> None:
                 f"  [yellow]Duplicate[/] - ({payload.get('source')}, "
                 f"{payload.get('source_ref')}) is already in the store. Nothing captured."
             )
+            if when:
+                console.print("  [yellow]--due/--remind not applied: no item id to link.[/]")
             console.print(f"  Inbox has [bold]{payload.get('inbox_count', 0)}[/] item(s).\n")
             return
 
+        # The item is captured and durable. Intentions are best-effort on top:
+        # if they are unavailable the item is kept and the command errors loudly.
+        intention_error = None
+        for purpose, dt in when.items():
+            try:
+                label = "Due" if purpose == "due" else "Reminder"
+                gtd_intentions.ensure_intention(
+                    payload["id"], purpose, f"{label}: {payload.get('text') or text}", dt
+                )
+            except gtd_intentions.IntentionsUnavailableError as exc:
+                intention_error = str(exc)
+                break
+
+        def _fail_intentions() -> None:
+            if intention_error:
+                raise click.ClickException(
+                    f"--due/--remind failed: {intention_error}. Item {payload['id']} was captured."
+                )
+
         if _print_queued(payload, "GTD Inbox"):
+            _fail_intentions()
             return
 
         console.print()
@@ -120,6 +178,10 @@ def register_gtd_commands(main: click.Group) -> None:
             )
         )
         console.print(f"  Inbox now has [bold]{payload.get('inbox_count', 0)}[/] item(s).\n")
+        for purpose in when:
+            if not intention_error:
+                console.print(f"  Intention set ({purpose}): {when[purpose].isoformat()}")
+        _fail_intentions()
 
     @gtd.command("inbox")
     @click.option(
@@ -540,7 +602,7 @@ def register_gtd_commands(main: click.Group) -> None:
         """
         from ..mcp_tools.gtd_tools import _handle_gtd_next
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             _handle_gtd_next(
                 {
                     "context": context,
@@ -555,6 +617,8 @@ def register_gtd_commands(main: click.Group) -> None:
         if "error" in data:
             console.print(f"\n  [bold red]Error:[/] {data['error']}\n")
             return
+
+        _print_overdue_intentions()
 
         items = data.get("items", [])
         if not items:
@@ -697,7 +761,7 @@ def register_gtd_commands(main: click.Group) -> None:
         """
         from ..mcp_tools.gtd_tools import _handle_gtd_waiting
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             _handle_gtd_waiting(
                 {
                     "limit": limit,
@@ -709,6 +773,8 @@ def register_gtd_commands(main: click.Group) -> None:
         if "error" in data:
             console.print(f"\n  [bold red]Error:[/] {data['error']}\n")
             return
+
+        _print_overdue_intentions()
 
         items = data.get("items", [])
         if not items:
@@ -755,6 +821,21 @@ def register_gtd_commands(main: click.Group) -> None:
         console.print(table)
         console.print()
 
+    @gtd.command("sweep-waiting")
+    def gtd_sweep_waiting():
+        """Create one time intention per ownerless waiting-for item older than 14 days.
+
+        Idempotent: keyed on the item id, so rerunning never duplicates.
+        """
+        from .. import gtd_intentions
+        from ..mcp_tools.gtd_tools import _load_list
+
+        try:
+            made = gtd_intentions.sweep_waiting(_load_list("waiting-for"))
+        except gtd_intentions.IntentionsUnavailableError as exc:
+            raise click.ClickException(str(exc)) from exc
+        console.print(f"\n  Waiting-for sweep: {len(made)} new intention(s).\n")
+
     @gtd.command("review")
     def gtd_review():
         """Generate a GTD weekly review summary.
@@ -800,8 +881,7 @@ def register_gtd_commands(main: click.Group) -> None:
             for it in oldest:
                 created = it.get("created_at", "")[:10]
                 console.print(
-                    f"    [cyan]{it['id']}[/]  [{it['list']}]  "
-                    f"{it['text']}  [dim]({created})[/]"
+                    f"    [cyan]{it['id']}[/]  [{it['list']}]  {it['text']}  [dim]({created})[/]"
                 )
 
         # Longest waiting
@@ -812,8 +892,7 @@ def register_gtd_commands(main: click.Group) -> None:
                 created = it.get("created_at", "")[:10]
                 delegate = it.get("delegate_to", "?")
                 console.print(
-                    f"    [cyan]{it['id']}[/]  -> {delegate}  "
-                    f"{it['text']}  [dim]({created})[/]"
+                    f"    [cyan]{it['id']}[/]  -> {delegate}  {it['text']}  [dim]({created})[/]"
                 )
 
         # Stale projects
