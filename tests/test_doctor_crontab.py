@@ -98,3 +98,28 @@ def test_doctor_reports_missing(tmp_path):
     with patch.object(cron_audit.subprocess, "run", return_value=proc):
         (c,) = _check_crontab_targets()
     assert not c.passed and "gone.sh" in c.detail and c.category == "cron"
+
+
+def test_wrapper_option_values_not_flagged(tmp_path):
+    script = tmp_path / "job.sh"
+    script.write_text("x")
+    text = (
+        f"* * * * * nice -n 10 {script}\n"
+        f"* * * * * timeout -s KILL 10 {script}\n"
+        f"* * * * * flock {tmp_path}/lock -c '{script}'\n"
+        f"* * * * * flock -n {tmp_path}/lock {script}\n"
+    )
+    assert _targets(text, tmp_path) == []
+
+
+def test_wrapper_option_values_still_catch_missing(tmp_path):
+    text = f"* * * * * nice -n 10 {tmp_path}/gone.sh\n* * * * * flock l -c '{tmp_path}/gone2.sh'\n"
+    assert _targets(text, tmp_path) == [str(tmp_path / "gone.sh"), str(tmp_path / "gone2.sh")]
+
+
+def test_subshell_parens_not_flagged(tmp_path):
+    d = tmp_path / "p"
+    d.mkdir()
+    (d / "run.sh").write_text("x")
+    assert _targets(f"* * * * * (cd {d} && ./run.sh)\n", tmp_path) == []
+    assert _targets(f"* * * * * (cd {d} && ./nope.sh)\n", tmp_path) == [str(d / "nope.sh")]

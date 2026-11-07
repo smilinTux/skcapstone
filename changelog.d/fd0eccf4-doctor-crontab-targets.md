@@ -1,0 +1,1 @@
+- Card `fd0eccf4` (SKMEM-P0-11): `skcapstone doctor` gains a read-only `cron:missing-targets` check that parses the user crontab and reports entries whose target script does not exist. Report only, nothing is removed.

@@ -513,3 +513,12 @@ def test_dot_directories_are_never_agents_or_seats(tmp_path):
     report = agent_scope.stale_seats(home, days=14)
     assert [s.name for s in report.stale] == ["pi-old"]
     assert report.total_dirs == 4
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_crontab():
+    """Never read the live crontab from doctor tests."""
+    from unittest.mock import patch as _patch
+
+    with _patch("skcapstone.cron_audit.read_crontab", return_value=("", "")):
+        yield

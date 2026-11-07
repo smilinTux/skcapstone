@@ -44,15 +44,15 @@ _BUILTINS = {
     "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac",
     "!", "{", "}", "exec", "source", ".", "eval", "umask", "ulimit", "read", "printf", "wait",
 }  # fmt: skip
-#: Wrappers: command name -> number of leading args to skip before the wrapped command.
-_WRAPPER_SKIP = {
-    "sk-cron-run": 1,
-    "nohup": 0,
-    "nice": 0,
-    "ionice": 0,
-    "env": 0,
-    "timeout": 1,
-    "flock": 1,
+#: Wrappers: name -> (options that consume a value, fixed positional args to skip).
+_WRAPPERS: dict[str, tuple[frozenset[str], int]] = {
+    "sk-cron-run": (frozenset(), 1),
+    "nohup": (frozenset(), 0),
+    "nice": (frozenset({"-n", "--adjustment"}), 0),
+    "ionice": (frozenset({"-c", "-n", "-p", "-t"}), 0),
+    "env": (frozenset({"-u", "-C"}), 0),
+    "timeout": (frozenset({"-s", "-k", "--signal", "--kill-after"}), 1),
+    "flock": (frozenset({"-w", "-E", "--timeout", "--conflict-exit-code"}), 1),
 }
 _INTERPRETERS = re.compile(r"^(ba|da|z|k)?sh$|^python[0-9.]*$|^perl$|^ruby$|^node$")
 _SEPARATORS = ("&&", "||", ";", "|")
@@ -200,6 +200,7 @@ def audit_crontab(text: str, home: Optional[Path] = None) -> CronAudit:
         # A trailing comment after the command is not part of it.
         cmd = re.sub(r"\s#\s.*$", "", cmd)
         for seg in _segments(_tokenize(cmd)):
+            seg = [t for t in seg if not set(t) <= set("()")]
             local = dict(env)
             while seg and _ASSIGN_RE.match(seg[0]):
                 k, _, v = seg.pop(0).partition("=")
@@ -220,15 +221,25 @@ def audit_crontab(text: str, home: Optional[Path] = None) -> CronAudit:
                     seg = []
                     break
                 targets.append(head)
-                if base in _WRAPPER_SKIP:
+                if base in _WRAPPERS:
+                    value_opts, n = _WRAPPERS[base]
                     seg = seg[1:]
-                    n = _WRAPPER_SKIP[base]
-                    # drop wrapper options, then the fixed leading args
+                    shell_string = False
                     while seg and seg[0].startswith("-"):
-                        seg = seg[1:]
+                        opt = seg.pop(0)
+                        if base == "flock" and opt in ("-c", "--command"):
+                            shell_string = True
+                        elif opt in value_opts and seg:
+                            seg.pop(0)
                     while seg and _ASSIGN_RE.match(seg[0]):
                         seg = seg[1:]
                     seg = seg[n:]
+                    if base == "flock" and seg and seg[0] in ("-c", "--command"):
+                        shell_string = True
+                        seg = seg[1:]
+                    if shell_string and seg:
+                        inner = _segments(_tokenize(" ".join(seg)))
+                        seg = inner[0] if inner else []
                     continue
                 if _INTERPRETERS.match(base):
                     rest = seg[1:]
