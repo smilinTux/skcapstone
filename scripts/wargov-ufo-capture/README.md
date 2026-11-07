@@ -1,6 +1,6 @@
 # war.gov/UFO/ PURSUE capture scripts
 
-Lumina-built CDP scripts for capturing war.gov/UFO/ PURSUE releases via the Lumina Chrome browser harness (port 9222). Akamai TLS-fingerprint gates direct curl, so capture has to drive a real browser session.
+Lumina-built CDP scripts for capturing war.gov/UFO/ PURSUE releases via the Lumina Chrome browser harness (port 9232; it was 9222 before 2026-10-25). Akamai TLS-fingerprint gates direct curl, so capture has to drive a real browser session.
 
 ## Quick reference
 
@@ -14,7 +14,7 @@ Lumina-built CDP scripts for capturing war.gov/UFO/ PURSUE releases via the Lumi
 
 ## Capture flow for a new release (Release 03 etc.)
 
-1. Confirm Lumina Chrome is up at :9222 (`~/bin/lumina-x-browser` to start).
+1. Confirm Lumina Chrome is up at :9232 (`~/bin/lumina-x-browser` to start).
 2. `python3 cdp_probe.py` — confirms the data source URL and looks for a ZIP-bundle path.
 3. Edit `cdp_capture_release2.py` constants for the new release: `ZIP_URL`, `CSV_URL`, `PRESS_URL`, `DOC_DIR`.
 4. `python3 cdp_capture_release2.py` — pulls CSV + ZIP + press-release HTML.

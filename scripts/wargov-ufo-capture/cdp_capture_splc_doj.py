@@ -2,7 +2,7 @@
 """Capture the PRIMARY DOJ sources for the SPLC superseding-indictment finding via Lumina Chrome CDP.
 
 Both targets returned HTTP 403 to WebFetch (Akamai TLS-fingerprint/bot gate). Driving
-Lumina's already-authenticated Chrome (port 9222) in page context bypasses the gate.
+Lumina's already-authenticated Chrome (port 9232) in page context bypasses the gate.
 
 Targets:
   1. Indictment PDF  -> https://www.justice.gov/opa/media/1437146/dl   (download)
@@ -16,6 +16,7 @@ Output -> ~/clawd/skills/substance-lens/captures/splc-doj-2026-06-03/
 """
 from __future__ import annotations
 
+import os
 import hashlib
 import json
 import re
@@ -26,7 +27,7 @@ from pathlib import Path
 
 import websocket
 
-CDP_HTTP = "http://127.0.0.1:9222"
+CDP_HTTP = os.environ.get("LUMINA_CDP_HTTP", "http://127.0.0.1:9232")  # lumina-x-browser; moved off 9222 on 2026-10-25
 SEED_URL = "https://www.justice.gov/"
 PDF_URL = "https://www.justice.gov/opa/media/1437146/dl"
 SEARCH_URL = "https://www.justice.gov/news?search_api_fulltext=Southern+Poverty+Law+Center"
@@ -146,7 +147,7 @@ def main() -> int:
     cdp = CDP(tab["webSocketDebuggerUrl"])
     manifest: dict = {
         "finding": "2026-06-04_splc-doj-superseding-indictment-oneill-thread.md",
-        "capture_method": "Lumina Chrome CDP (port 9222) - page-context fetch (Akamai bypass)",
+        "capture_method": "Lumina Chrome CDP (port 9232) - page-context fetch (Akamai bypass)",
         "targets": {},
     }
     try:
