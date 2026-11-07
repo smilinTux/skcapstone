@@ -336,3 +336,12 @@ def test_preflight_systemd_clean_ok(tmp_path):
     ):
         res = PreflightChecker(tmp_path).check_systemd()
     assert res.status == "ok"
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_crontab():
+    """Never read the live crontab from doctor tests."""
+    from unittest.mock import patch as _patch
+
+    with _patch("skcapstone.cron_audit.read_crontab", return_value=("", "")):
+        yield

@@ -411,8 +411,7 @@ class TestMultiWriterMigration:
         assert check.category == "sync"
 
     def test_fix_migrates_fallbacks_preserving_every_row(self, tmp_path):
-        from skcapstone.doctor import _check_multi_writer_layouts, run_fixes
-        from skcapstone.doctor import DiagnosticReport
+        from skcapstone.doctor import DiagnosticReport, _check_multi_writer_layouts, run_fixes
         from skcapstone.fallback_tracker import FallbackTracker
 
         rows = [
@@ -439,3 +438,12 @@ class TestMultiWriterMigration:
         assert {e.reason for e in tracker.load_events()} == {"row-0", "row-1", "row-2"}
         # Re-running is a no-op, so --fix is safe to schedule.
         assert _check_multi_writer_layouts(tmp_path)[0].passed
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_crontab():
+    """Never read the live crontab from doctor tests."""
+    from unittest.mock import patch as _patch
+
+    with _patch("skcapstone.cron_audit.read_crontab", return_value=("", "")):
+        yield
