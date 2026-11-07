@@ -1,0 +1,1 @@
+Add an optional reader argument to the memory_search MCP tool and memory_engine.search, passed through to skmemory. A declared reader (or SKMEMORY_READER) is enforced by skmemory only: no file fallback, and an skmemory without search(reader=...) returns nothing. Raises the skmemory floor to 0.11.94.

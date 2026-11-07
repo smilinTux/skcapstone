@@ -64,6 +64,16 @@ TOOLS: list[Tool] = [
                     "items": {"type": "string"},
                     "description": "Filter by tags (all must match)",
                 },
+                "reader": {
+                    "type": "string",
+                    "description": (
+                        "Audience the results are for: @public, @community, "
+                        "@work-circle, @inner-circle, @work:<x>, or channel:<id>. "
+                        "Omit only for the owner. A group or unknown audience MUST "
+                        "pass channel:<id> or @public; an unparseable value is "
+                        "@public. SKMEMORY_READER sets a ceiling this can only narrow."
+                    ),
+                },
             },
             "required": ["query"],
         },
@@ -150,6 +160,7 @@ async def _handle_memory_search(args: dict) -> list[TextContent]:
         query=query,
         tags=args.get("tags"),
         limit=args.get("limit", 10),
+        reader=args.get("reader"),
     )
     return _json_response(
         [
