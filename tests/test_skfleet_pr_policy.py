@@ -304,7 +304,7 @@ def test_prompt_category_prose_matches_the_regex_it_describes():
 # (skcoord/card.py). ``CardStore.fold`` (skcoord/card_store.py) merges that
 # overlay log with each card's own ``cards/<id>/events/`` store log and folds
 # every "link" event into ``card.links[link_key] = link_value`` with no
-# allowlist. ``coordination/`` is the directory the project CLAUDE.md
+# allowlist. ``coordination/`` is the directory the project AGENTS.md
 # documents as Syncthing-synced, which is what makes this the "replicated
 # evidence record" the spec's cross-host-visibility argument depends on. This
 # is a different, and separate, mechanism from _fold_claimability's local
