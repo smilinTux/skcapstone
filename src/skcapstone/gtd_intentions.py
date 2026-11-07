@@ -136,6 +136,50 @@ def ensure_intention(
         store.close()
 
 
+WEEKLY_REVIEW_ID = "gtd-weekly-review"
+WEEK_S = 7 * 86400
+
+
+def _next_sunday_1700(now: datetime) -> datetime:
+    days = (6 - now.weekday()) % 7
+    due = (now + timedelta(days=days)).replace(hour=17, minute=0, second=0, microsecond=0)
+    return due if due > now else due + timedelta(days=7)
+
+
+def seed_weekly_review(now: datetime | None = None) -> bool:
+    """Create the repeating 'weekly GTD review' intention once. True when created.
+
+    Lazy: does nothing (False) when skmemory has no intentions module or an
+    older one without ``interval_s``, so the skmemory pin never has to rise.
+    Idempotent by id; a done or cancelled review is never resurrected.
+    """
+    api = _load_api()
+    if api is None or "interval_s" not in getattr(api.Intention, "model_fields", {}):
+        return False
+    now = now or datetime.now(timezone.utc)
+    try:
+        store = api.open_store()
+        try:
+            if store.get(WEEKLY_REVIEW_ID) is not None:
+                return False
+            store.save(
+                api.Intention(
+                    id=WEEKLY_REVIEW_ID,
+                    kind="time",
+                    title="Weekly GTD review: process inbox, next actions, waiting-for, someday",
+                    due_at=_next_sunday_1700(now),
+                    interval_s=WEEK_S,
+                    channel=alert_channel(),
+                )
+            )
+            return True
+        finally:
+            store.close()
+    except Exception as exc:  # noqa: BLE001 - seeding must never break install
+        logger.warning("weekly review seed failed: %s", exc)
+        return False
+
+
 def overdue_intentions(now: datetime | None = None) -> list[dict]:
     """Overdue pending/armed time intentions, most overdue first. [] when unavailable."""
     api = _load_api()

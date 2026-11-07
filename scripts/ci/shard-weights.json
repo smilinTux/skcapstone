@@ -659,7 +659,6 @@
 "tests/test_test_environment.py": 0.3,
 "tests/test_testrunner.py": 0.2,
 "tests/test_tokens.py": 0.2,
-"tests/test_triggers.py": 0.2,
 "tests/test_trust_calibration.py": 0.2,
 "tests/test_trust_graph.py": 31.2,
 "tests/test_trust_pillar.py": 0.3,
