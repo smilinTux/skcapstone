@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import functools
 import logging
-import os
 import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
