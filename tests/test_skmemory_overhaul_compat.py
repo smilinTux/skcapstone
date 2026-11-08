@@ -22,6 +22,10 @@ def test_memory_adapter_store_ignores_retired_env(monkeypatch, tmp_path):
     monkeypatch.setenv("SKMEMORY_SKGRAPH_URL", "redis://127.0.0.1:1")
     monkeypatch.setenv("SKMEMORY_HOME", str(tmp_path / "skmemory"))
     monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path / "skcap"))
+    # 0.11.156 refuses to open a default store with no declared agent.
+    (tmp_path / "skcap" / "agents" / "pinagent").mkdir(parents=True)
+    for var in ("SKAGENT", "SKCAPSTONE_AGENT", "SKMEMORY_AGENT", "SK_DEFAULT_AGENT"):
+        monkeypatch.setenv(var, "pinagent")
     store = memory_adapter._get_store()
     assert store is not None
     assert store.vector is None
