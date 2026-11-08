@@ -50,7 +50,13 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from .qualified_runtime import STATE_NAME, missing_dependencies, qualify_prefix
+from .paths import paths_for_home, self_node_name
+from .qualified_runtime import (
+    STATE_NAME,
+    missing_dependencies,
+    qualification_applies,
+    qualify_prefix,
+)
 
 DATA = Path(__file__).resolve().parents[1] / "data"
 MANIFEST = DATA / "qualify-env.json"
@@ -606,6 +612,13 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--sklegal", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        if (
+            args.command == "build"
+            and (paths_for_home(Path.home()).root / "production.json").is_file()
+            and not qualification_applies(Path.home(), self_node_name())
+        ):
+            print(json.dumps({"skipped": "not a worker destination"}, sort_keys=True))
+            return 0
         if args.command == "build":
             result = build(
                 args.prefix, args.source, manifest_path=args.manifest, lock=args.lock, uv=args.uv

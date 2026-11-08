@@ -17,7 +17,7 @@ from skcapstone.fleet.deployment_manifest import (
     PRODUCTION_CANONICAL_SCRIPTS,
     production_compatibility_shim,
 )
-from skcapstone.fleet.paths import paths_for_home
+from skcapstone.fleet.paths import paths_for_home, self_node_name
 
 _SKNODED_HOST_KEYS = frozenset(
     {
@@ -34,6 +34,14 @@ def install_sandbox_profile(repo_root: Path, home: Path) -> None:
     """Load the shipped bwrap attachment without relaxing host namespace policy."""
     if not (paths_for_home(home).root / "production.json").is_file():
         return
+    try:
+        # Lazy: this file also runs from a cache against a package that
+        # predates the module (rollback), where the old behaviour applies.
+        from skcapstone.fleet.qualified_runtime import qualification_applies
+    except ImportError:
+        qualification_applies = None
+    if qualification_applies and not qualification_applies(home, self_node_name()):
+        return  # not a worker destination: no qualification sandbox here
     source = repo_root / "systemd/apparmor/skfleet-bwrap"
     if source.is_symlink() or SANDBOX_PROFILE_TARGET.is_symlink():
         raise ValueError("sandbox profile must not be a symlink")

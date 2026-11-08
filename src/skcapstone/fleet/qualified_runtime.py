@@ -1,5 +1,7 @@
 """Shared qualified-tool inventory and read-only target-prefix diagnostics."""
 
+import json
+import socket
 import sys
 from pathlib import Path
 
@@ -41,3 +43,52 @@ def missing_dependencies(prefix: Path) -> list[str]:
     if not (prefix / "bin/ruff").is_file():
         missing.append("ruff executable")
     return missing
+
+
+def _dispatch_host() -> str:
+    """The host name dispatch paths compare against (not SKFLEET_NODE)."""
+    return socket.gethostname().split(".")[0].lower()
+
+
+def qualification_applies(home: Path, host: str | None = None) -> bool:
+    """Whether this node must carry the qualification sandbox.
+
+    Role can REQUIRE the sandbox (``builder-standby`` or ``control``) but never
+    exempts: a node is exempt only when ``can_receive_qualified_work`` says no
+    dispatch path could hand it qualified work, checked under both the dispatch
+    host resolution and ``host`` (the SKFLEET_NODE-overridable name). A
+    production.json that exists but cannot be read or parsed fails closed. A
+    host with no production.json has no production placement at all, so only
+    its role decides (the readiness gate's long-standing behaviour).
+    """
+    from .paths import paths_for_home
+
+    try:
+        from . import store
+
+        spec = store.read_spec(paths_for_home(home), "node", "node-" + _dispatch_host())
+        role = ((spec or {}).get("spec") or {}).get("role")
+    except Exception:
+        return True
+    if role in ("builder-standby", "control"):
+        return True
+    return placement_can_receive(home, host)
+
+
+def placement_can_receive(home: Path, host: str | None = None) -> bool:
+    """Whether production.json could place qualified work here (role not consulted).
+
+    A policy that exists but cannot be parsed fails closed; no policy file means
+    no production placement at all (False).
+    """
+    from .paths import paths_for_home
+    from .production_policy import can_receive_qualified_work
+
+    try:
+        policy = json.loads((paths_for_home(home).root / "production.json").read_bytes())
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        return True
+    names = {_dispatch_host(), *([host] if host else [])}
+    return any(can_receive_qualified_work(policy, name) for name in names)
