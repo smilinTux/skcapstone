@@ -2,12 +2,9 @@
 Memory Adapter - bridge between skcapstone's MemoryEntry and skmemory's Memory.
 
 Provides a unified memory backend that routes through skmemory's three-tier
-architecture (SQLite + SKVector + SKGraph) while keeping the existing JSON
-engine as a fallback for offline/minimal deployments.
-
-Environment variables:
-    SKMEMORY_SKVECTOR_URL  - SKVector server URL (enables semantic search)
-    SKMEMORY_SKGRAPH_URL - SKGraph/Redis URL (enables graph traversal)
+architecture (SQLite local tier; vectors and graph live in skmem-pg and are
+synced by skmemory itself) while keeping the existing JSON engine as a
+fallback for offline/minimal deployments.
 """
 
 from __future__ import annotations
@@ -57,58 +54,15 @@ _LAYER_FROM_SKMEMORY = {
 }
 
 
-def _try_endpoint_selector() -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """Try to resolve backend URLs via EndpointSelector.
-
-    Returns:
-        Tuple of (skvector_url, skvector_key, skgraph_url) from the selector,
-        or (None, None, None) if the selector is not available/configured.
-    """
-    try:
-        from skmemory.config import build_endpoint_list, load_config
-        from skmemory.endpoint_selector import EndpointSelector, RoutingConfig
-
-        cfg = load_config()
-        if cfg is None:
-            return None, None, None
-
-        skvector_url = os.environ.get("SKMEMORY_SKVECTOR_URL") or cfg.skvector_url
-        skvector_key = os.environ.get("SKMEMORY_SKVECTOR_KEY") or cfg.skvector_key
-        skgraph_url = os.environ.get("SKMEMORY_SKGRAPH_URL") or cfg.skgraph_url
-
-        skvector_eps = build_endpoint_list(skvector_url, cfg.skvector_endpoints)
-        skgraph_eps = build_endpoint_list(skgraph_url, cfg.skgraph_endpoints)
-
-        if len(skvector_eps) <= 1 and len(skgraph_eps) <= 1 and not cfg.heartbeat_discovery:
-            return None, None, None
-
-        selector = EndpointSelector(
-            skvector_endpoints=skvector_eps,
-            skgraph_endpoints=skgraph_eps,
-            config=RoutingConfig(strategy=cfg.routing_strategy),
-        )
-
-        if cfg.heartbeat_discovery:
-            selector.discover_from_heartbeats()
-
-        best_skvector = selector.select_skvector()
-        best_skgraph = selector.select_skgraph()
-
-        return (
-            best_skvector.url if best_skvector else skvector_url,
-            skvector_key,
-            best_skgraph.url if best_skgraph else skgraph_url,
-        )
-    except Exception as e:
-        logger.debug("EndpointSelector not available: %s", e)
-        return None, None, None
-
-
 def _get_store() -> Optional["skmemory.MemoryStore"]:
-    """Create a MemoryStore with all available backends based on env vars.
+    """Create a MemoryStore on the local SQLite primary.
 
-    When multi-endpoint config exists, uses EndpointSelector to pick the
-    best URLs.  Falls back to single-URL env var behavior otherwise.
+    skmemory 0.11.156 removed the SKVector (Qdrant), SKGraph (FalkorDB) and
+    ChromaDB backends and the EndpointSelector that routed between them. The
+    vector and graph tiers now live in the node-local skmem-pg and are rebuilt
+    from the flat files by ``skmemory sync --vector --graph``, so this adapter
+    only owns the always-on local tier. ``SKMEMORY_SKVECTOR_URL`` and
+    ``SKMEMORY_SKGRAPH_URL`` are ignored.
 
     Returns:
         MemoryStore or None if skmemory is not available.
@@ -120,34 +74,7 @@ def _get_store() -> Optional["skmemory.MemoryStore"]:
         from skmemory.backends.sqlite_backend import SQLiteBackend
         from skmemory.store import MemoryStore
 
-        # Try endpoint selector first for HA routing
-        sel_skvector, sel_key, sel_skgraph = _try_endpoint_selector()
-
-        skvector_url = sel_skvector or os.environ.get("SKMEMORY_SKVECTOR_URL")
-        skvector_key = sel_key or os.environ.get("SKMEMORY_SKVECTOR_KEY")
-        skgraph_url = sel_skgraph or os.environ.get("SKMEMORY_SKGRAPH_URL")
-
-        vector = None
-        if skvector_url:
-            try:
-                from skmemory.backends.skvector_backend import SKVectorBackend
-
-                vector = SKVectorBackend(url=skvector_url, api_key=skvector_key)
-                logger.info("SKVector backend enabled at %s", skvector_url)
-            except Exception as e:
-                logger.warning("Could not initialize SKVector backend: %s", e)
-
-        graph = None
-        if skgraph_url:
-            try:
-                from skmemory.backends.skgraph_backend import SKGraphBackend
-
-                graph = SKGraphBackend(url=skgraph_url)
-                logger.info("SKGraph backend enabled at %s", skgraph_url)
-            except Exception as e:
-                logger.warning("Could not initialize SKGraph backend: %s", e)
-
-        store = MemoryStore(primary=SQLiteBackend(), vector=vector, graph=graph)
+        store = MemoryStore(primary=SQLiteBackend())
         logger.info("Unified memory backend active")
         return store
     except Exception as e:
