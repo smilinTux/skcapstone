@@ -105,3 +105,24 @@ def sandbox_prerequisites(monkeypatch):
     from skcapstone.fleet import sandbox_tools
 
     monkeypatch.setattr(sandbox_tools, "readiness", lambda *args, **kwargs: [])
+
+
+@pytest.fixture
+def declare_qualifying(monkeypatch):
+    """Give a temp home the admitted role of a qualifying worker node.
+
+    The qualification sandbox is only graded on a node whose admitted role runs
+    qualified work and which production.json authorizes as a worker destination;
+    these fixtures stand in for such a node under whatever name it resolves to.
+    """
+    import json
+
+    from skcapstone.fleet.paths import paths_for_home, self_node_name
+
+    def declare(home):
+        name = self_node_name().removeprefix("node-").split(".")[0].lower()
+        path = paths_for_home(home).spec_path("node", "node-" + name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"spec": {"role": "builder-standby"}}))
+
+    return declare
