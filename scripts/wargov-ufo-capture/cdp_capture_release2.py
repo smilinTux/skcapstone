@@ -13,6 +13,7 @@ Output → ~/nextcloud/cbrd21-share/reference/war-gov-UFO-PURSUE-2026/{docs/rele
 """
 from __future__ import annotations
 
+import os
 import hashlib
 import json
 import sys
@@ -22,7 +23,7 @@ from pathlib import Path
 
 import websocket
 
-CDP_HTTP = "http://127.0.0.1:9222"
+CDP_HTTP = os.environ.get("LUMINA_CDP_HTTP", "http://127.0.0.1:9232")  # lumina-x-browser; moved off 9222 on 2026-10-25
 SEED_URL = "https://www.war.gov/UFO/"
 
 ZIP_URL = "https://www.war.gov/medialink/ufo/052226/release_02/release_02_document_bundle.zip"
@@ -258,7 +259,7 @@ def main() -> int:
             "zip_sha256": sha,
             "csv_url": CSV_URL,
             "press_url": PRESS_URL,
-            "capture_method": "Lumina Chrome CDP (port 9222) - page-context fetch + <a download> click",
+            "capture_method": "Lumina Chrome CDP (port 9232) - page-context fetch + <a download> click",
         }
         (DOC_DIR / "release-02-manifest.json").write_text(json.dumps(manifest, indent=2))
         print(f"[capture] manifest written", flush=True)
