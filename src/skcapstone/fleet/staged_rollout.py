@@ -203,6 +203,15 @@ _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
         "~/.skenv/bin/python -m skcapstone.fleet.qualification_tools --apply; fi",
     ),
     ("converge", "skcapstone fleet sknoded --once"),
+    # Install newly required binaries and enable newly required timers, so a
+    # profile addition rolls with its code instead of needing a hand pass per
+    # node (worktrunk, 2026-11-08). Freeze- and opt-in-gated; never fails the
+    # deploy itself: the drift gate that follows decides.
+    (
+        "converge_profile",
+        "if test -f {repo}/src/skcapstone/fleet/profile_converge.py; then "
+        "~/.skenv/bin/python -m skcapstone.fleet.profile_converge; fi",
+    ),
 )
 
 #: The rollback equivalent of ``_DEPLOY_STEPS``: reset the repo's current
@@ -268,6 +277,15 @@ _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
         "~/.skenv/bin/python -m skcapstone.fleet.qualification_tools --apply; fi",
     ),
     ("converge", "skcapstone fleet sknoded --once"),
+    # Install newly required binaries and enable newly required timers, so a
+    # profile addition rolls with its code instead of needing a hand pass per
+    # node (worktrunk, 2026-11-08). Freeze- and opt-in-gated; never fails the
+    # deploy itself: the drift gate that follows decides.
+    (
+        "converge_profile",
+        "if test -f {repo}/src/skcapstone/fleet/profile_converge.py; then "
+        "~/.skenv/bin/python -m skcapstone.fleet.profile_converge; fi",
+    ),
 )
 
 #: ``sys.argv[2]`` is the record ``kind`` (``"deploy"`` or ``"rollback"``),
@@ -581,7 +599,7 @@ def _run_shell_steps(
 # full sknoded tick, which folds every builder status: 73-100s on chiap01 with
 # ~17 outstanding statuses, so every rollout halted there on the 30s default
 # and chiap02/chiap04 kept the previous main (2026-10-10 00:24Z).
-_LONG_STEP_TIMEOUTS = {"qualification_tools": 120, "converge": 240}
+_LONG_STEP_TIMEOUTS = {"qualification_tools": 120, "converge": 240, "converge_profile": 300}
 
 
 def default_deploy_node(
@@ -1013,7 +1031,8 @@ def execute_rollout(
                     detail=(
                         f"dry run: would record deployment, then git pull, pip install, "
                         f"install {PER_HOST_ARTIFACT_NAMES} and canonical units, "
-                        f"reload definitions, and converge on {node}; not executed"
+                        f"reload definitions, converge, and apply the install profile "
+                        f"on {node}; not executed"
                     ),
                 )
             )
