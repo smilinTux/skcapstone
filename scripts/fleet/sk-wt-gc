@@ -11,8 +11,9 @@
 # Also prunes metadata for worktrees whose directory is already gone, EXCEPT entries under
 # /mnt (a network mount that is merely offline would read as "gone"): those are locked with
 # a reason instead, for a human to look at.
-# --no-fetch skips `git fetch`. That is the safe direction: a stale default branch can only
-# make FEWER worktrees read as integrated. Use it on loaded hosts.
+# --no-fetch skips `git fetch`. That is the safe direction (a stale origin/<default> can only
+# make FEWER worktrees read as integrated) but it is also much less effective: integration is
+# judged against origin/<default>, so without a fetch recent merges are invisible.
 # --approve pre-approves a repo's project hooks (.config/wt.toml) for non-interactive agents,
 # but ONLY from a main checkout sitting on its default branch, i.e. hooks that went through a
 # reviewed merge. A feature branch can never get its own new hook commands approved this way.
@@ -32,6 +33,10 @@ while [ $# -gt 0 ]; do
   shift
 done
 WT=${WT:-$HOME/.local/bin/wt}
+# The interactive config caps `wt list` (list.timeout-ms) so a prompt stays snappy. GC must
+# see every state: a capped list returns items with NO state, which this script then (safely)
+# keeps, so on a big repo on a loaded host it would remove nothing (chiap08 2026-11-07: 5 of ~126).
+export WORKTRUNK_LIST__TIMEOUT_MS=0
 tmpf=$(mktemp)
 trap 'rm -f "$tmpf"' EXIT
 

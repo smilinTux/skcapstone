@@ -13,6 +13,8 @@ Environment=PATH=%h/.local/bin:%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin
 # Roots to discover repos (with linked worktrees) under. Override per node in the
 # optional env file, e.g. chiap08: WT_GC_ROOTS="%h /srv/work".
 Environment="WT_GC_ROOTS=%h/clawd/skcapstone-repos %h/skworld-worktrees %h/.codex/worktrees %h/worktrees"
-Environment=WT_GC_FLAGS=--no-fetch
+# Fetch by default: integration is judged against origin/<default>. Set --no-fetch per node
+# only where the forge is unreachable.
+Environment=WT_GC_FLAGS=
 EnvironmentFile=-%h/.config/skfleet/wt-gc.env
 ExecStart=/usr/bin/env bash -c 'exec sk-wt-gc --apply --approve $WT_GC_FLAGS --discover $WT_GC_ROOTS'
