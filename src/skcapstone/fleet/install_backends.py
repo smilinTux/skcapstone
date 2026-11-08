@@ -36,6 +36,7 @@ _UNIT_RULES: list[tuple[str, str]] = [
 ]
 
 _TIER: dict[str, int] = {
+    "binaries": 0,
     "packages": 1,
     "capauth-authz": 2,
     "skcomms": 3,
@@ -82,13 +83,15 @@ def resolve(name: str, kind: str) -> str:
 
     Args:
         name: The unit or package name.
-        kind: The kind: "unit" or "package".
+        kind: The kind: "unit", "package" or "binary".
 
     Returns:
         The backend ID (e.g., "core", "skchat", "agent") or UNSUPPORTED.
     """
     if kind == "package":
         return "packages"
+    if kind == "binary":
+        return "binaries"
     for glob, backend in _UNIT_RULES:
         if fnmatch.fnmatch(name, glob):
             return backend
@@ -308,7 +311,21 @@ def default_backends(runner: Callable = subprocess.run) -> dict[str, Callable]:
         cmd = ["bash", str(repos / "capauth" / "deploy" / "capauth-service" / "deploy.sh")]
         return _run(runner, cmd, dry_run=dry_run)
 
+    def binaries(names: list[str], *, dry_run: bool, enable: bool, start: bool) -> tuple[str, str]:
+        # Pinned static binaries (fleet/binaries.py): download, verify the
+        # in-code sha256, install atomically into ~/.local/bin. No units, so
+        # enable/start are no-ops. Never shells out, so `runner` is unused.
+        from .binaries import install
+
+        status, detail = "ok", ""
+        for name in names:
+            status, detail = install(name, dry_run=dry_run)
+            if status == "failed":
+                break
+        return status, detail
+
     return {
+        "binaries": binaries,
         "packages": packages,
         "skchat": skchat,
         "skcomms": skcomms,

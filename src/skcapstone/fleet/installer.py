@@ -24,7 +24,7 @@ class InstallStep:
     """
 
     name: str
-    kind: str  # "unit" | "package"
+    kind: str  # "unit" | "package" | "binary"
     tier: int
     backend_id: str
 
@@ -76,6 +76,10 @@ def plan(drift: DriftReport, *, only: list[str] | None = None) -> InstallPlan:
         if wanted is None or pkg in wanted:
             bid = install_backends.resolve(pkg, "package")
             steps.append(InstallStep(pkg, "package", install_backends.tier_of(bid), bid))
+    for binary in drift.missing_required_binaries:
+        if wanted is None or binary in wanted:
+            bid = install_backends.resolve(binary, "binary")
+            steps.append(InstallStep(binary, "binary", install_backends.tier_of(bid), bid))
     for unit in drift.missing_required_units:
         if wanted is None or unit in wanted:
             bid = install_backends.resolve(unit, "unit")

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **skfleet could not install anything that is not a Python package or a
+  systemd unit.** Install profiles gain `spec.binaries {required, allowed,
+  mustNot}`, backed by a catalog pinned in code (`fleet/binaries.py`: exact
+  version and sha256 per arch). `skfleet node doctor` reports
+  missing_required/forbidden/unexpected binaries; a required binary counts as
+  present only at its pinned version, so bumping the pin is the upgrade.
+  `skfleet install --apply` lays it down through the new `binaries` backend
+  (tier 0, hash-verified, atomic). First entry: worktrunk `wt` 0.81.0,
+  required on control, builder-standby and worker-gpu, with an sk-managed
+  config (worktrees under `~/skworld-worktrees`, `wt merge` refused so merges
+  stay PR + CI). `scripts/fleet/wt-gc.sh` is a squash-aware worktree GC,
+  dry run by default.
+
 - **`cmdb reconcile --apply` refused every run from 2026-10-22 to 2026-11-06.**
   Discovery emitted an `activates` edge for `.socket` units, which skcoord's
   validator rejects, failing the whole run. It now emits `depends_on` in the same
