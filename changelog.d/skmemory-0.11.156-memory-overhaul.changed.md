@@ -1,0 +1,1 @@
+- Raise the fleet skmemory pin to 0.11.156 (memory overhaul) and the three pyproject floors with it; drop the imports of the removed SKVector, SKGraph and EndpointSelector modules from memory_adapter and sync_watcher.
