@@ -5,6 +5,15 @@
   },
   "name": "worker-gpu",
   "spec": {
+    "binaries": {
+      "allowed": [
+        "wt"
+      ],
+      "mustNot": [],
+      "required": [
+        "wt"
+      ]
+    },
     "capauthIdentityClass": "worker",
     "description": "The GPU worker (.100). Serves inference, holds ZERO sovereign state. The mustNot list is the load-bearing part: no memory daemon, no agent runtime, no coordination writer, and no membership in the sovereign Syncthing folder. The sovereign tree is 19G, 13G of it agent state, and an outbox incident once reached 83G. SK-managed units are those prefixed sk/capauth/cloud9, plus the fleet-adjacent syncthing and tailscaled units. Everything else on the box is desktop, distro or third-party and is listed in unitsIgnore, so it never reads as drift. Role model and the two orthogonal axes: docs/fleet/adr-node-role-model.md.",
     "packages": {

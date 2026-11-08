@@ -111,6 +111,16 @@ def sk_packages() -> dict[str, str]:
     return dict(sorted(found.items()))
 
 
+def catalog_binaries() -> dict[str, str]:
+    """Observed versions of pinned catalog binaries (binaries.py). Never raises."""
+    try:
+        from .binaries import probe
+
+        return probe()
+    except Exception:
+        return {}
+
+
 def collect(
     *,
     runner: Runner | None = None,
@@ -145,6 +155,7 @@ def collect(
     return {
         "units": units,
         "packages": sk_packages(),
+        "binaries": catalog_binaries(),
         "collectedAt": now_iso if now_iso is not None else _now_iso(),
     }
 

@@ -48,7 +48,7 @@ WORKER = _profile(
 # ------------------------------------------------------------- clean ---
 
 
-def test_a_clean_node_yields_six_empty_lists_and_ok() -> None:
+def test_a_clean_node_yields_empty_lists_and_ok() -> None:
     report = profile_doctor.diff(
         _inventory(["skai-beellama.service", "comfyui.service"], ["skcapstone", "capauth"]),
         WORKER,
@@ -60,6 +60,9 @@ def test_a_clean_node_yields_six_empty_lists_and_ok() -> None:
         "missing_required_packages": [],
         "forbidden_packages": [],
         "unexpected_packages": [],
+        "missing_required_binaries": [],
+        "forbidden_binaries": [],
+        "unexpected_binaries": [],
         "severity": "ok",
     }
     assert report.clean is True

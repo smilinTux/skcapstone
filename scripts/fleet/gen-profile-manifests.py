@@ -93,9 +93,7 @@ SEAT_CYCLE_TIMERS = [f"skfleet-{seat}.timer" for seat in ("link", "mero")] + [
 ]
 
 #: Seat services the control role permits but does not mandate.
-SEAT_ALLOWED_EXTRA = [
-    f"skfleet-{seat}.service" for seat in ("link", "mero")
-] + [
+SEAT_ALLOWED_EXTRA = [f"skfleet-{seat}.service" for seat in ("link", "mero")] + [
     "skfleet-link-producer.service",
 ]
 
@@ -248,10 +246,7 @@ def build_control() -> dict:
                 "timers. The seat-cycle, rotate, estate-glm and "
                 "seraph-review-publisher dispatcher timers are paused and "
                 "forbidden, as are the individual Atlas, Seraph, Niobe, and "
-                "Niobe-live timers. "
-                + _IGNORE_RULE
-                + " "
-                + _ADR_LINK
+                "Niobe-live timers. " + _IGNORE_RULE + " " + _ADR_LINK
             ),
             "units": _units_block(
                 sorted(set(allowed) | set(SEAT_ALLOWED_EXTRA)),
@@ -262,6 +257,7 @@ def build_control() -> dict:
             "packages": _units_block(load_packages("node-noroc2027"), ["skcapstone"], []),
             "stateTier": "full-replica",
             "capauthIdentityClass": "operator",
+            "binaries": {"required": ["wt"], "allowed": ["wt"], "mustNot": []},
             "syncFolders": ["skcapstone-sync", "skfleet-control"],
         },
     )
@@ -288,6 +284,7 @@ def build_builder_standby() -> dict:
             "packages": _units_block(load_packages("node-41"), ["skcapstone"], []),
             "stateTier": "full-replica",
             "capauthIdentityClass": "agent",
+            "binaries": {"required": ["wt"], "allowed": ["wt"], "mustNot": []},
             "syncFolders": ["skcapstone-sync", "skfleet-control"],
         },
     )
@@ -336,6 +333,7 @@ def build_worker_gpu() -> dict:
             # matrix in docs/fleet/control-bus-folder.md.
             "stateTier": "control-bus",
             "capauthIdentityClass": "worker",
+            "binaries": {"required": ["wt"], "allowed": ["wt"], "mustNot": []},
             "syncFolders": ["skfleet-control"],
         },
     )
@@ -377,6 +375,7 @@ def build_observer() -> dict:
             },
             "stateTier": "none",
             "capauthIdentityClass": "observer",
+            "binaries": {"required": [], "allowed": ["wt"], "mustNot": []},
             "syncFolders": [],
         },
     )

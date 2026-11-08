@@ -40,6 +40,7 @@ import json
 import os
 from pathlib import Path
 
+from .binaries import CATALOG as BINARY_CATALOG
 from .paths import FleetPaths, valid_name
 
 #: How much sovereign state a node of this profile carries. Independent of
@@ -164,13 +165,14 @@ def normalize_profile_spec(spec: dict) -> dict:
         spec: Raw Profile spec dict.
 
     Returns:
-        Normalized dict with description, packages, units, unitsIgnore,
-        stateTier, capauthIdentityClass, syncFolders and deleted.
+        Normalized dict with description, packages, units, binaries,
+        unitsIgnore, stateTier, capauthIdentityClass, syncFolders and deleted.
 
     Raises:
         ProfileSpecError: spec is not a dict, stateTier or
             capauthIdentityClass is missing or unknown, description is not a
-            string, or any name list fails validation.
+            string, any name list fails validation, or binaries.required
+            names a binary the pinned catalog cannot install.
     """
     if not isinstance(spec, dict):
         raise ProfileSpecError(f"profile spec must be a dict, got {spec!r}")
@@ -200,10 +202,21 @@ def normalize_profile_spec(spec: dict) -> dict:
     if not isinstance(description, str):
         raise ProfileSpecError(f"spec.description must be a string, got {description!r}")
 
+    binaries = _name_lists("binaries", spec.get("binaries"))
+    # A required binary is something the installer must be able to lay down,
+    # and it only installs what the pinned catalog (binaries.py) describes.
+    uncatalogued = sorted(set(binaries["required"]) - set(BINARY_CATALOG))
+    if uncatalogued:
+        raise ProfileSpecError(
+            f"spec.binaries: {uncatalogued} are required but not in the pinned "
+            f"binaries catalog (known: {sorted(BINARY_CATALOG)})"
+        )
+
     return {
         "description": description,
         "packages": _name_lists("packages", spec.get("packages")),
         "units": _name_lists("units", spec.get("units")),
+        "binaries": binaries,
         # fnmatch patterns for units this profile takes no position on, so a
         # desktop box full of gpg-agent sockets does not read as drift.
         "unitsIgnore": _str_list("unitsIgnore", spec.get("unitsIgnore")),
