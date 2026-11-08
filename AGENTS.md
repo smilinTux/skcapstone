@@ -73,7 +73,10 @@ only `src/`.
   sentence. Hyphens are fine.
 - **Branch and commit:** never commit to `main`. Branch, commit as soon as a fast check passes
   and before the full suite, then open a PR. Never leave edits uncommitted or files untracked
-  in a checkout another session may share; prefer a `git worktree` per task.
+  in a checkout another session may share. One worktree per task, made with worktrunk:
+  `wt switch -c <branch> --no-cd`, tests via `wt test`, never `wt merge` (PRs only), and
+  `wt remove` or the daily GC once merged. Several repos: `sk-wt-task`. See
+  `docs/fleet/WORKTRUNK.md`.
 - **Attribution:** a `Co-Authored-By` trailer names the agent that actually did the work, or
   is left out. Never one you cannot evidence.
 - **Changelog:** any PR touching `src/**` or `pyproject.toml` needs an entry or docs-check
