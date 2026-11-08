@@ -262,6 +262,7 @@ def _http_check(
     :func:`_retry_on_timeout` so a single cold-start timeout does not flap a
     healthy service to "down". See :func:`_http_check_once` for the probe itself.
     """
+
     def probe(timeout: float = CHECK_TIMEOUT) -> dict[str, Any]:
         return _http_check_once(
             name, url, headers=headers, version_key=version_key, timeout=timeout
@@ -333,6 +334,7 @@ def _tcp_check(name: str, host: str, port: int) -> dict[str, Any]:
 
     Thin wrapper over :func:`_tcp_check_once` (see :func:`_retry_on_timeout`).
     """
+
     def probe(timeout: float = CHECK_TIMEOUT) -> dict[str, Any]:
         return _tcp_check_once(name, host, port, timeout=timeout)
 
