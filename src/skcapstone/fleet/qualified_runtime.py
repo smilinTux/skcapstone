@@ -73,6 +73,18 @@ def qualification_applies(home: Path, host: str | None = None) -> bool:
         return True
     if role in ("builder-standby", "control"):
         return True
+    return placement_can_receive(home, host)
+
+
+def placement_can_receive(home: Path, host: str | None = None) -> bool:
+    """Whether production.json could place qualified work here (role not consulted).
+
+    A policy that exists but cannot be parsed fails closed; no policy file means
+    no production placement at all (False).
+    """
+    from .paths import paths_for_home
+    from .production_policy import can_receive_qualified_work
+
     try:
         policy = json.loads((paths_for_home(home).root / "production.json").read_bytes())
     except FileNotFoundError:

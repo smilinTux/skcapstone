@@ -146,9 +146,9 @@ def qualification_sandbox_applies() -> bool:
     # Role never exempts: a node that production.json could still place work on
     # keeps the sandbox gate. Older installed packages lack the helper: role only.
     try:
-        from skcapstone.fleet.qualified_runtime import qualification_applies
+        from skcapstone.fleet.qualified_runtime import placement_can_receive
 
-        return qualification_applies(Path.home(), node)
+        return placement_can_receive(Path.home(), node)
     except ImportError:
         return False
 
