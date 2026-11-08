@@ -81,7 +81,7 @@ def test_system_scope_omits_the_user_flag() -> None:
 def test_collect_shape_and_determinism() -> None:
     runner = _fake_runner({"user": USER_UNITS_STDOUT, "system": SYSTEM_UNITS_STDOUT})
     first = nodeinventory.collect(runner=runner, now_iso="2026-08-14T00:00:00Z")
-    assert set(first) == {"units", "packages", "collectedAt"}
+    assert set(first) == {"units", "packages", "binaries", "collectedAt"}
     assert first["collectedAt"] == "2026-08-14T00:00:00Z"
     # System scope is behind the flag, and an uncollected scope is absent
     # rather than empty, so the two cases can never be confused.
