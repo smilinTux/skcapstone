@@ -1,0 +1,1 @@
+- Card `32ea0e0e`: add the PRES-6 presence loop (`presence_loop` scheduler task). It detects unanswered Talk DMs and mentions every 15 minutes and reaches out once per message, with quiet hours and a per-tick cap. Off by default and dry-run unless `SKCAPSTONE_PRESENCE_MODE=live`. Before this the agent had no way to notice a message it had not answered.
