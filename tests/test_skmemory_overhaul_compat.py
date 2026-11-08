@@ -16,16 +16,16 @@ pytest.importorskip("skmemory")
 
 
 def test_memory_adapter_store_ignores_retired_env(monkeypatch, tmp_path):
+    from skmemory.backends import sqlite_backend
+
     from skcapstone import memory_adapter
 
+    # 0.11.156 refuses to open a default store with no registered agent, and
+    # its agent base is fixed at import, so root the primary in tmp_path.
+    real = sqlite_backend.SQLiteBackend
+    monkeypatch.setattr(sqlite_backend, "SQLiteBackend", lambda: real(base_path=str(tmp_path)))
     monkeypatch.setenv("SKMEMORY_SKVECTOR_URL", "http://127.0.0.1:1")
     monkeypatch.setenv("SKMEMORY_SKGRAPH_URL", "redis://127.0.0.1:1")
-    monkeypatch.setenv("SKMEMORY_HOME", str(tmp_path / "skmemory"))
-    monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path / "skcap"))
-    # 0.11.156 refuses to open a default store with no declared agent.
-    (tmp_path / "skcap" / "agents" / "pinagent").mkdir(parents=True)
-    for var in ("SKAGENT", "SKCAPSTONE_AGENT", "SKMEMORY_AGENT", "SK_DEFAULT_AGENT"):
-        monkeypatch.setenv(var, "pinagent")
     store = memory_adapter._get_store()
     assert store is not None
     assert store.vector is None
