@@ -4,6 +4,8 @@ Documentation=https://github.com/smilinTux/skcapstone/blob/main/docs/fleet/WORKT
 OnFailure=skcapstone-alert@skfleet-wt-gc.service
 
 [Service]
+# Fleet unit: anything it creates (wt logs, backups) is owner-only, like every skfleet unit.
+UMask=0077
 Type=oneshot
 # Low priority: on a loaded builder this must never compete with agent work.
 Nice=19
