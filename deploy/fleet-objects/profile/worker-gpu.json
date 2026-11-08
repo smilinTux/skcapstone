@@ -45,6 +45,8 @@
         "qwen3-arc.service",
         "skai-beellama-restart.timer",
         "skai-beellama.service",
+        "skfleet-wt-gc.service",
+        "skfleet-wt-gc.timer",
         "skvoice.service",
         "sovereign-orchestrator.service",
         "syncthing.service",

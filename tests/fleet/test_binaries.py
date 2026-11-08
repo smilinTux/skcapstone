@@ -112,7 +112,7 @@ def test_install_dry_run_fetches_nothing(tmp_path):
 def test_install_verifies_and_lays_down_members_and_config(tmp_path, fake_wt):
     bindir, home = tmp_path / "bin", tmp_path / "home"
     status, detail = binaries.install(
-        "wt", fetch=fake_wt, arch="x86_64", directory=bindir, home=home
+        "wt", fetch=fake_wt, arch="x86_64", directory=bindir, home=home, post_install=False
     )
     assert (status, detail) == ("ok", "")
     assert (bindir / "wt").stat().st_mode & 0o111
@@ -139,7 +139,9 @@ def test_install_keeps_operator_owned_config(tmp_path, fake_wt):
     cfg = home / ".config/worktrunk/config.toml"
     cfg.parent.mkdir(parents=True)
     cfg.write_text('worktree-path = "mine"\n')
-    binaries.install("wt", fetch=fake_wt, arch="x86_64", directory=tmp_path / "b", home=home)
+    binaries.install(
+        "wt", fetch=fake_wt, arch="x86_64", directory=tmp_path / "b", home=home, post_install=False
+    )
     assert cfg.read_text() == 'worktree-path = "mine"\n'
 
 
@@ -183,3 +185,111 @@ def test_backend_registered_and_dry_run_safe():
     fn = install_backends.default_backends()["binaries"]
     status, _ = fn(["wt"], dry_run=True, enable=False, start=False)
     assert status == "would-write"
+
+
+# --- post-install: worktree root, claude plugin, finish, CLI -------------
+
+
+def test_worktree_root_plain_dir_when_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv(binaries.WORKTREE_ROOT_ENV, raising=False)
+    note = binaries.ensure_worktree_root(tmp_path)
+    assert (tmp_path / "skworld-worktrees").is_dir() and "worktree root" in note
+
+
+def test_worktree_root_symlinks_empty_dir_to_fast_volume(tmp_path):
+    (tmp_path / "skworld-worktrees").mkdir()
+    fast = tmp_path / "nvme" / "worktrees"
+    binaries.ensure_worktree_root(tmp_path, root=str(fast))
+    link = tmp_path / "skworld-worktrees"
+    assert link.is_symlink() and link.resolve() == fast.resolve()
+    # idempotent
+    assert "->" in binaries.ensure_worktree_root(tmp_path, root=str(fast))
+
+
+def test_worktree_root_never_relinks_a_populated_dir(tmp_path):
+    keep = tmp_path / "skworld-worktrees" / "repo.feat"
+    keep.mkdir(parents=True)
+    note = binaries.ensure_worktree_root(tmp_path, root=str(tmp_path / "nvme"))
+    assert "NOT relinked" in note and keep.is_dir()
+    assert not (tmp_path / "skworld-worktrees").is_symlink()
+
+
+def test_claude_plugin_skipped_without_claude(monkeypatch):
+    monkeypatch.setattr(binaries.shutil, "which", lambda name: None)
+    assert "skipped" in binaries.install_claude_plugin()
+
+
+def test_claude_plugin_add_then_install_tolerates_already(monkeypatch):
+    monkeypatch.setattr(binaries.shutil, "which", lambda name: "/bin/claude")
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd[1:4])
+        return SimpleNamespace(returncode=1, stdout="", stderr="already installed")
+
+    assert "installed" in binaries.install_claude_plugin(run)
+    assert calls == [
+        ["plugin", "marketplace", "add"],
+        ["plugin", "install", "worktrunk@sk-worktrunk"],
+    ]
+
+
+def test_claude_plugin_real_failure_is_reported_not_raised(monkeypatch):
+    monkeypatch.setattr(binaries.shutil, "which", lambda name: "/bin/claude")
+    run = lambda cmd, **kw: SimpleNamespace(returncode=2, stdout="", stderr="boom")  # noqa: E731
+    assert binaries.install_claude_plugin(run).startswith("claude-plugin failed")
+
+
+def test_vendored_plugin_is_packaged_and_pinned_with_wt():
+    import json
+
+    d = binaries.CLAUDE_PLUGIN_DIR
+    market = json.loads((d / ".claude-plugin" / "marketplace.json").read_text())
+    plugin = json.loads((d / "plugins/worktrunk/.claude-plugin/plugin.json").read_text())
+    hooks = json.loads((d / "plugins/worktrunk/hooks/hooks.json").read_text())["hooks"]
+    assert market["name"] == binaries.CLAUDE_MARKETPLACE
+    assert plugin["version"] == binaries.CATALOG["wt"].version
+    assert {"WorktreeCreate", "WorktreeRemove"} <= set(hooks)
+
+
+def test_finish_keeps_operator_config_and_reports_it(tmp_path):
+    cfg = tmp_path / ".config/worktrunk/config.toml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text("mine\n")
+    note = binaries.finish(binaries.CATALOG["wt"], home=tmp_path, post_install=False)
+    assert cfg.read_text() == "mine\n" and "operator-owned" in note
+
+
+def test_finish_post_install_step_failure_is_a_note(tmp_path, monkeypatch):
+    def boom(home, run):
+        raise RuntimeError("nope")
+
+    monkeypatch.setitem(binaries.POST_INSTALL, "worktree-root", boom)
+    monkeypatch.setitem(binaries.POST_INSTALL, "claude-plugin", lambda h, r: "ok-note")
+    note = binaries.finish(binaries.CATALOG["wt"], home=tmp_path)
+    assert "worktree-root failed: nope" in note and "ok-note" in note
+
+
+def test_binary_setup_cli_refuses_off_pin(monkeypatch):
+    from click.testing import CliRunner
+
+    from skcapstone.fleet.cli import fleet
+
+    monkeypatch.setattr(binaries, "probe", lambda names=None, **kw: {"wt": "0.1.0"})
+    result = CliRunner().invoke(fleet, ["binary-setup", "wt"])
+    assert result.exit_code != 0 and "not the pin" in result.output
+    result = CliRunner().invoke(fleet, ["binary-setup", "nope"])
+    assert result.exit_code != 0 and "not in the binaries catalog" in result.output
+
+
+def test_wt_gc_units_ship_and_are_required_where_agents_work():
+    import json
+
+    assert install_backends.ships_core_unit("skfleet-wt-gc.service")
+    assert install_backends.ships_core_unit("skfleet-wt-gc.timer")
+    assert install_backends.resolve("skfleet-wt-gc.timer", "unit") == "core"
+    root = Path(__file__).resolve().parents[2] / "deploy/fleet-objects/profile"
+    for role, required in (("control", True), ("builder-standby", True), ("worker-gpu", False)):
+        units = json.loads((root / f"{role}.json").read_text())["spec"]["units"]
+        assert ("skfleet-wt-gc.timer" in units["required"]) is required
+        assert "skfleet-wt-gc.timer" in units["allowed"]

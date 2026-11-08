@@ -1,0 +1,88 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" -C \"$CLAUDE_PROJECT_DIR\" config state marker set 🤖 || true"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" -C \"$CLAUDE_PROJECT_DIR\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" -C \"$CLAUDE_PROJECT_DIR\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude approve-enter-worktree || bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" -C \"$CLAUDE_PROJECT_DIR\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" -C \"$CLAUDE_PROJECT_DIR\" config state marker set 💬 || true"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" -C \"$CLAUDE_PROJECT_DIR\" config state marker clear || true"
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'set -o pipefail; name=$(jq -er .name) || exit 1; cd \"${CLAUDE_PROJECT_DIR:-.}\" || exit 1; create=--create; git rev-parse --verify --quiet \"refs/heads/$name\" >/dev/null 2>&1 && create=; bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" switch $create \"$name\" --no-cd --format=json | jq -er .path'"
+          }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'p=$(jq -er .worktree_path) || exit 1; [ -e \"$p/.git\" ] || exit 0; bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" -C \"$p\" remove --foreground \"$p\"'"
+          }
+        ]
+      }
+    ]
+  }
+}

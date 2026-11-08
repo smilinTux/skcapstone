@@ -63,6 +63,9 @@ class Binary:
         sha256: Pinned archive hash per `platform.machine()` value.
         members: Executables extracted from the archive into the bin dir.
         config: Optional (path relative to $HOME, content) user config.
+        post_install: Names of best-effort steps in POST_INSTALL run after a
+            successful install. A failed step is reported, never fatal: the
+            binary itself is installed and verified by then.
     """
 
     name: str
@@ -71,6 +74,7 @@ class Binary:
     sha256: dict[str, str]
     members: tuple[str, ...]
     config: tuple[str, str] | None = None
+    post_install: tuple[str, ...] = ()
 
 
 CATALOG: dict[str, Binary] = {
@@ -87,7 +91,77 @@ CATALOG: dict[str, Binary] = {
         },
         members=("wt", "git-wt"),
         config=(".config/worktrunk/config.toml", _WORKTRUNK_CONFIG),
+        post_install=("worktree-root", "claude-plugin"),
     ),
+}
+
+
+#: Per-node override for where worktrees physically live. The wt config always
+#: says ~/skworld-worktrees; on a node with a fast work volume (chiap08:
+#: /srv/work on NVMe) that path becomes a symlink to this root instead.
+WORKTREE_ROOT_ENV = "SKFLEET_WORKTREE_ROOT"
+
+#: The worktrunk Claude Code plugin, vendored at the pinned tag (see VENDORED.md).
+CLAUDE_PLUGIN_DIR = Path(__file__).resolve().parents[1] / "data" / "worktrunk-claude-plugin"
+CLAUDE_MARKETPLACE = "sk-worktrunk"
+
+
+def ensure_worktree_root(home: Path, root: str | None = None) -> str:
+    """Make ~/skworld-worktrees exist, as a symlink to SKFLEET_WORKTREE_ROOT if set.
+
+    Never moves or deletes anything: an existing non-empty directory that is
+    not already the requested symlink is left alone and reported.
+
+    Returns:
+        A short note for the install detail.
+    """
+    link = home / "skworld-worktrees"
+    target = (root if root is not None else os.environ.get(WORKTREE_ROOT_ENV, "")).strip()
+    if not target:
+        link.mkdir(parents=True, exist_ok=True)
+        return f"worktree root {link}"
+    dest = Path(target).expanduser()
+    if link.is_symlink() and Path(os.readlink(link)) == dest:
+        return f"worktree root {link} -> {dest}"
+    if link.exists() and not link.is_symlink() and any(link.iterdir()):
+        return f"worktree root {link} is a non-empty dir; NOT relinked to {dest} (move it by hand)"
+    dest.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        link.unlink()
+    elif link.exists():
+        link.rmdir()
+    link.symlink_to(dest)
+    return f"worktree root {link} -> {dest}"
+
+
+def install_claude_plugin(run: Callable = subprocess.run) -> str:
+    """Install the vendored worktrunk plugin into Claude Code, if Claude is here.
+
+    Idempotent: "already added/installed" answers are fine. Returns a note.
+    """
+    claude = shutil.which("claude")
+    if claude is None:
+        return "claude-plugin skipped (no claude on PATH)"
+    if not (CLAUDE_PLUGIN_DIR / ".claude-plugin" / "marketplace.json").is_file():
+        return f"claude-plugin skipped (vendored plugin missing at {CLAUDE_PLUGIN_DIR})"
+    steps = (
+        [claude, "plugin", "marketplace", "add", str(CLAUDE_PLUGIN_DIR), "--scope", "user"],
+        [claude, "plugin", "install", f"worktrunk@{CLAUDE_MARKETPLACE}", "--scope", "user"],
+    )
+    for cmd in steps:
+        try:
+            out = run(cmd, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
+        except Exception as exc:
+            return f"claude-plugin failed: {exc}"
+        text = f"{getattr(out, 'stdout', '')}{getattr(out, 'stderr', '')}".lower()
+        if getattr(out, "returncode", 1) != 0 and "already" not in text:
+            return f"claude-plugin failed at `{' '.join(cmd[1:4])}`: {text.strip()[-200:]}"
+    return f"claude-plugin worktrunk@{CLAUDE_MARKETPLACE} installed"
+
+
+POST_INSTALL: dict[str, Callable[..., str]] = {
+    "worktree-root": lambda home, run: ensure_worktree_root(home),
+    "claude-plugin": lambda home, run: install_claude_plugin(run),
 }
 
 
@@ -154,6 +228,8 @@ def install(
     arch: str | None = None,
     directory: Path | None = None,
     home: Path | None = None,
+    run: Callable = subprocess.run,
+    post_install: bool = True,
 ) -> tuple[str, str]:
     """Download, verify and install one catalog binary (plus its config).
 
@@ -163,7 +239,9 @@ def install(
         fetch: Downloader (url, dest); injected by tests.
         arch: Override `platform.machine()`.
         directory: Bin dir override; defaults to bin_dir().
-        home: $HOME override for the config file.
+        home: $HOME override for the config file and post-install steps.
+        run: subprocess.run-compatible callable for post-install commands.
+        post_install: Run the entry's post-install steps (tests turn it off).
 
     Returns:
         A backend-style (status, detail): ok | would-write | failed.
@@ -213,10 +291,38 @@ def install(
             staged.chmod(0o755)
             os.replace(staged, where / base)  # atomic: a running `wt` keeps its inode
 
+    return "ok", finish(entry, home=home, run=run, post_install=post_install)
+
+
+def finish(
+    entry: Binary,
+    *,
+    home: Path | None = None,
+    run: Callable = subprocess.run,
+    post_install: bool = True,
+) -> str:
+    """Lay down the entry's config and run its post-install steps. Never raises.
+
+    Split out of install() so an operator (or a node whose binary is already
+    at the pin) can converge config + plugins without re-downloading.
+
+    Returns:
+        "; "-joined notes ("" when there was nothing to report).
+    """
+    where = home if home is not None else Path.home()
+    notes: list[str] = []
     if entry.config is not None:
         rel, content = entry.config
-        cfg = (home if home is not None else Path.home()) / rel
+        cfg = where / rel
         if not cfg.exists() or SK_MANAGED in cfg.read_text(encoding="utf-8", errors="replace"):
             cfg.parent.mkdir(parents=True, exist_ok=True)
             cfg.write_text(content, encoding="utf-8")
-    return "ok", ""
+        else:
+            notes.append(f"{cfg} is operator-owned (no {SK_MANAGED!r} marker); left as is")
+    if post_install:
+        for step in entry.post_install:
+            try:
+                notes.append(POST_INSTALL[step](where, run))
+            except Exception as exc:
+                notes.append(f"{step} failed: {exc}")
+    return "; ".join(n for n in notes if n)

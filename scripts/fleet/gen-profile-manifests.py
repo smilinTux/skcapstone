@@ -92,6 +92,11 @@ SEAT_CYCLE_TIMERS = [f"skfleet-{seat}.timer" for seat in ("link", "mero")] + [
     "skfleet-link-producer.timer",
 ]
 
+#: Daily worktrunk worktree GC (docs/fleet/WORKTRUNK.md). Required wherever
+#: agents create worktrees (control, builder-standby); permitted elsewhere.
+WT_GC_UNITS = ["skfleet-wt-gc.service", "skfleet-wt-gc.timer"]
+WT_GC_REQUIRED = ["skfleet-wt-gc.timer"]
+
 #: Seat services the control role permits but does not mandate.
 SEAT_ALLOWED_EXTRA = [f"skfleet-{seat}.service" for seat in ("link", "mero")] + [
     "skfleet-link-producer.service",
@@ -249,8 +254,8 @@ def build_control() -> dict:
                 "Niobe-live timers. " + _IGNORE_RULE + " " + _ADR_LINK
             ),
             "units": _units_block(
-                sorted(set(allowed) | set(SEAT_ALLOWED_EXTRA)),
-                CONTROL_ROLE_REQUIRED,
+                sorted(set(allowed) | set(SEAT_ALLOWED_EXTRA) | set(WT_GC_UNITS)),
+                CONTROL_ROLE_REQUIRED + WT_GC_REQUIRED,
                 MODEL_SERVING + SERIALIZED_SEAT_MUST_NOT + PAUSED_DISPATCHER_MUST_NOT,
             ),
             "unitsIgnore": sorted(DESKTOP_IGNORE),
@@ -278,7 +283,9 @@ def build_builder_standby() -> dict:
                 "source of comms pileups and outbox floods. " + _IGNORE_RULE + " " + _ADR_LINK
             ),
             "units": _units_block(
-                allowed, ["sknoded.service"], sorted(set(CONTROL_PLANE_LOOPS) | set(MODEL_SERVING))
+                sorted(set(allowed) | set(WT_GC_UNITS)),
+                ["sknoded.service"] + WT_GC_REQUIRED,
+                sorted(set(CONTROL_PLANE_LOOPS) | set(MODEL_SERVING)),
             ),
             "unitsIgnore": sorted(DESKTOP_IGNORE),
             "packages": _units_block(load_packages("node-41"), ["skcapstone"], []),
@@ -305,7 +312,7 @@ def build_worker_gpu() -> dict:
                 "reached 83G. " + _IGNORE_RULE + " " + _ADR_LINK
             ),
             "units": _units_block(
-                allowed,
+                sorted(set(allowed) | set(WT_GC_UNITS)),
                 ["skai-beellama.service"],
                 sorted(
                     set(CONTROL_PLANE_LOOPS)

@@ -1,0 +1,10 @@
+# worktrunk project config (docs/fleet/WORKTRUNK.md).
+# Project hooks/aliases run only after approval. Fleet hosts approve them with
+# `sk-wt-gc --approve`, which acts only from a clean main checkout, so a command
+# here changes only through a reviewed merge.
+
+[aliases]
+# Tests in a worktree must import THIS tree, never the editable install that
+# points at the shared checkout (it silently tests the wrong code). A per-branch
+# basetemp keeps concurrent runs from pruning each other's /tmp/pytest-of-$USER.
+test = "PYTHONPATH={{ worktree_path }}/src ~/.skenv/bin/python -m pytest -p no:cacheprovider --basetemp=/tmp/pytest-wt-{{ repo }}-{{ branch | sanitize }} {{ args }}"
