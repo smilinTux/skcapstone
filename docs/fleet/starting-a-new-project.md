@@ -248,7 +248,7 @@ nothing else.
 
 Lane choice is cheapest-first (`qwen`, `glm`, `codex`, `kimi`, `escalate`)
 unless a card pins itself with a lane-only label: `codex-only`, `glm-only`,
-`qwen-only`, `kimi-only`, `escalation-only` (also `kimi`, `kimi-lane`,
+`qwen-only`, `kimi-only`, `claude-only`, `escalation-only` (also `kimi`, `kimi-lane`,
 `kimi-suitable` for the kimi lane, and `glm-first`). Two conflicting
 lane-only labels make the card unroutable
 (`conflicting-lane-only`, `lane_compatibility()`).
