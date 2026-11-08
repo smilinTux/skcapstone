@@ -358,3 +358,68 @@ def test_unreachable_host_is_skipped_alerted_once_and_ring_continues(fleet, tmp_
     assert hosts == ["h1", "h3"]  # h2 skipped, h1/h3 not re-rolled on the second tick
     assert sum(c.startswith("alert") and "h2" in c for c in calls) == 1
     assert not (tmp_path / "state" / "rolled-main").exists()  # h2 still owes the main
+
+
+def _fake_ssh_runs_busy_check_locally(fleet, home: Path, busy_host: str) -> None:
+    """ssh records every call; for the busy-lock probe on `busy_host` it runs the
+    real remote snippet locally against `home`, so the shell logic is tested."""
+    _write_exe(
+        Path(fleet["env"]["SSH_BIN"]),
+        f'echo "ssh $*" >> {fleet["calls"]}\n'
+        'case "$*" in *rollout-busy-locks*) '
+        f'[ "$3" = {busy_host} ] && HOME={home} bash -c "${{@: -1}}" ;; esac\n',
+    )
+
+
+def test_host_with_a_held_busy_lock_is_skipped_and_ring_continues(fleet, tmp_path):
+    """A release gate holding its lane lock must not get a pip install mid-run."""
+    _advance_origin(fleet["origin"])
+    home = tmp_path / "home"
+    (home / ".config/skfleet").mkdir(parents=True)
+    lock = home / "gate-lane1.lock"
+    lock.touch()
+    (home / ".config/skfleet/rollout-busy-locks").write_text(
+        f"# gate lanes\n\n{home}/gate-*.lock\n{home}/absent-*.lock\n"
+    )
+    _fake_ssh_runs_busy_check_locally(fleet, home, "h2")
+    holder = subprocess.Popen(["flock", str(lock), "sleep", "30"])
+    try:
+        for _ in range(50):  # wait until the holder really has the lock
+            if subprocess.run(["flock", "-n", str(lock), "true"]).returncode != 0:
+                break
+            subprocess.run(["sleep", "0.1"])
+        result = _run(fleet["env"])
+    finally:
+        holder.kill()
+        holder.wait()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"h2 is busy ({lock} held)" in result.stdout
+    assert "unreachable or busy, retried next tick: h2" in result.stdout
+    hosts = [
+        c.split("--node ")[1].split()[0] for c in _calls(fleet["calls"]) if c.startswith("rollout")
+    ]
+    assert hosts == ["h1", "h3"]
+    assert not Path(fleet["env"]["SKFLEET_AUTO_ROLLOUT_STATE"]).exists()
+
+
+def test_declared_but_idle_busy_locks_do_not_block(fleet, tmp_path):
+    _advance_origin(fleet["origin"])
+    home = tmp_path / "home"
+    (home / ".config/skfleet").mkdir(parents=True)
+    (home / "gate-lane1.lock").touch()  # exists, nobody holds it
+    (home / ".config/skfleet/rollout-busy-locks").write_text(f"{home}/gate-*.lock\n")
+    _fake_ssh_runs_busy_check_locally(fleet, home, "h2")
+    result = _run(fleet["env"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "is busy" not in result.stdout
+    hosts = [
+        c.split("--node ")[1].split()[0] for c in _calls(fleet["calls"]) if c.startswith("rollout")
+    ]
+    assert hosts == ["h1", "h2", "h3"]
+
+
+def test_ziowk01_is_in_the_default_ring_last():
+    unit = (UNITS / "skfleet-auto-rollout.service").read_text()
+    hosts_line = next(line for line in unit.splitlines() if "SKFLEET_AUTO_ROLLOUT_HOSTS=" in line)
+    assert hosts_line.rstrip('"').split()[-1] == "ziowk01"
+    assert "chiap10 ziowk01}" in SCRIPT.read_text()

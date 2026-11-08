@@ -20,7 +20,7 @@
 set -uo pipefail
 
 REPO="${SKFLEET_AUTO_ROLLOUT_REPO:-$HOME/deploy/skcapstone}"
-HOSTS="${SKFLEET_AUTO_ROLLOUT_HOSTS:-chiap08 chiap03 chiap01 chiap02 chiap04 chiap10}"
+HOSTS="${SKFLEET_AUTO_ROLLOUT_HOSTS:-chiap08 chiap03 chiap01 chiap02 chiap04 chiap10 ziowk01}"
 SKCAPSTONE="${SKCAPSTONE_BIN:-skcapstone}"
 SSH="${SSH_BIN:-ssh}"
 SKMAIL="${SKMAIL_BIN:-skmail}"
@@ -176,6 +176,25 @@ call_active() {
   [ -n "${out//[[:space:]]/}" ]
 }
 
+# A host can declare work a deploy must not land in the middle of: one lock
+# path or glob per line (absolute, no ~) in ~/.config/skfleet/rollout-busy-locks
+# on that host. A lock held by any process (flock -n fails) means busy: the
+# host is skipped this tick and retried on the next, exactly like an
+# unreachable host, and later hosts still roll. ziowk01 lists its release-gate
+# lane locks, because a gate run uses ~/.skenv and a pip install mid-gate can
+# break it. Prints the first held lock; prints nothing when idle or undeclared.
+held_busy_lock() {
+  "$SSH" -o BatchMode=yes "$1" 'f="$HOME/.config/skfleet/rollout-busy-locks"
+    [ -r "$f" ] || exit 0
+    while read -r g; do
+      case "$g" in ""|"#"*) continue ;; esac
+      for l in $g; do
+        [ -e "$l" ] || continue
+        flock -n "$l" true 2>/dev/null || { printf "%s\n" "$l"; exit 0; }
+      done
+    done < "$f"' 2>/dev/null
+}
+
 rolled=()
 skipped=()
 for host in $HOSTS; do
@@ -187,6 +206,11 @@ for host in $HOSTS; do
   if ! reachable "$host"; then
     log "$host unreachable (ssh probe, ${PROBE_TIMEOUT}s); skipping, ring continues"
     alert_unreachable "$host"
+    skipped+=("$host")
+    continue
+  fi
+  if busy=$(held_busy_lock "$host") && [ -n "$busy" ]; then
+    log "$host is busy ($busy held); skipping main ${target:0:8} there this tick, ring continues"
     skipped+=("$host")
     continue
   fi
@@ -222,7 +246,7 @@ done
 
 if [ "${#skipped[@]}" -gt 0 ]; then
   # Do not record the main as rolled: skipped hosts must catch up next tick.
-  log "PARTIAL main ${target:0:8}: rolled ${rolled[*]:-none}; unreachable, retried next tick: ${skipped[*]}"
+  log "PARTIAL main ${target:0:8}: rolled ${rolled[*]:-none}; unreachable or busy, retried next tick: ${skipped[*]}"
   exit 0
 fi
 

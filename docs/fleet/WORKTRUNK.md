@@ -46,6 +46,13 @@ at the pin, converge the config, root and plugin with:
 skfleet binary-setup wt
 ```
 
+A rollout does this for you. Its last deploy step, `converge_profile`
+(`python -m skcapstone.fleet.profile_converge`), runs `install --apply --enable --start`
+for the node's profile and then the config and post-install steps for every required
+binary already at its pin. It is skipped on a frozen fleet and on a node without the
+actuation opt-in, and it never fails the deploy by itself: the drift gate that follows
+decides. So a new required binary or timer reaches every opted-in node with its code.
+
 A drift report (`skfleet node doctor`, `skfleet install --check`) shows
 `missing_required_binaries: wt` when it is absent **or at another version**: bumping the pin
 in `binaries.py` is the upgrade path.
