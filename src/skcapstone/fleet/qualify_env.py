@@ -53,8 +53,8 @@ from pathlib import Path
 from .paths import paths_for_home, self_node_name
 from .qualified_runtime import (
     STATE_NAME,
-    qualification_applies,
     missing_dependencies,
+    qualification_applies,
     qualify_prefix,
 )
 
