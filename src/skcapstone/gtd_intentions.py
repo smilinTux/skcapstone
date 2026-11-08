@@ -3,9 +3,9 @@
 ``gtd capture --due/--remind`` and the waiting-for sweep create skmemory time
 intentions; ``gtd next`` / ``gtd waiting`` list the overdue ones.
 
-skmemory is imported lazily, at call time, and never at module import: the
-fleet pins ``skmemory==0.11.75`` (deploy/fleet-constraints.txt), which predates
-intentions, and a pyproject floor must never exceed its pin. When the module is
+skmemory is imported lazily, at call time, and never at module import, so an
+install whose skmemory predates intentions (the fleet pin is in
+deploy/fleet-constraints.txt; 0.11.156 ships them) still imports. When the module is
 absent every writer raises :class:`IntentionsUnavailableError` (callers turn that into
 a clear error that never loses the already-captured GTD item) and every reader
 returns an empty list (the section is simply omitted).

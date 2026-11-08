@@ -171,84 +171,39 @@ def _compute_seed_hash(data: dict) -> str:
 
 
 def vector_index_seed(memory: "Memory") -> bool:
-    """Index a memory in SKVector (Qdrant) if available.
+    """Retired: SKVector (Qdrant) indexing no longer exists.
 
-    Attempts to connect to the vector backend using skmemory's
-    configuration resolution (CLI > env > config file). If the
-    vector backend is unreachable or dependencies are missing,
-    logs a debug message and returns False without raising.
+    skmemory 0.11.156 removed the SKVector backend. Vectors now live in the
+    node-local skmem-pg and are rebuilt from the flat files by
+    ``skmemory sync --vector``, so there is nothing to index here. Kept so
+    callers and the ``auto_vector_index`` sync flag keep working.
 
     Args:
-        memory: The Memory object to index (already saved to SQLite).
+        memory: The Memory object (unused).
 
     Returns:
-        True if the memory was successfully indexed, False otherwise.
+        Always False.
     """
-    try:
-        from skmemory.backends.skvector_backend import SKVectorBackend
-        from skmemory.config import merge_env_and_config
-    except ImportError:
-        logger.debug("skmemory vector backend not importable - skipping vector index")
-        return False
-
-    try:
-        skvector_url, skvector_key, _ = merge_env_and_config()
-        if not skvector_url:
-            logger.debug("No SKVector URL configured - skipping vector index")
-            return False
-
-        backend = SKVectorBackend(url=skvector_url, api_key=skvector_key)
-        backend.save(memory)
-        logger.debug("Indexed memory %s in SKVector", memory.id)
-        return True
-    except Exception as exc:
-        logger.debug(
-            "SKVector indexing failed for memory %s: %s - continuing without vector index",
-            memory.id,
-            exc,
-        )
-        return False
+    logger.debug("SKVector backend retired - skipping vector index for %s", memory.id)
+    return False
 
 
 def graph_index_seed(memory: "Memory") -> bool:
-    """Index a memory in SKGraph (FalkorDB) if available.
+    """Retired: SKGraph (FalkorDB) indexing no longer exists.
 
-    Attempts to connect to the graph backend using skmemory's
-    configuration resolution (CLI > env > config file). If the
-    graph backend is unreachable or dependencies are missing,
-    logs a debug message and returns False without raising.
+    skmemory 0.11.156 removed the SKGraph backend. The graph now lives in the
+    node-local skmem-pg (Apache AGE) and is rebuilt by
+    ``skmemory sync --graph``. Kept so callers and the ``auto_graph_index``
+    sync flag keep working.
 
     Args:
-        memory: The Memory object to index (already saved to SQLite).
+        memory: The Memory object (unused).
 
     Returns:
-        True if the memory was successfully indexed, False otherwise.
+        Always False.
     """
-    try:
-        from skmemory.backends.skgraph_backend import SKGraphBackend
-        from skmemory.config import merge_env_and_config
-    except ImportError:
-        logger.debug("skmemory graph backend not importable - skipping graph index")
-        return False
-
-    try:
-        _, _, skgraph_url = merge_env_and_config()
-        if not skgraph_url:
-            logger.debug("No SKGraph URL configured - skipping graph index")
-            return False
-
-        backend = SKGraphBackend(url=skgraph_url)
-        result = backend.index_memory(memory)
-        if result:
-            logger.debug("Indexed memory %s in SKGraph", memory.id)
-        return result
-    except Exception as exc:
-        logger.debug(
-            "SKGraph indexing failed for memory %s: %s - continuing without graph index",
-            memory.id,
-            exc,
-        )
-        return False
+    logger.debug("SKGraph backend retired - skipping graph index for %s", memory.id)
+    return False
 
 
 def import_seed_to_memory(seed_path: Path, home: Path) -> Optional[str]:
