@@ -83,6 +83,8 @@
         "skfleet-link.timer",
         "skfleet-mero.service",
         "skfleet-mero.timer",
+        "skfleet-wt-gc.service",
+        "skfleet-wt-gc.timer",
         "skgateway.service",
         "skingest-maintain.timer",
         "sknoded.service",
@@ -115,6 +117,7 @@
         "skfleet-link-producer.timer",
         "skfleet-link.timer",
         "skfleet-mero.timer",
+        "skfleet-wt-gc.timer",
         "skgateway.service",
         "sknoded.service",
         "skoperator.timer"

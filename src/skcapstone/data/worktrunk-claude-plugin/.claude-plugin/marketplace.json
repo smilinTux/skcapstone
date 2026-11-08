@@ -1,0 +1,17 @@
+{
+  "name": "sk-worktrunk",
+  "owner": {
+    "name": "Worktrunk",
+    "email": "m@maxroos.com"
+  },
+  "metadata": {
+    "description": "Worktrunk Claude Code plugin vendored at v0.81.0 by skcapstone (pinned; matches binaries.CATALOG['wt'])"
+  },
+  "plugins": [
+    {
+      "name": "worktrunk",
+      "description": "Worktrunk is a CLI for Git worktree management, designed for parallel AI agent workflows. This plugin provides configuration guidance (LLM commit messages, project hooks, worktree paths) and automatic activity tracking (🤖/💬 indicators in `wt list` showing active Claude sessions).",
+      "source": "./plugins/worktrunk"
+    }
+  ]
+}

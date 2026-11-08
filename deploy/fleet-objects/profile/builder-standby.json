@@ -59,6 +59,8 @@
         "skcomms-heartbeat.timer",
         "skcomms-housekeep.timer",
         "skcomms.service",
+        "skfleet-wt-gc.service",
+        "skfleet-wt-gc.timer",
         "skhousekeep.timer",
         "sknoded.service",
         "sksso-pg-backup.timer",
@@ -79,6 +81,7 @@
         "whisper-stt.service"
       ],
       "required": [
+        "skfleet-wt-gc.timer",
         "sknoded.service"
       ]
     },

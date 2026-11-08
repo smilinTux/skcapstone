@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Squash-aware worktree GC with worktrunk (skfleet binaries: wt).
 #
-# Usage: wt-gc.sh [--apply] [--no-fetch] REPO...
-#        wt-gc.sh [--apply] [--no-fetch] --discover ROOT...   (find main repos that have linked worktrees)
+# Usage: sk-wt-gc [--apply] [--no-fetch] [--approve] REPO...
+#        sk-wt-gc [--apply] [--no-fetch] [--approve] --discover ROOT...   (find main repos that have linked worktrees)
 #
 # Dry run by default. Removes only worktrees that are:
 #   integrated into the default branch (worktrunk: tree match / simulated merge / patch-id),
@@ -13,16 +13,20 @@
 # a reason instead, for a human to look at.
 # --no-fetch skips `git fetch`. That is the safe direction: a stale default branch can only
 # make FEWER worktrees read as integrated. Use it on loaded hosts.
+# --approve pre-approves a repo's project hooks (.config/wt.toml) for non-interactive agents,
+# but ONLY from a main checkout sitting on its default branch, i.e. hooks that went through a
+# reviewed merge. A feature branch can never get its own new hook commands approved this way.
 #
 # Worker hosts whose workspaces are custody evidence need an explicit operator decision
 # before --apply (chiap08: Chef approved 2026-11-07).
 set -uo pipefail
-APPLY=0 FETCH=1 DISCOVER=0
+APPLY=0 FETCH=1 DISCOVER=0 APPROVE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --apply) APPLY=1 ;;
     --no-fetch) FETCH=0 ;;
     --discover) DISCOVER=1 ;;
+    --approve) APPROVE=1 ;;
     *) break ;;
   esac
   shift
@@ -61,6 +65,15 @@ for repo in "${repos[@]}"; do
   done <<<"$dead"
   [ $APPLY = 1 ] && [ "$np" -gt 0 ] && git worktree prune
   [ $FETCH = 1 ] && timeout 120 git fetch -q origin 2>/dev/null
+  if [ $APPROVE = 1 ] && [ -f .config/wt.toml ]; then
+    def=$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); def=${def#origin/}
+    cur=$(git branch --show-current)
+    if [ -n "$def" ] && [ "$cur" = "${def}" ] && [ -z "$(git status --porcelain -- .config/wt.toml)" ]; then
+      timeout 60 "$WT" config approvals add --yes >/dev/null 2>&1 && echo "  approved project hooks ($cur)"
+    else
+      echo "  approve skipped: not a clean main checkout on ${def:-?} (on ${cur:-detached})"
+    fi
+  fi
   NO_COLOR=1 timeout 600 "$WT" list --format=json 2>/dev/null | python3 -I -c '
 import json, sys
 try:

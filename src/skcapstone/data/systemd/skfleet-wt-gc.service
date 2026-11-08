@@ -1,0 +1,18 @@
+[Unit]
+Description=SKFleet worktree GC (worktrunk: remove integrated, clean, unused worktrees; prune dead entries)
+Documentation=https://github.com/smilinTux/skcapstone/blob/main/docs/fleet/WORKTRUNK.md
+OnFailure=skcapstone-alert@skfleet-wt-gc.service
+
+[Service]
+Type=oneshot
+# Low priority: on a loaded builder this must never compete with agent work.
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=4h
+Environment=PATH=%h/.local/bin:%h/.skenv/bin:/usr/local/bin:/usr/bin:/bin
+# Roots to discover repos (with linked worktrees) under. Override per node in the
+# optional env file, e.g. chiap08: WT_GC_ROOTS="%h /srv/work".
+Environment="WT_GC_ROOTS=%h/clawd/skcapstone-repos %h/skworld-worktrees %h/.codex/worktrees %h/worktrees"
+Environment=WT_GC_FLAGS=--no-fetch
+EnvironmentFile=-%h/.config/skfleet/wt-gc.env
+ExecStart=/usr/bin/env bash -c 'exec sk-wt-gc --apply --approve $WT_GC_FLAGS --discover $WT_GC_ROOTS'

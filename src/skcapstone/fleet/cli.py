@@ -247,6 +247,33 @@ def placements_cmd(kind: str | None, as_json: bool) -> None:
         )
 
 
+@fleet.command("binary-setup")
+@click.argument("name")
+def binary_setup_cmd(name: str) -> None:
+    """Converge a pinned binary's config and post-install steps (no download).
+
+    `install --apply` only reaches a binary that is missing or off-pin, so a
+    node already at the pin never re-runs its config and post-install steps.
+    This does exactly those, idempotently. Operator-scoped, like a hand
+    install: it is NOT gated by the fleet freeze, and touches only this user's
+    files (the wt config, ~/skworld-worktrees, the Claude Code plugin).
+    """
+    from . import binaries
+
+    entry = binaries.CATALOG.get(name)
+    if entry is None:
+        raise click.ClickException(
+            f"{name}: not in the binaries catalog (known: {sorted(binaries.CATALOG)})"
+        )
+    observed = binaries.probe([name]).get(name)
+    if observed != entry.version:
+        raise click.ClickException(
+            f"{name}: installed version {observed!r} is not the pin {entry.version!r}; "
+            "run `skfleet install --apply --only " + name + "` first"
+        )
+    click.echo(binaries.finish(entry) or "nothing to report")
+
+
 @fleet.command("cordon")
 @click.argument("name")
 def cordon_cmd(name: str) -> None:
