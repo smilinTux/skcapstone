@@ -175,7 +175,11 @@ _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
     ("git_pull", "git -C {repo} pull"),
     (
         "pip_install",
-        "cd {repo} && pip install -c deploy/fleet-constraints.txt '.[fleet-qualify]'",
+        # `-r` as well as `-c`: a pin on a package outside `.[fleet-qualify]`
+        # (skwhisper) is otherwise never upgraded, and the parity gate below
+        # then halts every rollout of that bump (chiap03, 2026-11-08).
+        "cd {repo} && pip install -c deploy/fleet-constraints.txt "
+        "-r deploy/fleet-constraints.txt '.[fleet-qualify]'",
     ),
     ("verify_dependency_parity", _PARITY_CHECK),
     (
@@ -236,7 +240,8 @@ _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
         "pip_install",
         # A revision older than the constraints file installs unconstrained, as before.
         "cd {repo} && if test -f deploy/fleet-constraints.txt; then "
-        "pip install -c deploy/fleet-constraints.txt '.[fleet-qualify]'; "
+        "pip install -c deploy/fleet-constraints.txt "
+        "-r deploy/fleet-constraints.txt '.[fleet-qualify]'; "
         "else pip install '.[fleet-qualify]'; fi",
     ),
     ("verify_dependency_parity", _PARITY_CHECK),

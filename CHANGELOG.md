@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A fleet pin outside `.[fleet-qualify]` could never roll out.** The rollout
+  install step used the pins file only as `-c` constraints, so a bump of a
+  package the extra does not pull in (skwhisper 0.6.4 to 0.6.5) was never
+  installed and `verify_dependency_parity` halted the canary every time. The
+  deploy and rollback install steps now also pass it as `-r`, so every pinned
+  package lands at its exact pin.
+
 - **skfleet could not install anything that is not a Python package or a
   systemd unit.** Install profiles gain `spec.binaries {required, allowed,
   mustNot}`, backed by a catalog pinned in code (`fleet/binaries.py`: exact
