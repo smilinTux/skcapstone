@@ -62,7 +62,6 @@ def qualification_applies(home: Path, host: str | None = None) -> bool:
     its role decides (the readiness gate's long-standing behaviour).
     """
     from .paths import paths_for_home
-    from .production_policy import can_receive_qualified_work
 
     try:
         from . import store
