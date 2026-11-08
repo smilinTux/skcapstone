@@ -123,7 +123,7 @@ def production_environment_error(
 
 
 def qualification_sandbox_applies() -> bool:
-    """Whether this host's node role runs qualified work (builder-standby or control).
+    """Whether this host must pass the sandbox gate (role requires it, or placement could).
 
     Keyed on the admitted node role, not on any paused dispatcher unit. A node
     with no admitted spec or role does not run qualified work (False). A spec
@@ -141,17 +141,16 @@ def qualification_sandbox_applies() -> bool:
         role = ((spec or {}).get("spec") or {}).get("role")
     except Exception:
         return True
-    if role not in ("builder-standby", "control"):
-        return False
-    # A node whose role qualifies but which production.json does not authorize
-    # as a worker destination is never handed qualified work (WSL has no
-    # AppArmor at all). Older installed packages lack the helper: role only.
-    try:
-        from skcapstone.fleet.qualified_runtime import is_qualification_host
-
-        return is_qualification_host(Path.home(), node)
-    except ImportError:
+    if role in ("builder-standby", "control"):
         return True
+    # Role never exempts: a node that production.json could still place work on
+    # keeps the sandbox gate. Older installed packages lack the helper: role only.
+    try:
+        from skcapstone.fleet.qualified_runtime import qualification_applies
+
+        return qualification_applies(Path.home(), node)
+    except ImportError:
+        return False
 
 
 def qualification_python() -> str:

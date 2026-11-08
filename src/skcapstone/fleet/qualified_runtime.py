@@ -1,6 +1,7 @@
 """Shared qualified-tool inventory and read-only target-prefix diagnostics."""
 
 import json
+import socket
 import sys
 from pathlib import Path
 
@@ -44,54 +45,39 @@ def missing_dependencies(prefix: Path) -> list[str]:
     return missing
 
 
-def _bare(host: str) -> str:
-    """``node-chiap02`` and ``chiap02.tail.net`` both name host ``chiap02``."""
-    return host.removeprefix("node-").split(".")[0].lower()
+def _dispatch_host() -> str:
+    """The host name dispatch paths compare against (not SKFLEET_NODE)."""
+    return socket.gethostname().split(".")[0].lower()
 
 
-def is_qualification_host(home: Path, host: str) -> bool:
-    """Say whether ``host`` is an authorized worker destination.
+def qualification_applies(home: Path, host: str | None = None) -> bool:
+    """Whether this node must carry the qualification sandbox.
 
-    Mirrors ``production_policy.require_destination``: a host is a destination
-    when it has a ``node_quotas`` entry and, if the policy names
-    ``worker_destinations``, appears in that list too. A host that is not one
-    can never be handed qualified work, so it has no use for the qualify-env
-    prefix, the AppArmor bwrap profile or the pinned Node.
-
-    Fails closed: a missing, unreadable or unrecognisable policy answers True.
+    Role can REQUIRE the sandbox (``builder-standby`` or ``control``) but never
+    exempts: a node is exempt only when ``can_receive_qualified_work`` says no
+    dispatch path could hand it qualified work, checked under both the dispatch
+    host resolution and ``host`` (the SKFLEET_NODE-overridable name). A
+    production.json that exists but cannot be read or parsed fails closed. A
+    host with no production.json has no production placement at all, so only
+    its role decides (the readiness gate's long-standing behaviour).
     """
     from .paths import paths_for_home
-
-    try:
-        policy = json.loads((paths_for_home(home).root / "production.json").read_bytes())
-        quotas = policy["node_quotas"]
-        destinations = policy.get("worker_destinations", quotas)
-        if not isinstance(quotas, dict) or not isinstance(destinations, (list, dict)):
-            return True
-        name = _bare(host)
-        return name in quotas and name in destinations
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return True
-
-
-def qualification_applies(home: Path, host: str) -> bool:
-    """Whether ``host`` must carry the qualification sandbox.
-
-    Both must hold: the admitted node role runs qualified work
-    (``builder-standby`` or ``control``, the same rule the readiness gate
-    applies; no admitted spec means no qualified work) and the production
-    policy authorizes the host as a worker destination. Either answer being
-    undeterminable counts as "applies", so an unknown role is never exempted.
-    """
-    from .paths import paths_for_home
+    from .production_policy import can_receive_qualified_work
 
     try:
         from . import store
 
-        spec = store.read_spec(paths_for_home(home), "node", "node-" + _bare(host))
+        spec = store.read_spec(paths_for_home(home), "node", "node-" + _dispatch_host())
         role = ((spec or {}).get("spec") or {}).get("role")
     except Exception:
         return True
-    if role not in ("builder-standby", "control"):
+    if role in ("builder-standby", "control"):
+        return True
+    try:
+        policy = json.loads((paths_for_home(home).root / "production.json").read_bytes())
+    except FileNotFoundError:
         return False
-    return is_qualification_host(home, host)
+    except (OSError, ValueError):
+        return True
+    names = {_dispatch_host(), *([host] if host else [])}
+    return any(can_receive_qualified_work(policy, name) for name in names)

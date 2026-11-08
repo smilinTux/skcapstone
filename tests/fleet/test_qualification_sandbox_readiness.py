@@ -81,15 +81,12 @@ def test_seat_host_checks_sandbox_even_with_inactive_authority_timer(tmp_path, m
     assert "FAIL qualification sandbox: net_admin denied" in verdict.read_text()
 
 
-def test_rollout_installs_only_shipped_profile_and_preserves_preimage(
-    tmp_path, monkeypatch, declare_qualifying
-):
+def test_rollout_installs_only_shipped_profile_and_preserves_preimage(tmp_path, monkeypatch):
     """Root installation remains in the rollout, without changing global sysctls."""
     repo, home = tmp_path / "repo", tmp_path / "home"
     policy = home / ".skcapstone/fleet/production.json"
     policy.parent.mkdir(parents=True)
     policy.write_text("{}")
-    declare_qualifying(home)
     source = repo / "systemd/apparmor/skfleet-bwrap"
     source.parent.mkdir(parents=True)
     source.write_bytes(b"new managed profile\n")
@@ -114,9 +111,7 @@ def test_rollout_installs_only_shipped_profile_and_preserves_preimage(
     )
 
 
-def test_missing_profile_does_not_invoke_privileged_commands(
-    tmp_path, monkeypatch, declare_qualifying
-):
+def test_missing_profile_does_not_invoke_privileged_commands(tmp_path, monkeypatch):
     """Never synthesize policy bytes if a checkout is incomplete."""
     monkeypatch.setattr(
         rollout_artifacts.subprocess,
@@ -127,7 +122,6 @@ def test_missing_profile_does_not_invoke_privileged_commands(
     policy = home / ".skcapstone/fleet/production.json"
     policy.parent.mkdir(parents=True)
     policy.write_text("{}")
-    declare_qualifying(home)
     with pytest.raises(FileNotFoundError):
         rollout_artifacts.install_sandbox_profile(tmp_path, home)
 

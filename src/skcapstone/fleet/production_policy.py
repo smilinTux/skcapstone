@@ -223,6 +223,52 @@ def validate_execution_policy(value: dict) -> None:
         raise ValueError("enabled remote review requires complete execution policy")
 
 
+def _name_keys(name: object) -> set[str]:
+    """Exact spelling plus the loose forms a dispatcher or operator might use."""
+    if not isinstance(name, str):
+        return set()
+    loose = name.strip().lower().split(".")[0].removeprefix("node-")
+    return {name, loose}
+
+
+def can_receive_qualified_work(policy: object, host: str) -> bool:
+    """Whether ``host`` could be handed qualified (sealed or native) work.
+
+    The single answer the qualification-sandbox gate uses to decide a host may
+    be exempt. It is the union of every placement list a dispatch path reads:
+    ``node_quotas`` (``production_dispatch``, ``production_test_plan``,
+    ``builder_dispatch``), ``worker_destinations`` (``require_destination``),
+    ``remote_review.destinations``, ``node_admission`` and ``authority_host``
+    (the default ``execution_host``). Role is deliberately not consulted:
+    several dispatch paths never check it.
+
+    Deliberately conservative: a name matches if it is equal exactly OR after
+    strip/lower/domain/``node-`` normalisation, so a case-variant key is never
+    mistaken for absence. Any malformed shape answers True (fail closed).
+    """
+    if not isinstance(policy, dict) or not isinstance(host, str) or not host:
+        return True
+    if "node_quotas" not in policy:
+        return True  # not a recognisable production policy
+    names: list[object] = [policy.get("authority_host")]
+    for key in ("node_quotas", "node_admission"):
+        value = policy.get(key, {})
+        if not isinstance(value, dict):
+            return True
+        names.extend(value)
+    destinations = policy.get("worker_destinations", [])
+    review = policy.get("remote_review") or {}
+    if not isinstance(destinations, (list, dict)) or not isinstance(review, dict):
+        return True
+    names.extend(destinations)
+    review_hosts = review.get("destinations", [])
+    if not isinstance(review_hosts, (list, dict)):
+        return True
+    names.extend(review_hosts)
+    wanted = _name_keys(host)
+    return any(wanted & _name_keys(name) for name in names)
+
+
 def require_destination(value: dict, host: str) -> dict:
     """Enforce explicit placement even when a stale quota still exists."""
     quotas = value.get("node_quotas", {})

@@ -240,9 +240,7 @@ def test_sealed_commands_prefer_local_node_without_changing_prefix_priority(tmp_
     )
 
 
-def test_production_readiness_and_drift_use_shared_sandbox_gate(
-    tmp_path, monkeypatch, capsys, declare_qualifying
-):
+def test_production_readiness_and_drift_use_shared_sandbox_gate(tmp_path, monkeypatch, capsys):
     from skcapstone.fleet import rollout_drift
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/fleet"))
@@ -276,7 +274,6 @@ def test_production_readiness_and_drift_use_shared_sandbox_gate(
     marker = home / ".skcapstone/fleet/production.json"
     marker.parent.mkdir(parents=True)
     marker.write_text("{}")
-    declare_qualifying(home)
     monkeypatch.setattr(
         rollout_drift,
         "_load_readiness_module",

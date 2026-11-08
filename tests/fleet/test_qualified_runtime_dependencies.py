@@ -77,13 +77,12 @@ def test_missing_tools_probe_uses_the_target_prefix(tmp_path):
 
 @pytest.mark.parametrize("module", ["pytest_asyncio", "skharness"])
 def test_production_drift_and_rollout_gate_cannot_hide_missing_tools(
-    tmp_path, monkeypatch, module, declare_qualifying
+    tmp_path, monkeypatch, module
 ):
     home = tmp_path / "home"
     policy = home / ".skcapstone/fleet/production.json"
     policy.parent.mkdir(parents=True)
     policy.write_text("{}")
-    declare_qualifying(home)
     observer = SimpleNamespace(
         unit_in_scope=lambda _: (False, None, "fixture"),
         _systemctl_show_value=lambda *args: ("inactive", None),
@@ -191,7 +190,8 @@ def test_dashboard_dependency_is_pinned_in_the_governed_install_extra():
     matches = [item for item in requirements if item.name == "skharness"]
     assert len(matches) == 1
     assert matches[0].url == (
-        "git+https://github.com/smilinTux/skharness.git@7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e"
+        "git+https://github.com/smilinTux/skharness.git@"
+        "7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e"
     )
 
 
