@@ -56,7 +56,7 @@ from .deployment_manifest import (
     production_script_bytes,
 )
 from .paths import paths_for_home, self_node_name
-from .qualified_runtime import is_qualification_host, missing_dependencies, qualify_prefix
+from .qualified_runtime import missing_dependencies, qualification_applies, qualify_prefix
 from .rollout_artifacts import unit_source_path
 
 #: Not in the shipped systemd/ tree (see the module docstring: the dispatcher
@@ -514,7 +514,7 @@ def detect_drift(manifest: dict[str, Any], home: Path | str, repo_root: Path | s
     drifts: list[Drift] = []
     # Layout (production shims and units) follows production.json; the
     # qualification sandbox only follows a host that is a worker destination.
-    qualifies = production and is_qualification_host(home, host)
+    qualifies = production and qualification_applies(home, host)
     if qualifies:
         qualify = qualify_prefix(home)
         drifts.extend(

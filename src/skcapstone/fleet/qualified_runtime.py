@@ -44,18 +44,21 @@ def missing_dependencies(prefix: Path) -> list[str]:
     return missing
 
 
+def _bare(host: str) -> str:
+    """``node-chiap02`` and ``chiap02.tail.net`` both name host ``chiap02``."""
+    return host.removeprefix("node-").split(".")[0].lower()
+
+
 def is_qualification_host(home: Path, host: str) -> bool:
-    """Say whether ``host`` runs governed qualification (needs the sandbox).
+    """Say whether ``host`` is an authorized worker destination.
 
-    Mirrors ``production_policy.require_destination``: a host is a worker
-    destination when it has a ``node_quotas`` entry and, if the policy names
-    ``worker_destinations``, appears in that list too. Only such hosts need
-    the qualify-env prefix, AppArmor bwrap profile and pinned Node, so a light
-    node or a daily-driver workstation that carries ``production.json`` for
-    the installed layout is not graded on them.
+    Mirrors ``production_policy.require_destination``: a host is a destination
+    when it has a ``node_quotas`` entry and, if the policy names
+    ``worker_destinations``, appears in that list too. A host that is not one
+    can never be handed qualified work, so it has no use for the qualify-env
+    prefix, the AppArmor bwrap profile or the pinned Node.
 
-    Fails closed: a missing, unreadable or unrecognisable policy answers True,
-    so an undetermined role is checked, never silently exempted.
+    Fails closed: a missing, unreadable or unrecognisable policy answers True.
     """
     from .paths import paths_for_home
 
@@ -65,6 +68,30 @@ def is_qualification_host(home: Path, host: str) -> bool:
         destinations = policy.get("worker_destinations", quotas)
         if not isinstance(quotas, dict) or not isinstance(destinations, (list, dict)):
             return True
-        return host in quotas and host in destinations
+        name = _bare(host)
+        return name in quotas and name in destinations
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return True
+
+
+def qualification_applies(home: Path, host: str) -> bool:
+    """Whether ``host`` must carry the qualification sandbox.
+
+    Both must hold: the admitted node role runs qualified work
+    (``builder-standby`` or ``control``, the same rule the readiness gate
+    applies; no admitted spec means no qualified work) and the production
+    policy authorizes the host as a worker destination. Either answer being
+    undeterminable counts as "applies", so an unknown role is never exempted.
+    """
+    from .paths import paths_for_home
+
+    try:
+        from . import store
+
+        spec = store.read_spec(paths_for_home(home), "node", "node-" + _bare(host))
+        role = ((spec or {}).get("spec") or {}).get("role")
+    except Exception:
+        return True
+    if role not in ("builder-standby", "control"):
+        return False
+    return is_qualification_host(home, host)

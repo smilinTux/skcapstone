@@ -141,7 +141,17 @@ def qualification_sandbox_applies() -> bool:
         role = ((spec or {}).get("spec") or {}).get("role")
     except Exception:
         return True
-    return role in ("builder-standby", "control")
+    if role not in ("builder-standby", "control"):
+        return False
+    # A node whose role qualifies but which production.json does not authorize
+    # as a worker destination is never handed qualified work (WSL has no
+    # AppArmor at all). Older installed packages lack the helper: role only.
+    try:
+        from skcapstone.fleet.qualified_runtime import is_qualification_host
+
+        return is_qualification_host(Path.home(), node)
+    except ImportError:
+        return True
 
 
 def qualification_python() -> str:

@@ -53,7 +53,7 @@ from pathlib import Path
 from .paths import paths_for_home, self_node_name
 from .qualified_runtime import (
     STATE_NAME,
-    is_qualification_host,
+    qualification_applies,
     missing_dependencies,
     qualify_prefix,
 )
@@ -615,7 +615,7 @@ def main(argv: list[str] | None = None) -> int:
         if (
             args.command == "build"
             and (paths_for_home(Path.home()).root / "production.json").is_file()
-            and not is_qualification_host(Path.home(), self_node_name())
+            and not qualification_applies(Path.home(), self_node_name())
         ):
             print(json.dumps({"skipped": "not a worker destination"}, sort_keys=True))
             return 0

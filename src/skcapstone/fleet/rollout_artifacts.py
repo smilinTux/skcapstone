@@ -37,10 +37,10 @@ def install_sandbox_profile(repo_root: Path, home: Path) -> None:
     try:
         # Lazy: this file also runs from a cache against a package that
         # predates the module (rollback), where the old behaviour applies.
-        from skcapstone.fleet.qualified_runtime import is_qualification_host
+        from skcapstone.fleet.qualified_runtime import qualification_applies
     except ImportError:
-        is_qualification_host = None
-    if is_qualification_host and not is_qualification_host(home, self_node_name()):
+        qualification_applies = None
+    if qualification_applies and not qualification_applies(home, self_node_name()):
         return  # not a worker destination: no qualification sandbox here
     source = repo_root / "systemd/apparmor/skfleet-bwrap"
     if source.is_symlink() or SANDBOX_PROFILE_TARGET.is_symlink():
