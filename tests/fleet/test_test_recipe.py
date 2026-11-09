@@ -22,8 +22,9 @@ BASE_RECIPE = {
 
 
 def _site(prefix: Path) -> Path:
-    version = f"python{sys.version_info.major}.{sys.version_info.minor}"
-    return prefix / "lib" / version / "site-packages"
+    from skcapstone.fleet.qualified_runtime import prefix_site
+
+    return prefix_site(prefix)
 
 
 def test_runtime_fingerprint_tracks_changed_installed_bytes(qualified_runtime):
