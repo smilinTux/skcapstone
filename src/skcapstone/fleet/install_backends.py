@@ -208,7 +208,14 @@ def default_backends(runner: Callable = subprocess.run) -> dict[str, Callable]:
                 str(unit_dir / name),
             ]
             for name in _core_unit_names(names)
-            if ships_core_unit(name)
+            # Install only what is absent. An existing unit file is never
+            # rewritten here: its contents belong to the rollout's canonical
+            # unit step (which applies the systemd/production overlay) and to
+            # the drift gate. Overwriting it with the packaged base copy, on a
+            # stale "missing" from a lagging inventory, stripped
+            # SKFLEET_PRODUCTION_POLICY from sknoded.service on every
+            # production node the rollout reached (chi, 2026-11-09).
+            if ships_core_unit(name) and not (unit_dir / name).exists()
         ]
 
     def _install_core_units(names: list[str]) -> tuple[str, str]:
