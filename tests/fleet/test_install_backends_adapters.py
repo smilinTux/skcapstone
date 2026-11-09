@@ -214,7 +214,10 @@ def test_core_backend_skips_systemctl_enable_in_dry_run():
     assert runner.calls == []
 
 
-def test_core_dry_run_reports_install_reload_enable_and_start_without_mutation():
+def test_core_dry_run_reports_install_reload_enable_and_start_without_mutation(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     runner = _FakeRunner()
     backend = default_backends(runner=runner)["core"]
     status, detail = backend(["skcapstone.service"], dry_run=True, enable=True, start=True)
@@ -303,3 +306,43 @@ def test_repos_root_honors_skcapstone_repos_env_override(monkeypatch):
     b["packages"](["capauth"], dry_run=False, enable=False, start=False)
     cmd = " ".join(map(str, runner.calls[0]))
     assert "/opt/custom-repos/skcapstone/scripts/install.sh" in cmd
+
+
+def test_core_backend_never_overwrites_an_existing_unit(monkeypatch, tmp_path):
+    """A stale "missing" must not replace a unit the rollout already installed.
+
+    On production nodes the installed sknoded.service is the systemd/production
+    overlay; the packaged base copy lacks SKFLEET_PRODUCTION_POLICY.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config/systemd/user"
+    unit_dir.mkdir(parents=True)
+    overlay = b"[Service]\nEnvironment=SKFLEET_PRODUCTION_POLICY=x\n"
+    (unit_dir / "sknoded.service").write_bytes(overlay)
+    runner = _FakeRunner()
+
+    status, _ = default_backends(runner=runner)["core"](
+        ["sknoded.service"], dry_run=False, enable=True, start=True
+    )
+
+    assert status == "ok"
+    assert not [c for c in runner.calls if c[:1] == ["install"]]
+    assert ["systemctl", "--user", "daemon-reload"] not in runner.calls
+    assert ["systemctl", "--user", "enable", "sknoded.service"] in runner.calls
+    assert (unit_dir / "sknoded.service").read_bytes() == overlay
+
+
+def test_core_backend_still_installs_the_absent_half_of_a_timer_pair(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config/systemd/user"
+    unit_dir.mkdir(parents=True)
+    (unit_dir / "skfleet-link.service").write_text("[Service]\n")
+    runner = _FakeRunner()
+
+    default_backends(runner=runner)["core"](
+        ["skfleet-link.timer"], dry_run=False, enable=False, start=False
+    )
+
+    targets = [c[5] for c in runner.calls if c[:1] == ["install"]]
+    assert targets == [str(unit_dir / "skfleet-link.timer")]
+    assert ["systemctl", "--user", "daemon-reload"] in runner.calls
