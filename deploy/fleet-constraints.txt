@@ -25,6 +25,6 @@
 # docs/fleet/DEPLOY-FROM-MAIN.md "Bumping a fleet dependency": the upstream
 # release ships first, then the pin moves in the same PR as the code needing it.
 skcoord==0.1.90
-skmemory==0.11.156
+skmemory==0.11.160
 cloud9==1.2.4
 skwhisper==0.6.6
