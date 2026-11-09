@@ -2,7 +2,6 @@
 
 import json
 import socket
-import sys
 from pathlib import Path
 
 TOOL_PACKAGES = ("pytest", "_pytest", "pytest_asyncio", "ruff", "pluggy", "iniconfig", "packaging")
@@ -25,10 +24,29 @@ def qualify_prefix(home: Path) -> Path:
     return Path(home) / QUALIFY_PREFIX
 
 
+_MANIFEST = Path(__file__).resolve().parents[1] / "data" / "qualify-env.json"
+
+
+def pinned_python_minor() -> str:
+    """``major.minor`` of the pinned qualification interpreter, e.g. ``3.12``.
+
+    The prefix is always built with the manifest's interpreter, so its layout
+    follows that version, never the caller's. Deriving it from
+    ``sys.version_info`` broke every host whose ``~/.skenv`` runs a different
+    Python (ziowk01: 3.14 skenv, 3.12 prefix, "site-packages is missing").
+    """
+    version = json.loads(_MANIFEST.read_bytes())["python"]["version"]
+    return ".".join(str(version).split(".")[:2])
+
+
+def prefix_site(prefix: Path) -> Path:
+    """The qualification prefix's ``site-packages`` directory."""
+    return Path(prefix) / "lib" / f"python{pinned_python_minor()}" / "site-packages"
+
+
 def missing_dependencies(prefix: Path) -> list[str]:
     """Return missing prefix-contained dependencies for governed qualification."""
-    site = prefix / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"
-    site = site / "site-packages"
+    site = prefix_site(prefix)
     missing = [
         name
         for name in REQUIRED_PACKAGES

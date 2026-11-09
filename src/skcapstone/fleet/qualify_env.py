@@ -54,6 +54,7 @@ from .paths import paths_for_home, self_node_name
 from .qualified_runtime import (
     STATE_NAME,
     missing_dependencies,
+    pinned_python_minor,
     qualification_applies,
     qualify_prefix,
 )
@@ -145,7 +146,7 @@ def direct_pins(manifest: dict) -> dict[str, str]:
 
 
 def site_packages(prefix: Path) -> Path:
-    return prefix / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}"
+    return prefix / "lib" / f"python{pinned_python_minor()}"
 
 
 def _site(prefix: Path) -> Path:

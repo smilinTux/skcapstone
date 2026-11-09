@@ -1,0 +1,1 @@
+Qualify-prefix `site-packages` paths now follow the pinned interpreter version from `qualify-env.json`, not the Python running the caller. A host whose `~/.skenv` runs another Python (ziowk01: 3.14) failed every rollout at `qualify_env` with "site-packages is missing" on a correct 3.12 prefix, and its sealed-test validator would have named different harness files than the worker.

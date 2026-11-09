@@ -15,7 +15,7 @@ from xml.etree import ElementTree
 
 from . import production_builder  # noqa: F401
 from .production_policy import _unique_object
-from .qualified_runtime import STATE_NAME, TOOL_PACKAGES, qualify_prefix
+from .qualified_runtime import STATE_NAME, TOOL_PACKAGES, prefix_site, qualify_prefix
 
 #: Sealed test execution runs only from the clean pinned qualification prefix
 #: built by ``qualify_env``; production ~/.skenv is never the test runtime.
@@ -69,14 +69,7 @@ _TOOLCHAIN_CACHE = {}
 # (a0834032/ebe42d9e on chiap04, f3484694 on chiap01/02, 2026-10-09).
 def harness_root(prefix: Path, fallback: Path) -> Path:
     """The qualified prefix's harness directory when installed, else ``fallback``."""
-    candidate = (
-        prefix
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-        / "skcapstone"
-        / "fleet"
-    )
+    candidate = prefix_site(prefix) / "skcapstone" / "fleet"
     return candidate if (candidate / "production_pytest_selection.py").is_file() else fallback
 
 
@@ -92,12 +85,7 @@ def runtime_fingerprint() -> str:
     Candidate source is bound separately and its tests run from /work/src. A
     new SKCapstone wheel RECORD or unrelated module cannot change this contract.
     """
-    site = (
-        PREFIX
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-    )
+    site = prefix_site(PREFIX)
     state = PREFIX / STATE_NAME
     if not state.is_file():
         raise TestEvidenceError("qualified runtime manifest is missing")
@@ -159,12 +147,7 @@ def toolchain_fingerprint() -> str:
     exact locked distribution set.
     """
     prefix = PREFIX
-    site = (
-        prefix
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-    )
+    site = prefix_site(prefix)
     files = {prefix / "bin/ruff", prefix / "bin/python"}
     if not (prefix / STATE_NAME).is_file():
         raise TestEvidenceError("qualified runtime manifest is missing")

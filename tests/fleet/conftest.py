@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-
 import pytest
 
 from skcapstone.fleet.paths import FleetPaths
@@ -27,12 +25,9 @@ def qualified_runtime(tmp_path, monkeypatch):
         (prefix / "bin" / executable).write_bytes(b"synthetic runtime bytes\n")
     # The clean qualification prefix always carries its build manifest.
     (prefix / plan.STATE_NAME).write_text('{"schema":"synthetic"}\n')
-    site = (
-        prefix
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-    )
+    from skcapstone.fleet.qualified_runtime import prefix_site
+
+    site = prefix_site(prefix)
     for package in plan.TOOL_PACKAGES:
         directory = site / package
         directory.mkdir(parents=True)
