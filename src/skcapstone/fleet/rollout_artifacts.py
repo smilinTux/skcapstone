@@ -28,6 +28,17 @@ _SKNODED_HOST_KEYS = frozenset(
     }
 )
 SANDBOX_PROFILE_TARGET = Path("/etc/apparmor.d/skfleet-bwrap")
+#: "Y" when the running kernel has AppArmor enabled. WSL2 kernels build it in
+#: but boot with it disabled, and there is nothing to load a profile into.
+APPARMOR_ENABLED_PATH = Path("/sys/module/apparmor/parameters/enabled")
+
+
+def apparmor_enabled() -> bool:
+    """Return whether the running kernel can load an AppArmor profile."""
+    try:
+        return APPARMOR_ENABLED_PATH.read_text().strip() == "Y"
+    except OSError:
+        return False
 
 
 def install_sandbox_profile(repo_root: Path, home: Path) -> None:
@@ -62,6 +73,14 @@ def install_sandbox_profile(repo_root: Path, home: Path) -> None:
         check=True,
         timeout=30,
     )
+    if not apparmor_enabled():
+        # The file is in place for the day AppArmor is enabled, but there is no
+        # kernel policy to load it into (chiwk12-wsl, 2026-11-09). Deploy goes
+        # on; the sandbox readiness gate still requires both profiles loaded in
+        # enforce mode, so this host fails closed for sealed qualification
+        # instead of running a sandbox without the capability deny.
+        print("sandbox profile installed; AppArmor disabled in this kernel, load skipped")
+        return
     subprocess.run(
         ["sudo", "-n", "/usr/sbin/apparmor_parser", "-r", str(target)],
         check=True,

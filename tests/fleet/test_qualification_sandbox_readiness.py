@@ -94,6 +94,9 @@ def test_rollout_installs_only_shipped_profile_and_preserves_preimage(tmp_path, 
     target.parent.mkdir(parents=True)
     target.write_bytes(b"old managed profile\n")
     monkeypatch.setattr(rollout_artifacts, "SANDBOX_PROFILE_TARGET", target)
+    enabled = tmp_path / "apparmor-enabled"
+    enabled.write_text("Y\n")
+    monkeypatch.setattr(rollout_artifacts, "APPARMOR_ENABLED_PATH", enabled)
     calls = []
     monkeypatch.setattr(rollout_artifacts.subprocess, "run", lambda args, **kw: calls.append(args))
     rollout_artifacts.install_sandbox_profile(repo, home)
@@ -134,3 +137,30 @@ def test_nonproduction_rollout_does_not_change_apparmor(tmp_path, monkeypatch):
         lambda *args, **kw: pytest.fail("privileged command attempted"),
     )
     rollout_artifacts.install_sandbox_profile(tmp_path, tmp_path / "home")
+
+
+@pytest.mark.parametrize("state", ["N\n", None])
+def test_kernel_without_apparmor_installs_the_file_but_never_loads_it(
+    tmp_path, monkeypatch, capsys, state
+):
+    """WSL2 boots with AppArmor disabled: deploy continues, readiness decides."""
+    repo, home = tmp_path / "repo", tmp_path / "home"
+    policy = home / ".skcapstone/fleet/production.json"
+    policy.parent.mkdir(parents=True)
+    policy.write_text("{}")
+    source = repo / "systemd/apparmor/skfleet-bwrap"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"managed profile\n")
+    target = tmp_path / "etc/apparmor.d/skfleet-bwrap"
+    monkeypatch.setattr(rollout_artifacts, "SANDBOX_PROFILE_TARGET", target)
+    enabled = tmp_path / "apparmor-enabled"
+    if state is not None:
+        enabled.write_text(state)
+    monkeypatch.setattr(rollout_artifacts, "APPARMOR_ENABLED_PATH", enabled)
+    calls = []
+    monkeypatch.setattr(rollout_artifacts.subprocess, "run", lambda args, **kw: calls.append(args))
+
+    rollout_artifacts.install_sandbox_profile(repo, home)
+
+    assert calls == [["sudo", "-n", "/usr/bin/install", "-m", "0644", str(source), str(target)]]
+    assert "load skipped" in capsys.readouterr().out
