@@ -177,9 +177,21 @@ def test_dashboard_dependency_is_pinned_in_the_governed_install_extra():
     ]
     matches = [item for item in requirements if item.name == "skharness"]
     assert len(matches) == 1
-    assert matches[0].url == (
-        "git+https://github.com/smilinTux/skharness.git@7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e"
-    )
+    # PyPI rejects direct references in published metadata, so this must be a
+    # released version pin (v0.3.45 is tagged at the qualify-env commit 7409a1ab).
+    assert matches[0].url is None
+    assert str(matches[0].specifier) == "==0.3.45"
+
+
+def test_published_metadata_has_no_direct_references():
+    """PyPI refuses an upload whose requirements carry ``name @ url``."""
+    root = Path(__file__).resolve().parents[2]
+    project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
+    requirements = list(project.get("dependencies", []))
+    for extra in project.get("optional-dependencies", {}).values():
+        requirements.extend(extra)
+    direct = [item for item in requirements if Requirement(item).url]
+    assert direct == []
 
 
 @pytest.mark.parametrize("placement", ["absent", "editable", "packaged"])

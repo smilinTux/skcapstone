@@ -48,21 +48,47 @@ def _continuations():
     ]
 
 
+#: The published release of each commit-pinned sealed dependency. PyPI rejects
+#: direct references in package metadata, so the fleet-qualify extra pins the
+#: release while the sealed prefix keeps the exact commit. Bump both together:
+#: tag the new commit, publish it, then update this table, the extra and the
+#: manifest in one change.
+RELEASE_OF_COMMIT = {
+    ("skharness", "7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e"): "0.3.45",
+}
+
+
 def test_direct_pins_match_the_fleet_qualify_extra():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
-    extra = project["optional-dependencies"]["fleet-qualify"]
+    extra = {
+        qualify_env.canonical(re.split(r"[<>=!~;\[ @]", item, maxsplit=1)[0]): item
+        for item in project["optional-dependencies"]["fleet-qualify"]
+    }
     for item in qualify_env.load_manifest()["direct"]:
-        assert item in extra
+        name, _, url = (part.strip() for part in item.partition(" @ "))
+        name = qualify_env.canonical(name)
+        assert name in extra, name
+        commit = url.rsplit("@", 1)[-1]
+        release = RELEASE_OF_COMMIT.get((name, commit))
+        assert release, f"{name}@{commit} has no recorded release; tag and publish it"
+        assert extra[name] == f"{name}=={release}"
 
 
 def test_lock_covers_every_declared_runtime_dependency():
     """A new skcapstone dependency must regenerate the lock, never drift past it."""
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
     pins = qualify_env.lock_pins(qualify_env.LOCK.read_bytes())
+    # Direct pins install outside the hashed lock by design (commit-pinned).
+    direct = {
+        qualify_env.canonical(item.partition(" @ ")[0].strip())
+        for item in qualify_env.load_manifest()["direct"]
+    }
     declared = list(project["dependencies"]) + [
         item
         for item in project["optional-dependencies"]["fleet-qualify"]
-        if " @ " not in item and "python_version < " not in item
+        if " @ " not in item
+        and "python_version < " not in item
+        and qualify_env.canonical(re.split(r"[<>=!~;\[ ]", item, maxsplit=1)[0]) not in direct
     ]
     for requirement in declared:
         name = qualify_env.canonical(re.split(r"[<>=!~;\[ ]", requirement, maxsplit=1)[0])
