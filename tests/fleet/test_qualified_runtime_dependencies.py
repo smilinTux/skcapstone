@@ -12,6 +12,7 @@ from packaging.version import Version
 from skcapstone.fleet import production_test_plan as plan
 from skcapstone.fleet import rollout_drift
 from skcapstone.fleet.cli import _drift_is_role_ambiguous
+from skcapstone.fleet.qualified_runtime import prefix_site
 from skcapstone.fleet.staged_rollout import _DEPLOY_STEPS, _ROLLBACK_STEPS
 
 pytestmark = pytest.mark.usefixtures("sandbox_prerequisites")
@@ -56,12 +57,7 @@ def test_packaging_extra_covers_fingerprinted_tools_and_both_install_directions(
 def test_missing_tools_probe_uses_the_target_prefix(tmp_path):
     from skcapstone.fleet.qualified_runtime import missing_dependencies
 
-    site = (
-        tmp_path
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-    )
+    site = prefix_site(tmp_path)
     site.mkdir(parents=True)
     (tmp_path / "bin").mkdir()
     (tmp_path / "bin/ruff").write_text("synthetic executable")
@@ -152,12 +148,7 @@ def test_sealed_runtime_requires_controller_and_prefix_contained_core(tmp_path):
     missing = missing_dependencies(tmp_path)
     assert "ansible" in missing
     assert "skcapstone" in missing
-    site = (
-        tmp_path
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-    )
+    site = prefix_site(tmp_path)
     (site / "skcapstone").mkdir(parents=True)
     assert "skcapstone" in missing_dependencies(tmp_path)
     (site / "skcapstone/__init__.py").write_text("# Packaged fixture.\n")
@@ -168,12 +159,7 @@ def test_checkout_symlink_cannot_satisfy_sealed_core_requirement(tmp_path):
     """A prefix entry pointing outside the read-only prefix is still unavailable."""
     from skcapstone.fleet.qualified_runtime import missing_dependencies
 
-    site = (
-        tmp_path
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-    )
+    site = prefix_site(tmp_path)
     site.mkdir(parents=True)
     checkout = tmp_path.parent / ("outside-" + tmp_path.name) / "skcapstone"
     checkout.mkdir(parents=True)
@@ -192,8 +178,7 @@ def test_dashboard_dependency_is_pinned_in_the_governed_install_extra():
     matches = [item for item in requirements if item.name == "skharness"]
     assert len(matches) == 1
     assert matches[0].url == (
-        "git+https://github.com/smilinTux/skharness.git@"
-        "7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e"
+        "git+https://github.com/smilinTux/skharness.git@7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e"
     )
 
 
@@ -202,12 +187,7 @@ def test_dashboard_dependency_must_be_available_inside_the_sealed_prefix(tmp_pat
     """Host-only editable imports cannot qualify the dashboard economy tests."""
     from skcapstone.fleet.qualified_runtime import missing_dependencies
 
-    site = (
-        tmp_path
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-    )
+    site = prefix_site(tmp_path)
     site.mkdir(parents=True)
     if placement == "editable":
         outside = tmp_path.parent / ("dashboard-sibling-" + tmp_path.name)
