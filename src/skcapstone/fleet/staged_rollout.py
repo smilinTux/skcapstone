@@ -599,7 +599,15 @@ def _run_shell_steps(
 # full sknoded tick, which folds every builder status: 73-100s on chiap01 with
 # ~17 outstanding statuses, so every rollout halted there on the 30s default
 # and chiap02/chiap04 kept the previous main (2026-10-10 00:24Z).
-_LONG_STEP_TIMEOUTS = {"qualification_tools": 120, "converge": 240, "converge_profile": 300}
+# pip_install builds and reinstalls skcapstone from the deploy checkout: 15-17s
+# on chiap10's HDD at best and over 30s under IO pressure, so it halted there
+# three rollouts in a row (2026-11-10).
+_LONG_STEP_TIMEOUTS = {
+    "pip_install": 300,
+    "qualification_tools": 120,
+    "converge": 240,
+    "converge_profile": 300,
+}
 
 
 def default_deploy_node(

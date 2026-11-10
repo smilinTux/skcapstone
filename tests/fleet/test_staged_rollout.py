@@ -1288,3 +1288,25 @@ def test_converge_step_gets_a_full_sknoded_tick(monkeypatch):
     )
     assert outcome.ok
     assert seen == {"skcapstone fleet sknoded --once": 240, "true": None}
+
+
+def test_pip_install_step_outlasts_the_default_runner_timeout(monkeypatch):
+    """chiap10 2026-11-10: pip_install on an HDD under IO pressure ran past 30s."""
+    from skcapstone.fleet import staged_rollout as rollout
+
+    seen = {}
+
+    def fake_runner(argv, timeout=None):
+        seen[argv[-1]] = timeout
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(rollout, "default_runner", fake_runner)
+    outcome = rollout._run_shell_steps(
+        "chiap10",
+        steps=(("pip_install", "pip install ."), ("other", "true")),
+        repo="/r",
+        runner=fake_runner,
+        wrap=lambda command: ["sh", "-c", command],
+    )
+    assert outcome.ok
+    assert seen == {"pip install .": 300, "true": None}

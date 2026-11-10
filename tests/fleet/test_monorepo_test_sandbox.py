@@ -12,6 +12,7 @@ import pytest
 from skcapstone.fleet import production_test_plan as plan
 from skcapstone.fleet import production_test_worker as worker
 from skcapstone.fleet.production_test_plan import TestEvidenceError
+from skcapstone.fleet.qualified_runtime import prefix_site
 
 
 def pythonpath(argv):
@@ -158,12 +159,7 @@ def test_strict_asyncio_configuration_runs_in_sealed_sandbox(tmp_path, monkeypat
     "relative", ["pytest_asyncio/plugin.py", "pytest_asyncio-1.3.dist-info/METADATA"]
 )
 def test_runtime_fingerprint_binds_explicit_asyncio_plugin(qualified_runtime, relative):
-    site = (
-        qualified_runtime
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-    )
+    site = prefix_site(qualified_runtime)
     path = site / relative
     path.parent.mkdir(exist_ok=True)
     path.write_text("qualified asyncio bytes\n")
