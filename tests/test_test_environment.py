@@ -48,9 +48,7 @@ def test_safe_environment_and_shell_hook_refusal(monkeypatch):
         check()
 
 
-@pytest.mark.parametrize(
-    "script", ["e2e-test.sh", "ci-check.sh", "verify_install.sh"]
-)
+@pytest.mark.parametrize("script", ["e2e-test.sh", "ci-check.sh", "verify_install.sh"])
 def test_entrypoint_does_not_source_bash_env(tmp_path, script):
     """A poison startup file must never execute, even before the guard runs."""
     marker = tmp_path / "sourced"
