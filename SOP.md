@@ -299,7 +299,7 @@ workflows with confusingly similar names and only one of them runs tests:
 
 | Workflow | What it actually runs | Is it a test gate? |
 |---|---|---|
-| `pytest.yml` | `python -m pytest tests/ --strict-markers -m "not integration and not e2e"` on 3.11 + 3.12 | **yes, this is the gate** |
+| `pytest.yml` | `python -m pytest tests/ --strict-markers -m "not integration and not e2e"` on 3.12 | **yes, this is the gate** |
 | `ci.yml` | `black --check src/ tests/`, `ruff check src/`, `scripts/check-no-shim-imports.sh`, `python -m build` + `twine check` | **no. It runs zero tests** |
 
 Do not cite `ci.yml` as evidence that tests passed. A green `ci.yml` means the code is

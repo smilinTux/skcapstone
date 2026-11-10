@@ -202,7 +202,7 @@ def test_incomplete_pass_records_rejection_without_release(tmp_path: Path) -> No
         "Path": Path,
         "CardStore": _card_store(claims),
         "validate_review_completion": lambda *_args: (_ for _ in ()).throw(
-            ValueError("required ci_check_python311 is not successful")
+            ValueError("required ci_check_python312 is not successful")
         ),
         "datetime": __import__("datetime"),
         "hashlib": hashlib,
@@ -232,7 +232,7 @@ def test_incomplete_pass_records_rejection_without_release(tmp_path: Path) -> No
     rejection = __import__("json").loads(records[0].read_text(encoding="utf-8"))
     assert rejection["completion_failure"] == "review_completion_rejected"
     assert rejection["claim_revision"] == revision
-    assert "ci_check_python311" in rejection["reason"]
+    assert "ci_check_python312" in rejection["reason"]
 
 
 def test_release_runs_before_same_cycle_pool_build() -> None:

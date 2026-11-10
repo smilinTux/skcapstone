@@ -2,7 +2,7 @@ name: test-env
 description: >-
   Provision the unit-test environment (sandbox support, package with all
   extras and dev tools, pinned skcoord, exact sibling revisions). Shared by
-  the sharded py3.12 jobs and the py3.11 / non-PR unit jobs so the two cannot
+  the sharded py3.12 jobs and the non-PR unit jobs so the two cannot
   drift. The caller must have checked out the repo and set up Python.
 
 runs:

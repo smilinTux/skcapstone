@@ -131,7 +131,7 @@ def check_python() -> ToolCheck:
     import sys
 
     version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    ok = sys.version_info >= (3, 10)
+    ok = sys.version_info >= (3, 12)
     return ToolCheck(
         name="Python",
         status=ToolStatus.INSTALLED if ok else ToolStatus.MISSING,
@@ -500,15 +500,15 @@ class PreflightChecker:
     # ------------------------------------------------------------------
 
     def check_python(self) -> CheckResult:
-        """Verify Python >= 3.11."""
+        """Verify Python >= 3.12."""
         vi = sys.version_info
         version = f"{vi.major}.{vi.minor}.{vi.micro}"
-        if vi >= (3, 11):
+        if vi >= (3, 12):
             return CheckResult("python", "ok", f"Python {version}")
         return CheckResult(
             "python",
             "fail",
-            f"Python {version} - 3.11+ required",
+            f"Python {version} - 3.12+ required",
             critical=True,
         )
 

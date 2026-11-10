@@ -272,18 +272,18 @@ class TestPreflightCheckerPython:
         from collections import namedtuple
 
         VI = namedtuple("version_info", ["major", "minor", "micro", "releaselevel", "serial"])
-        vi = VI(3, 10, 0, "final", 0)
+        vi = VI(3, 11, 0, "final", 0)
         checker = PreflightChecker(home=tmp_path)
         with patch("skcapstone.preflight.sys.version_info", vi):
             result = checker.check_python()
         assert result.status == "fail"
         assert result.critical is True
 
-    def test_311_passes(self, tmp_path: Path) -> None:
+    def test_312_passes(self, tmp_path: Path) -> None:
         from collections import namedtuple
 
         VI = namedtuple("version_info", ["major", "minor", "micro", "releaselevel", "serial"])
-        vi = VI(3, 11, 0, "final", 0)
+        vi = VI(3, 12, 0, "final", 0)
         checker = PreflightChecker(home=tmp_path)
         with patch("skcapstone.preflight.sys.version_info", vi):
             result = checker.check_python()

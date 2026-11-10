@@ -56,9 +56,9 @@ the same selector contract used by POOL_V2. Do not infer review admission from
 lifecycle state, links, or a successful create operation alone.
 
 Completion applies the same contract to `[REVIEW]` and `[REREVIEW]`. `PASS`
-fails closed unless the card records all six protected-branch CI links as
+fails closed unless the card records all five protected-branch CI links as
 terminal success: `ci_check_docs`, `ci_check_gitleaks`, `ci_check_lint`,
-`ci_check_shim_imports`, `ci_check_python311`, and `ci_check_python312`.
+`ci_check_shim_imports`, and `ci_check_python312`.
 Missing or partial link sets do not count as green CI. Exact `FAIL` and a
 structured `BLOCKED` remain terminal without waiting for CI so an independent
 reviewer can reject an unsafe candidate immediately.

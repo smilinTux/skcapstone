@@ -31,15 +31,15 @@ There is no `CLAUDE.md`: Claude Code reads this file, and a `CLAUDE.md` next to 
 
 ## Commands
 
-CI: `.github/workflows/ci.yml` (lint, shim-imports, build), `pytest.yml` (unit tests py3.11
-and py3.12, the required checks), `providers.yml`, `secret-scan.yml` (gitleaks),
+CI: `.github/workflows/ci.yml` (lint, shim-imports, build), `pytest.yml` (unit tests py3.12,
+the required check), `providers.yml`, `secret-scan.yml` (gitleaks),
 `skmemory-pin-moves.yml` and `docs-check.yml`. All must be green.
 
 ```bash
 # install (dev: editable with all extras, as CI's test-env action does)
 python -m pip install -c deploy/fleet-constraints.txt -e ".[all,dev]"
 # end users: bash scripts/install.sh   (creates ~/.skenv and installs every SK package)
-# test (CI shards this on py3.12; py3.11 runs scripts/ci/run-python311-compat.sh)
+# test (CI shards this on py3.12)
 python -m pytest tests/ --strict-markers -m "not integration and not e2e"
 # lint and format (CI pins black==26.5.1 ruff==0.15.4)
 black --check src/ tests/
@@ -82,7 +82,7 @@ only `src/`.
 - **Changelog:** any PR touching `src/**` or `pyproject.toml` needs an entry or docs-check
   tier 2 fails it. Add a new `changelog.d/<branch-slug>.md` fragment; do not edit
   `CHANGELOG.md` (concurrent PRs conflict on it).
-- **Code style:** Python 3.11+, type hints, Pydantic models, Google-style docstrings. Tests in
+- **Code style:** Python 3.12+, type hints, Pydantic models, Google-style docstrings. Tests in
   pytest covering happy path, edge case and failure.
 - **Install:** SK packages go into `~/.skenv/` (CLIs in `~/.skenv/bin/`), never
   `pip install --user` or system pip.

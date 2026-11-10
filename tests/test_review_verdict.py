@@ -22,7 +22,6 @@ _SUCCESSFUL_CI = (
     ("ci_check_gitleaks", "SUCCESS", "2026-08-28T03:01:00"),
     ("ci_check_lint", "SUCCESS", "2026-08-28T03:01:00"),
     ("ci_check_shim_imports", "SUCCESS", "2026-08-28T03:01:00"),
-    ("ci_check_python311", "SUCCESS", "2026-08-28T03:01:00"),
     ("ci_check_python312", "SUCCESS", "2026-08-28T03:01:00"),
 )
 
@@ -318,7 +317,6 @@ def test_pass_without_required_ci_links_fails_closed(tmp_path, title):
     )
     with pytest.raises(ValueError, match="not successful") as err:
         validate_review_completion("bbbbbbbb", title, home)
-    assert "ci_check_python311" in str(err.value)
     assert "ci_check_python312" in str(err.value)
 
 

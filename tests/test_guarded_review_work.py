@@ -404,7 +404,6 @@ def test_native_cli_review_completion_needs_checks_and_leaves_source_owned(tmp_p
         "ci_check_gitleaks",
         "ci_check_lint",
         "ci_check_shim_imports",
-        "ci_check_python311",
         "ci_check_python312",
     ):
         linked = _run(tmp_path, "link", review_id, check, "SUCCESS", "--agent", reviewer)

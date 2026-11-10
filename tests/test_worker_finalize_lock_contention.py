@@ -569,7 +569,7 @@ def test_incomplete_pass_keeps_exact_claim_and_projection(monkeypatch, tmp_path)
     rejection = json.loads(records[0].read_text(encoding="utf-8"))
     assert rejection["completion_failure"] == "review_completion_rejected"
     assert rejection["claim_revision"] == values.claim_revision
-    assert "ci_check_python311" in rejection["reason"]
+    assert "ci_check_python312" in rejection["reason"]
 
 
 def test_newer_same_owner_revision_fences_review_cleanup(claimed_board, monkeypatch) -> None:
