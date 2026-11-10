@@ -11,8 +11,8 @@ permissions:
 
 # Trusted Publishing (OIDC) is configured on PyPI for this project:
 #   owner=smilinTux  workflow=publish.yml  environment=pypi
-# No PyPI token is used in the publish path. The same honest Python 3.11 and
-# 3.12 suite required on pull requests also gates tag creation and publication.
+# No PyPI token is used in the publish path. The same honest Python 3.12
+# suite required on pull requests also gates tag creation and publication.
 # NOTE: the serialization lives on the `tag` job, NOT here at workflow level.
 # A workflow-level group is held by EVERY job in the run, including
 # `pypi-publish`, which waits on the `pypi` environment's required reviewers.

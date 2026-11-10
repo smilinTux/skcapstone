@@ -1,15 +1,15 @@
 name: pytest
 
-# Pull requests run the complete deterministic suite once on Python 3.12 and
-# a focused compatibility lane on Python 3.11. Main, schedule and reusable
-# release calls run the SAME 3.11/3.12 matrix: 3.10 cannot install the `all`
-# extra (skwhisper floors at 3.11) and 3.13/3.14 fail on pgpy's imghdr
-# import, so a wider matrix here was a permanently red publish gate.
-# Required check names remain "unit tests (py3.11)" and "unit tests (py3.12)".
+# Pull requests run the complete deterministic suite on Python 3.12, sharded.
+# Main, schedule and reusable release calls run the same single-version
+# matrix. 3.12 is the floor (requires-python >=3.12, 2026-11-10): every fleet
+# host runs 3.12 or newer and none runs 3.11. 3.13/3.14 still fail on pgpy's
+# imghdr import, so they are not in the matrix yet.
+# The required check name is "unit tests (py3.12)".
 #
 # merge_group (prerequisite for a GitHub merge queue, not yet enabled) is
-# treated IDENTICALLY to pull_request everywhere in this file: same 2-version
-# matrix, same py3.12-full/py3.11-compat-lane split, same "docs-only" skip
+# treated IDENTICALLY to pull_request everywhere in this file: same
+# single-version matrix, same "docs-only" skip
 # eligibility. Without that, adding merge_group alone would have silently
 # widened the matrix to all 5 Python versions AND made every one of them run
 # the full ~16-minute suite (since the existing `!= 'pull_request'` checks
@@ -122,11 +122,12 @@ jobs:
         # Testing a version the dependency set cannot install is not coverage,
         # it is a permanently red gate. Re-add 3.13/3.14 when pgpy supports
         # them, and 3.10 only if the skwhisper floor ever drops.
+        # 3.11 was dropped on 2026-11-10: no fleet host runs it.
         run: |
           if [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; then
-            echo 'value=["3.11","3.12"]' >> "$GITHUB_OUTPUT"
+            echo 'value=["3.12"]' >> "$GITHUB_OUTPUT"
           else
-            echo 'value=["3.11","3.12"]' >> "$GITHUB_OUTPUT"
+            echo 'value=["3.12"]' >> "$GITHUB_OUTPUT"
           fi
 
   # Sharded py3.12 suite (pull_request / merge_group only). A GitHub-hosted
@@ -195,59 +196,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # ---- Pull request / merge_group required checks -------------------------
-  # Two jobs carry the required names "unit tests (py3.11)" and
-  # "unit tests (py3.12)" on PRs. They are separate jobs (not one matrix) so
-  # that py3.11 needs only `classify` and runs in parallel with the shards,
-  # while py3.12 aggregates them. The push / schedule / workflow_call matrix job
-  # `unit` below is skipped on PRs, and a skipped matrix job keeps its literal
-  # unexpanded name, so exactly one job carries each required name per event.
-
-  unit-py311:
-    name: unit tests (py3.11)
-    needs: classify
-    if: >-
-      ${{ !cancelled() && needs.classify.result == 'success' &&
-      (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-      - name: Record documentation-only decision
-        if: needs.classify.outputs.docs-only == 'true'
-        run: |
-          echo "Documentation-only classification verified by scripts/ci/classify-test-impact.sh."
-          echo "Python 3.11 unit execution intentionally omitted." >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        if: needs.classify.outputs.docs-only != 'true'
-        with:
-          python-version: "3.11"
-      - name: Provision test environment
-        if: needs.classify.outputs.docs-only != 'true'
-        uses: ./.github/actions/test-env
-      - name: Build and run Python 3.11 compatibility lane
-        if: needs.classify.outputs.docs-only != 'true'
-        env:
-          BASE_SHA: ${{ needs.classify.outputs.base-sha }}
-          PYTEST_ADDOPTS: --durations=40 -o faulthandler_timeout=60
-          PYTHONUNBUFFERED: "1"
-        run: |
-          set -o pipefail
-          timeout --kill-after=10s 40m scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA" \
-            > pytest-ci.log 2>&1
-      - name: Preserve test diagnostics even when pytest times out
-        if: always() && needs.classify.outputs.docs-only != 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: pytest-diagnostics-py3.11
-          path: |
-            pytest-ci.log
-            sandbox-ci.log
-          if-no-files-found: warn
-          retention-days: 7
+  # ---- Pull request / merge_group required check ---------------------------
+  # "unit tests (py3.12)" on PRs is the `unit-py312` job below, which
+  # aggregates the shards. The push / schedule / workflow_call matrix job
+  # `unit` is skipped on PRs, and a skipped matrix job keeps its literal
+  # unexpanded name, so exactly one job carries the required name per event.
 
   unit-py312:
     name: unit tests (py3.12)

@@ -36,7 +36,7 @@ pytest_plugins = ("tests.skmail_installation",)
 @pytest.fixture(autouse=True)
 def _packaging_install_boundary(request):
     """Build subprocesses must use the same safe environment as test installers."""
-    if request.path.name in {"test_package_data.py", "test_python311_compat_boundary.py"}:
+    if request.path.name in {"test_package_data.py"}:
         guard = Path(__file__).resolve().parents[1] / "scripts/ci/test_environment.py"
         runpy.run_path(str(guard))["check_environment"]()
 

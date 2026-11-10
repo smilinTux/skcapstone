@@ -3,7 +3,7 @@ name: CI
 # Forgejo Actions CI for skcapstone (mirrors .github/workflows/pytest.yml +
 # the ruff lint step from .github/workflows/ci.yml).
 #
-# - Sets up Python 3.11 (the supported runtime floor per AGENTS.md: "Python 3.11+").
+# - Sets up Python 3.12 (the supported runtime floor per AGENTS.md: "Python 3.12+").
 # - Installs the package editable with ALL optional sovereign extras + dev tools
 #   ([all,dev]) so the full test tree imports cleanly (capauth, sksecurity,
 #   skmemory[skvector], skseed, skwhisper, skchat-sovereign, skcomms, fusepy,
@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install ruff
         run: |
@@ -46,7 +46,7 @@ jobs:
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       # libfuse is needed for the fusepy optional extra (FUSE mount tests).
       - name: Install system deps (libfuse)

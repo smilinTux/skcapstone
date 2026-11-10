@@ -10,10 +10,3 @@ and environments containing a `.production` marker. Register any differently
 named production roots in the colon-separated SKCAPSTONE_PRODUCTION_VENVS list.
 There is no force or bypass option. CI clears BASH_ENV and uses a shell that
 ignores inherited startup hooks before checking every installer invocation.
-
-For example, use an absolute disposable interpreter with the compatibility lane:
-
-```sh
-env -u BASH_ENV -u VIRTUAL_ENV PYTHON_BIN=/tmp/test-venv/bin/python \
-  ./scripts/ci/run-python311-compat.sh BASE_SHA HEAD_SHA
-```

@@ -48,25 +48,7 @@ def test_safe_environment_and_shell_hook_refusal(monkeypatch):
         check()
 
 
-def test_compat_refuses_production_before_build(tmp_path):
-    """Exercise the real script without invoking pip or modifying an environment."""
-    env = dict(os.environ, PYTHON_BIN=sys.executable, VIRTUAL_ENV=str(tmp_path / ".skenv"))
-    env.pop("BASH_ENV", None)
-    result = subprocess.run(
-        [str(ROOT / "scripts/ci/run-python311-compat.sh"), "base", "head"],
-        cwd=tmp_path,
-        env=env,
-        text=True,
-        capture_output=True,
-    )
-    assert result.returncode != 0
-    assert "Refusing test installation in production environment" in result.stderr
-    assert not list(tmp_path.iterdir())
-
-
-@pytest.mark.parametrize(
-    "script", ["ci/run-python311-compat.sh", "e2e-test.sh", "ci-check.sh", "verify_install.sh"]
-)
+@pytest.mark.parametrize("script", ["e2e-test.sh", "ci-check.sh", "verify_install.sh"])
 def test_entrypoint_does_not_source_bash_env(tmp_path, script):
     """A poison startup file must never execute, even before the guard runs."""
     marker = tmp_path / "sourced"

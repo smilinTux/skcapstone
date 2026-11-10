@@ -75,7 +75,7 @@ class TestPublishGating:
         for name in ("tag", "build"):
             needs = publish["jobs"][name].get("needs")
             needs = [needs] if isinstance(needs, str) else (needs or [])
-            assert "tests" in needs, f"{name} must wait for Python 3.11 and 3.12"
+            assert "tests" in needs, f"{name} must wait for the Python 3.12 suite"
 
         build_condition = publish["jobs"]["build"].get("if", "")
         assert "needs.tests.result == 'success'" in build_condition
@@ -89,7 +89,9 @@ class TestPublishGating:
         matrix_step = next(
             step for step in workflow["jobs"]["classify"]["steps"] if step.get("id") == "matrix"
         )
-        assert '["3.11","3.12"]' in matrix_step["run"]
+        # 3.11 was dropped on 2026-11-10 (requires-python >=3.12).
+        assert '["3.12"]' in matrix_step["run"]
+        assert '"3.11"' not in matrix_step["run"]
         # The push matrix was deliberately narrowed to match the PR matrix on
         # 2026-09-21. 3.10 cannot install at all (the `all` extra needs
         # skwhisper, which floors at 3.11) and 3.13/3.14 die on pgpy's import

@@ -19,7 +19,6 @@ _REQUIRED = (
     "ci_check_gitleaks",
     "ci_check_lint",
     "ci_check_shim_imports",
-    "ci_check_python311",
     "ci_check_python312",
 )
 

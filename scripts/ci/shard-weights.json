@@ -487,7 +487,6 @@
 "tests/test_provisional_verdict_producer.py": 0.8,
 "tests/test_proxmox_provider.py": 0.2,
 "tests/test_pubsub.py": 0.3,
-"tests/test_python311_compat_boundary.py": 2.5,
 "tests/test_rate_limiter.py": 0.2,
 "tests/test_reaper_stall.py": 0.4,
 "tests/test_receipt_output.py": 0.2,

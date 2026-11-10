@@ -307,7 +307,6 @@ skcapstone coord link <review_id> ci_check_docs SUCCESS --agent <your_name>
 skcapstone coord link <review_id> ci_check_gitleaks SUCCESS --agent <your_name>
 skcapstone coord link <review_id> ci_check_lint SUCCESS --agent <your_name>
 skcapstone coord link <review_id> ci_check_shim_imports SUCCESS --agent <your_name>
-skcapstone coord link <review_id> ci_check_python311 SUCCESS --agent <your_name>
 skcapstone coord link <review_id> ci_check_python312 SUCCESS --agent <your_name>
 
 skcapstone coord complete <review_id> --agent <your_name>
