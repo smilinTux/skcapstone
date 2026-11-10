@@ -94,7 +94,11 @@ dependencies = [
 [project.optional-dependencies]
 fleet-qualify = [
     # Economy qualification needs a regular package inside the sealed prefix.
-    "skharness @ git+https://github.com/smilinTux/skharness.git@7409a1ab28f9c8fed87cd40226f4c031ca9e3f6e",
+    # A released pin, never a git URL: PyPI rejects any upload whose metadata
+    # carries a direct reference ("400 Can't have direct dependency"), which
+    # kept skcapstone off PyPI after 0.15.181. v0.3.45 is tagged at 7409a1ab,
+    # the commit the sealed qualify env (data/qualify-env.json) still builds.
+    "skharness==0.3.45",
     "ansible-core==2.21.3; python_version >= '3.12'",
     "ansible-core==2.19.5; python_version < '3.12'",
     "pytest>=7.0",
