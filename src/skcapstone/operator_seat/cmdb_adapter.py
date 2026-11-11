@@ -244,7 +244,11 @@ def cmdb_act(
     if store.is_frozen(paths):
         return {"performed": False, "reason": "frozen", "action": action}
     run = runner or actuation.default_runner
-    ok = run(["systemctl", "--user", "start", units[action]])
+    # --no-block: both units are oneshots, so a plain start waits for the whole
+    # reconcile (about 40 s) and the 30 s actuation timeout raised after the
+    # apply had already started (chg-a543c87b, 2026-11-11). Verification reads
+    # the unit result and the artifact, never this call.
+    ok = run(["systemctl", "--user", "start", "--no-block", units[action]])
     if hasattr(ok, "returncode"):
         ok = ok.returncode == 0
     return {"performed": bool(ok), "action": action, "unit": units[action]}

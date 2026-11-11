@@ -106,7 +106,9 @@ def test_shadow_act_starts_only_the_shadow_oneshot(tmp_path):
 
     result = cmdb_adapter.cmdb_act(FleetPaths(tmp_path), "run-cmdb-shadow", runner=runner)
     assert result["performed"] is True
-    assert calls == [["systemctl", "--user", "start", "skcapstone-cmdb-reconcile-shadow.service"]]
+    assert calls == [
+        ["systemctl", "--user", "start", "--no-block", "skcapstone-cmdb-reconcile-shadow.service"]
+    ]
 
 
 class _Value:
@@ -241,7 +243,9 @@ def test_apply_starts_distinct_network_unit_after_all_gates(tmp_path):
         manager_factory=_CleanManager,
     )
     assert result["performed"] is True
-    assert calls == [["systemctl", "--user", "start", "skcapstone-cmdb-reconcile-network.service"]]
+    assert calls == [
+        ["systemctl", "--user", "start", "--no-block", "skcapstone-cmdb-reconcile-network.service"]
+    ]
 
 
 def test_apply_rechecks_freeze_immediately_before_start(tmp_path):
