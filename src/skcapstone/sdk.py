@@ -285,6 +285,25 @@ def coord_create(
     return task.id
 
 
+def _systemd_unit(cgroup_path: Path = Path("/proc/self/cgroup")) -> Optional[str]:
+    """The systemd service unit this process runs under, or ``None``.
+
+    Read from the process's own cgroup (``.../app.slice/capauth-authz.service``),
+    so a service that registers under one name and runs as a differently named
+    unit can still be matched by discovery. A shell, tmux or login session is a
+    ``.scope``, not a unit, and yields ``None``.
+    """
+    try:
+        lines = cgroup_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        leaf = line.rsplit("/", 1)[-1].strip()
+        if leaf.endswith(".service") and not leaf.startswith("user@"):
+            return leaf
+    return None
+
+
 def register_service(
     name: str,
     health_url: Optional[str] = None,
@@ -335,6 +354,9 @@ def register_service(
         "registered_by": _agent_name(),
         "registered_at": datetime.now(timezone.utc).isoformat(),
     }
+    unit = _systemd_unit()
+    if unit:
+        entry["systemd_unit"] = unit
     if readiness:
         # Older daemons must report unknown, never downgrade readiness to reachability/PID.
         entry.update(

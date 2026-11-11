@@ -16,6 +16,8 @@
     "note": "makes .158/.41 config + secrets drift loud (G5 no-SPOF). ParityHeld false => nodes diverged.",
     "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
     "schedule": "@daily",
-    "source": "skgateway/docs/deploy-plan/skgateway-bulletproof-deploy.md"
+    "source": "skgateway/docs/deploy-plan/skgateway-bulletproof-deploy.md",
+    "deleted": true,
+    "retired": "Retired 2026-11-11 (SKBrain CmdbDriftBounded triage): scripts/gateway-parity-check.sh never existed in any repo. Node-local catalog drift is skscheduler skgateway-catalog-verify; cross-node parity has no implementation yet."
   }
 }

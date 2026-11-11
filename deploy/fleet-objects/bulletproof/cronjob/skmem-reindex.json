@@ -15,6 +15,8 @@
     "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
     "schedule": "@daily",
     "source": "skmemory/docs/deploy-plan/skmemory-bulletproof-deploy.md",
-    "window": "04:30"
+    "window": "04:30",
+    "deleted": true,
+    "retired": "Retired 2026-11-11 (SKBrain CmdbDriftBounded triage): superseded by skmemory-sync@<agent>.timer (every 6h, `skmemory sync --vector --graph` reindexes every agent); `skmemory reindex` is single-agent."
   }
 }

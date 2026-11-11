@@ -10,7 +10,25 @@ Reference: `skos/docs/specs/2026-07-27-skworld-fleet-control-plane-design.md`
 (section 5, resource model) and
 `skos/docs/specs/2026-07-27-fleet-phase1-implementation-plan.md`.
 
-## Status: authored + validated, NOT applied
+## Status: applied, and cross-checked against what runs (2026-11-11)
+
+These objects ARE applied to the live `~/.skcapstone/fleet/` tree, and CMDB
+drift reads them as declarations. A declaration has to name the thing that
+actually runs, or drift reports it missing:
+
+* a unit-backed job (Service, or a CronJob run by a `.timer`) names that unit
+  in `spec.unit`;
+* a crontab job is installed by skos `deploy/schedule/jobs.yaml` under
+  `sk-cron-run <name>`, where `<name>` is this object's name;
+* a declaration that turns out to be superseded or never implemented is
+  retired, not deleted: `spec.deleted: true` plus a `spec.retired` reason, so
+  the file stays as the generation ledger and controllers and discovery skip
+  it.
+
+`tests/fleet/test_bulletproof_manifests_match_installs.py` holds these rules.
+The original note follows.
+
+## Status at authoring: validated, NOT applied
 
 Every object here was validated against the live control-plane model
 (`skcapstone.fleet.services.normalize_service_spec`,
@@ -55,16 +73,16 @@ from the deploy discipline.
 | skcapstone-daemon | skcapstone@lumina.service | systemd-user | control-plane | - | MemoryBounded (the .41 OOM cap) |
 | skgateway | skgateway.service | systemd-user | always-on | :18780 | UpstreamServing, RegistryPopulated (empty-registry false-green) |
 | skgateway-claude-wrapper | claude-code-api.service | systemd-user | control-plane | :18782 | WrapperReachable (the :18782 SPOF) |
-| skmemory-daemon | skmemory-daemon.service | systemd-user | always-on | - | EmbedReachable (fail-loud, no NULL embeds) |
-| capauth-keystore | capauth-keystore | docker | control-plane | - | RootCustodyVerified |
+| ~~skmemory-daemon~~ | retired 2026-11-11 | | | | unit never existed; see `spec.retired` |
+| capauth-keystore | capauth-authz.service | systemd-user | control-plane | :8420 | RootCustodyVerified |
 | skchat-daemon | skchat-daemon.service | systemd-user | always-on | - | restoreBeforeStart (history+keys) |
-| skchat-telegram-bridge-lumina | skchat-telegram-bridge@lumina.service | systemd-user | always-on | - | BridgePollFresh (silent-wedge) |
+| skchat-telegram-bridge-lumina | skchat-telegram-lumina.service | systemd-user | always-on | - | BridgePollFresh (silent-wedge) |
 | skchat-piper-tts | piper-tts.service | systemd-user | always-on | :18797 | Ready, CrashLooping |
 | skchat-nostr-relay | nostr-relay.service | systemd-user | always-on | :7447 | Ready, CrashLooping |
 | skchat-webui-lumina | webui@lumina.service | systemd-user | always-on | - | Ready, CrashLooping |
 | skchat-coturn | coturn | docker | always-on | - | Ready, CrashLooping |
-| skos-scheduler | skos-scheduler.service | systemd-user | control-plane | - | SchedulerAlive (owns the crons) |
-| skingest | skingest.service | systemd-user | always-on | - | SchemaApplied (no start on unmigrated store) |
+| ~~skos-scheduler~~ | retired 2026-11-11 | | | | the crons are `skos schedule install`; see `spec.retired` |
+| ~~skingest~~ | retired 2026-11-11 | | | | no daemon, oneshots only; see `spec.retired` |
 
 Standard Service conditions (`Ready`, `Progressing`, `CrashLooping`) apply to
 every service and are derived by ServiceController/sknoded; the table lists the
@@ -77,17 +95,18 @@ state fleet-wide).
 
 | Object | Command | Schedule (window) | Node | Conditions |
 |---|---|---|---|---|
-| skmem-reconcile | skmemory reconcile --all-agents | @daily (04:15) | always-on | ReconcileFresh (THE HA path) |
-| skmem-reindex | skmemory reindex | @daily (04:30) | always-on | MissedRun |
-| skmem-pg-dump-offbox | deploy/ops/skmem-pg-backup.sh | @daily (03:15) | always-on | BackupFresh, BackupOffbox |
-| skmem-gfs-tarball | deploy/ops/skmem-gfs-tarball.sh | @daily (02:45) | always-on | BackupFresh |
-| skmem-health | deploy/ops/skmem-health.sh | @daily | always-on | MissedRun |
-| skcapstone-backup-gfs | scripts/backup-gfs.sh | @daily | control-plane | BackupFresh, BackupOffbox |
-| skgateway-parity-check | scripts/gateway-parity-check.sh | @daily | control-plane | ParityHeld (.158/.41 drift loud) |
-| capauth-custody-doctor | capauth doctor custody | @daily | control-plane | CustodyVerified (root cert/backup/2nd home) |
-| skcomms-housekeep | skcomms housekeep --all-agents | @hourly | always-on | ArchiveBounded (the 140k-file freeze) |
-| skchat-backup-offbox | deploy/backup-skchat.sh | @daily | always-on | BackupFresh, BackupOffbox |
-| skos-morning-brief | skos brief send | @daily (07:15) | control-plane | MissedRun (fail loud, no swallow-and-exit-0) |
+| skmem-reconcile | python3 -m skmemory.reconcile --all | @daily (04:15) | always-on | ReconcileFresh (THE HA path) |
+| ~~skmem-reindex~~ | retired 2026-11-11 | | | superseded by skmemory-sync@ timers |
+| ~~skmem-pg-dump-offbox~~ | retired 2026-11-11 | | | no off-site dump (Chef); see skmem-pg-backup |
+| skmem-pg-backup | deploy/ops/skmem-pg-backup.sh | @daily (03:15) | always-on | BackupFresh (one local dump) |
+| ~~skmem-gfs-tarball~~ | retired 2026-11-11 | | | script never existed; skcapstone-backup-gfs |
+| ~~skmem-health~~ | retired 2026-11-11 | | | runs as Hermes cron skmem-health-daily |
+| skcapstone-backup-gfs | scripts/skcapstone-gfs-backup.sh | @daily (02:45) | control-plane | BackupFresh, BackupOffbox |
+| ~~skgateway-parity-check~~ | retired 2026-11-11 | | | script never existed; cross-node parity unimplemented |
+| capauth-custody-doctor | capauth doctor custody --json | @daily | control-plane | CustodyVerified (root cert/backup/2nd home) |
+| skcomms-housekeep | skcomms-housekeep.timer (`skcomms housekeep --all-agents`) | @hourly | always-on | ArchiveBounded (the 140k-file freeze) |
+| skchat-backup-offbox | skchat-backup.timer (`scripts/backup-skchat.sh`) | @daily | always-on | BackupFresh, BackupOffbox |
+| ~~skos-morning-brief~~ | retired 2026-11-11 | | | `skos brief` does not exist; skos watchdog digest |
 | autopilot-daily | skos autopilot run --daily | @daily | control-plane | MissedRun |
 
 The v1 CronJob `schedule` grammar is `@hourly | @daily | @weekly | <N>m | <N>h`

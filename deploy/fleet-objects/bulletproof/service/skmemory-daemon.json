@@ -28,6 +28,8 @@
     "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
     "runtime": "systemd-user",
     "source": "skmemory/docs/deploy-plan/skmemory-bulletproof-deploy.md",
-    "unit": "skmemory-daemon.service"
+    "unit": "skmemory-daemon.service",
+    "deleted": true,
+    "retired": "Retired 2026-11-11 (SKBrain CmdbDriftBounded triage): skmemory-daemon.service never existed; skmemory runs as per-session MCP stdio servers plus skmemory-sync@, sweep@ and fortress-verify@ timers and the skmem-reconcile job."
   }
 }

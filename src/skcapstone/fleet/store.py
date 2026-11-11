@@ -180,6 +180,25 @@ def _is_conflict_copy(path: Path) -> bool:
     return _CONFLICT_MARKER in path.name
 
 
+#: Spec keys appended by the operator seat as an audit trail, never authored
+#: in a manifest. A write that omits one keeps the existing value.
+_CARRIED_SPEC_KEYS = ("operatorActions",)
+
+
+def _carry_operator_actions(spec: dict, existing: dict) -> dict:
+    """Keep the operator seat's audit log across a manifest re-apply.
+
+    ``skfleet apply -f`` writes the manifest's spec whole. Manifests in git
+    do not (and should not) carry ``operatorActions``, so re-applying one,
+    which is the documented update and revert path, used to erase every
+    recorded ATLAS touch on that object. A spec that brings its own log (the
+    operator seat appending to it) is written as given.
+    """
+    previous = existing.get("spec") or {}
+    carried = {k: previous[k] for k in _CARRIED_SPEC_KEYS if k in previous and k not in spec}
+    return {**spec, **carried} if carried else spec
+
+
 def write_spec(
     paths: FleetPaths,
     kind: str,
@@ -206,6 +225,7 @@ def write_spec(
     path = paths.spec_path(kind, name)
     existing = _load(path) or {}
     _guard_human_only_fields(kind, spec, existing, writer)
+    spec = _carry_operator_actions(spec, existing)
     payload = {
         "kind": kind.capitalize(),
         "name": name,
