@@ -1,7 +1,7 @@
 """Pinned standalone binaries an install profile can require (`binaries` items).
 
 Packages and units cover what the SK repos ship. Some fleet tooling is a
-third-party static binary instead (worktrunk's `wt` is the first). This
+third-party static binary instead (worktrunk's `wt` was the first, gitleaks the second). This
 module is the catalog of those: an exact version and a sha256 per
 architecture, both pinned IN CODE, so a binary only changes on a node when a
 reviewed commit changes it here. There is no "latest" and no trust in the
@@ -66,6 +66,9 @@ class Binary:
         post_install: Names of best-effort steps in POST_INSTALL run after a
             successful install. A failed step is reported, never fatal: the
             binary itself is installed and verified by then.
+        asset_arch: Optional `platform.machine()` -> release-asset arch word,
+            for upstreams that do not name assets by the kernel's spelling
+            (gitleaks uses x64 and arm64). Unmapped arches pass through.
     """
 
     name: str
@@ -75,6 +78,7 @@ class Binary:
     members: tuple[str, ...]
     config: tuple[str, str] | None = None
     post_install: tuple[str, ...] = ()
+    asset_arch: dict[str, str] | None = None
 
 
 CATALOG: dict[str, Binary] = {
@@ -92,6 +96,23 @@ CATALOG: dict[str, Binary] = {
         members=("wt", "git-wt"),
         config=(".config/worktrunk/config.toml", _WORKTRUNK_CONFIG),
         post_install=("worktree-root", "claude-plugin"),
+    ),
+    # Filesystem secret sweep (docs/fleet/GITLEAKS.md). v8.30.1, released
+    # 2026-03-21; hashes from the release's gitleaks_8.30.1_checksums.txt and
+    # re-verified against the downloaded archives.
+    "gitleaks": Binary(
+        name="gitleaks",
+        version="8.30.1",
+        url=(
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/"
+            "gitleaks_8.30.1_linux_{arch}.tar.gz"
+        ),
+        sha256={
+            "x86_64": "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb",
+            "aarch64": "e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080",
+        },
+        members=("gitleaks",),
+        asset_arch={"x86_64": "x64", "aarch64": "arm64"},
     ),
 }
 
@@ -253,7 +274,7 @@ def install(
     expected = entry.sha256.get(machine)
     if expected is None:
         return "failed", f"{name}: no pinned asset for arch {machine}"
-    url = entry.url.format(arch=machine)
+    url = entry.url.format(arch=(entry.asset_arch or {}).get(machine, machine))
     where = directory if directory is not None else bin_dir()
     if dry_run:
         return (
@@ -262,7 +283,7 @@ def install(
         )
 
     with tempfile.TemporaryDirectory() as tmp:
-        archive = Path(tmp) / "asset.tar.xz"
+        archive = Path(tmp) / "asset.tar"  # tarfile sniffs xz or gz
         try:
             fetch(url, archive)
         except Exception as exc:
