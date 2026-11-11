@@ -211,6 +211,10 @@ script-files = [
     "scripts/sk-alert",
     "scripts/sk-cron-run",
     "scripts/sk-alert-table",
+    # Run by skos deploy/schedule/jobs.yaml as skcapstone-backup-gfs. Shipped as
+    # an installed command so a new node gets it with the package instead of a
+    # hand copy in ~/.skcapstone/scripts.
+    "scripts/skcapstone-gfs-backup.sh",
     "scripts/fleet/sk-wt-gc",
     "scripts/fleet/sk-wt-task",
     "scripts/fleet/pi-cardstore-guard.mjs",
