@@ -90,7 +90,6 @@
         "sknoded.service",
         "skoperator.timer",
         "skos-web.service",
-        "sksecurity-audit.timer",
         "skvoice.service",
         "syncthing.service"
       ],
