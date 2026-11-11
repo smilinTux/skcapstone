@@ -58,8 +58,14 @@ def test_every_manifest_still_normalises() -> None:
 
 
 RETIRED = {
-    "cronjob": {"skmem-gfs-tarball", "skmem-health", "skmem-reindex", "skos-morning-brief",
-                "skgateway-parity-check", "skmem-pg-dump-offbox"},
+    "cronjob": {
+        "skmem-gfs-tarball",
+        "skmem-health",
+        "skmem-reindex",
+        "skos-morning-brief",
+        "skgateway-parity-check",
+        "skmem-pg-dump-offbox",
+    },
     "service": {"skingest", "skmemory-daemon", "skos-scheduler"},
 }
 

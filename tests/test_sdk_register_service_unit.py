@@ -30,7 +30,9 @@ def test_unit_is_read_from_a_user_service_cgroup(tmp_path: Path) -> None:
 
 
 def test_template_instance_units_keep_their_instance(tmp_path: Path) -> None:
-    path = _cgroup(tmp_path, "0::/user.slice/user@1000.service/app.slice/skcapstone@lumina.service\n")
+    path = _cgroup(
+        tmp_path, "0::/user.slice/user@1000.service/app.slice/skcapstone@lumina.service\n"
+    )
     assert sdk._systemd_unit(path) == "skcapstone@lumina.service"
 
 

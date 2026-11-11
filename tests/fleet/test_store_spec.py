@@ -57,9 +57,13 @@ def test_reapplying_a_manifest_keeps_the_operator_action_log(paths, operator) ->
     spec and silently drop every recorded operator touch."""
     log = [{"action": "rerun_cronjob", "ts": "2026-08-15T04:12:16Z", "count": 5}]
     spec = {"command": "x", "schedule": "@daily"}
-    store.write_spec(paths, "cronjob", "skmem-reconcile", {**spec, "operatorActions": log}, writer=operator)
+    store.write_spec(
+        paths, "cronjob", "skmem-reconcile", {**spec, "operatorActions": log}, writer=operator
+    )
 
-    store.write_spec(paths, "cronjob", "skmem-reconcile", {**spec, "command": "y"}, writer=operator)
+    store.write_spec(
+        paths, "cronjob", "skmem-reconcile", {**spec, "command": "y"}, writer=operator
+    )
 
     on_disk = store.read_spec(paths, "cronjob", "skmem-reconcile")["spec"]
     assert on_disk["command"] == "y"
@@ -69,5 +73,10 @@ def test_reapplying_a_manifest_keeps_the_operator_action_log(paths, operator) ->
 def test_a_spec_that_carries_its_own_action_log_wins(paths, operator) -> None:
     """The operator seat writes the log it just appended to; that is kept."""
     store.write_spec(paths, "cronjob", "j", {"operatorActions": [{"n": 1}]}, writer=operator)
-    store.write_spec(paths, "cronjob", "j", {"operatorActions": [{"n": 1}, {"n": 2}]}, writer=operator)
-    assert store.read_spec(paths, "cronjob", "j")["spec"]["operatorActions"] == [{"n": 1}, {"n": 2}]
+    store.write_spec(
+        paths, "cronjob", "j", {"operatorActions": [{"n": 1}, {"n": 2}]}, writer=operator
+    )
+    assert store.read_spec(paths, "cronjob", "j")["spec"]["operatorActions"] == [
+        {"n": 1},
+        {"n": 2},
+    ]
