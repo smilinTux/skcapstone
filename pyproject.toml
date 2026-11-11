@@ -215,6 +215,8 @@ script-files = [
     # an installed command so a new node gets it with the package instead of a
     # hand copy in ~/.skcapstone/scripts.
     "scripts/skcapstone-gfs-backup.sh",
+    # Runner for the CMDB network shadow and apply units (gate 4, card 075a82ce).
+    "scripts/skcapstone-cmdb-network",
     "scripts/fleet/sk-wt-gc",
     "scripts/fleet/sk-wt-task",
     "scripts/fleet/pi-cardstore-guard.mjs",
