@@ -97,7 +97,8 @@ state fleet-wide).
 |---|---|---|---|---|
 | skmem-reconcile | python3 -m skmemory.reconcile --all | @daily (04:15) | always-on | ReconcileFresh (THE HA path) |
 | ~~skmem-reindex~~ | retired 2026-11-11 | | | superseded by skmemory-sync@ timers |
-| skmem-pg-dump-offbox | deploy/ops/skmem-pg-backup.sh | @daily (03:15) | always-on | BackupFresh, BackupOffbox |
+| ~~skmem-pg-dump-offbox~~ | retired 2026-11-11 | | | no off-site dump (Chef); see skmem-pg-backup |
+| skmem-pg-backup | deploy/ops/skmem-pg-backup.sh | @daily (03:15) | always-on | BackupFresh (one local dump) |
 | ~~skmem-gfs-tarball~~ | retired 2026-11-11 | | | script never existed; skcapstone-backup-gfs |
 | ~~skmem-health~~ | retired 2026-11-11 | | | runs as Hermes cron skmem-health-daily |
 | skcapstone-backup-gfs | scripts/skcapstone-gfs-backup.sh | @daily (02:45) | control-plane | BackupFresh, BackupOffbox |

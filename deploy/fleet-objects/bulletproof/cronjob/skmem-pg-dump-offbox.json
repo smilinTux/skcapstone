@@ -18,6 +18,8 @@
     "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
     "schedule": "@daily",
     "source": "skmemory/docs/deploy-plan/skmemory-bulletproof-deploy.md",
-    "window": "03:15"
+    "window": "03:15",
+    "deleted": true,
+    "retired": "Retired 2026-11-11 (SKBrain CmdbDriftBounded triage): Chef decided skmem-pg is derived and is recreated from the flat files, not restored, so it keeps ONE local dump and nothing off-site (skmemory docs/BACKUP_SOP.md, skos jobs.yaml). Re-declared as skmem-pg-backup; the flat source goes off-site via memory-backup."
   }
 }

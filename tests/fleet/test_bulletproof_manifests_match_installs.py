@@ -59,7 +59,7 @@ def test_every_manifest_still_normalises() -> None:
 
 RETIRED = {
     "cronjob": {"skmem-gfs-tarball", "skmem-health", "skmem-reindex", "skos-morning-brief",
-                "skgateway-parity-check"},
+                "skgateway-parity-check", "skmem-pg-dump-offbox"},
     "service": {"skingest", "skmemory-daemon", "skos-scheduler"},
 }
 
@@ -89,3 +89,9 @@ def test_capauth_keystore_is_the_capauth_authz_unit() -> None:
 
 def test_housekeep_names_the_timer_skcomms_ships() -> None:
     assert _spec("cronjob", "skcomms-housekeep")["unit"] == "skcomms-housekeep.timer"
+
+
+def test_skmem_pg_backup_is_declared_as_the_local_only_job_it_is() -> None:
+    spec = _spec("cronjob", "skmem-pg-backup")
+    assert spec["command"] == "deploy/ops/skmem-pg-backup.sh"
+    assert "BackupOffbox" not in spec["conditions"], "Chef 2026-11-11: no off-site dump"
