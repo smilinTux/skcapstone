@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 from skcapstone.operator_seat import cmdb_adapter
@@ -24,6 +25,8 @@ def _artifact(
     complete: bool = True,
     ended_at="2026-08-20T19:00:00Z",
     scope="scope-1",
+    kind="network",
+    mtime=None,
 ):
     directory = home / "cmdb" / "reconcile-runs"
     directory.mkdir(parents=True, exist_ok=True)
@@ -32,6 +35,7 @@ def _artifact(
         {
             "scan_id": name,
             "ended_at": ended_at,
+            "scope": kind,
             "scope_fingerprint": scope,
             "completeness": {"complete": complete},
         },
@@ -39,6 +43,8 @@ def _artifact(
     ).encode()
     path.write_bytes(payload)
     path.with_suffix(".sha256").write_text(hashlib.sha256(payload).hexdigest())
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
 
 
 def test_explain_keeps_apply_nonstandard_and_irreversible():
@@ -144,7 +150,7 @@ class _ITIL:
 
 def _three_artifacts(home, *, scopes=("scope-1",) * 3):
     for index, scope in enumerate(scopes, 1):
-        _artifact(home, name=f"run-{index}", scope=scope)
+        _artifact(home, name=f"run-{index}", scope=scope, mtime=1_000 + index)
 
 
 def test_apply_refuses_without_change_id(tmp_path):
@@ -265,3 +271,43 @@ def test_apply_rechecks_freeze_immediately_before_start(tmp_path):
     )
     assert result == {"performed": False, "reason": "frozen", "action": "apply-cmdb-reconcile"}
     assert called == []
+
+
+def test_apply_gate_ignores_newer_local_artifacts(tmp_path):
+    """A local timer run between the shadows and the apply must not block it.
+
+    Local artifacts are complete and carry no scope_fingerprint; the gate used
+    to take the three newest artifacts of any scope and refuse (gate 4 B2).
+    """
+    from skcapstone.fleet.paths import FleetPaths
+
+    _three_artifacts(tmp_path)
+    _artifact(tmp_path, name="local-1", scope=None, kind="local", mtime=2_000)
+    result = cmdb_adapter.cmdb_act(
+        FleetPaths(tmp_path),
+        "apply-cmdb-reconcile",
+        change_id="chg-approved",
+        runner=lambda _argv: True,
+        itil_factory=_ITIL,
+        manager_factory=_CleanManager,
+    )
+    assert result["performed"] is True
+
+
+def test_apply_gate_counts_only_network_scope_artifacts(tmp_path):
+    """Three complete artifacts of another scope never satisfy a network apply."""
+    from skcapstone.fleet.paths import FleetPaths
+
+    _artifact(tmp_path, name="net-1", mtime=1_000)
+    for index in range(3):
+        _artifact(tmp_path, name=f"local-{index}", kind="local", mtime=2_000 + index)
+    result = cmdb_adapter.cmdb_act(
+        FleetPaths(tmp_path),
+        "apply-cmdb-reconcile",
+        change_id="chg-approved",
+        runner=lambda _argv: True,
+        itil_factory=_ITIL,
+        manager_factory=_CleanManager,
+    )
+    assert result["performed"] is False
+    assert "network" in result["reason"]
