@@ -763,7 +763,7 @@ def build_scheduler(
         callback=make_profile_freshness_task(home),
     )
 
-    # Service health check - pings Qdrant, FalkorDB, Syncthing, daemons
+    # Service health check - pings FalkorDB, Syncthing, daemons (Qdrant is retired)
     try:
         from .service_health import make_service_health_task
 

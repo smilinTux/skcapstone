@@ -92,9 +92,9 @@ def test_any_vantage_is_probed_everywhere(home: Path, monkeypatch) -> None:
     assert row["status"] == "up" and row["vantage_point"] == "any"
 
 
-def test_default_local_qdrant_is_probed_only_from_this_host(home: Path, monkeypatch) -> None:
-    for var in ("SKMEMORY_SKVECTOR_URL", "SKMEMORY_SKVECTOR_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
+def test_opt_in_local_qdrant_is_probed_only_from_this_host(home: Path, monkeypatch) -> None:
+    monkeypatch.delenv("SKMEMORY_SKVECTOR_API_KEY", raising=False)
+    monkeypatch.setenv("SKMEMORY_SKVECTOR_URL", "http://localhost:6333")
     monkeypatch.setenv("SKMEMORY_SKVECTOR_VANTAGE_POINT", "chiap99")
     monkeypatch.setattr(service_health, "_load_agent_yaml", lambda *a, **k: {})
     monkeypatch.setattr(

@@ -133,7 +133,7 @@ def _load_agent_yaml(config_name: str, agent: str | None = None) -> dict:
 
     Falls back gracefully when the file or yaml lib is unavailable. Used by
     check_all_services() so the laptop's jarvis daemon can read the same
-    correctly-populated skvector.yaml / skgraph.yaml that skmemory uses,
+    correctly-populated skgraph.yaml that skmemory uses,
     instead of probing localhost defaults that don't exist here.
     """
     if not agent:
@@ -419,10 +419,10 @@ def check_all_services() -> list[dict[str, Any]]:
     """Ping every known service and return a list of status dicts.
 
     Environment variables override default URLs (set any to "disabled" to skip):
-        SKMEMORY_SKVECTOR_URL     - Qdrant REST base (default: read from
-                                    ~/.skcapstone/agents/<agent>/config/skvector.yaml,
-                                    else http://localhost:6333)
-        SKMEMORY_SKVECTOR_API_KEY - Qdrant API key (default: from skvector.yaml)
+        SKMEMORY_SKVECTOR_URL     - Qdrant REST base. RETIRED backend: probed only
+                                    when this is set explicitly (no skvector.yaml
+                                    or localhost fallback)
+        SKMEMORY_SKVECTOR_API_KEY - Qdrant API key (only with the URL above)
         SKMEMORY_SKVECTOR_VANTAGE_POINT - host allowed to probe, or "any"
         SKMEMORY_SKGRAPH_HOST     - FalkorDB host   (default: read from
                                     ~/.skcapstone/agents/<agent>/config/skgraph.yaml,
@@ -443,44 +443,20 @@ def check_all_services() -> list[dict[str, Any]]:
     """
     results: list[dict[str, Any]] = []
 
-    # -- SKVector (Qdrant) --------------------------------------------------
-    qdrant_base = os.environ.get("SKMEMORY_SKVECTOR_URL", "")
-    qdrant_api_key = os.environ.get("SKMEMORY_SKVECTOR_API_KEY", "")
-    qdrant_vantage = os.environ.get("SKMEMORY_SKVECTOR_VANTAGE_POINT", "")
-    # Fall back to per-agent skvector.yaml when env vars are absent
-    if not qdrant_base or not qdrant_api_key:
-        cfg = _load_agent_yaml("skvector")
-        if cfg.get("enabled", True):
-            if not qdrant_base:
-                if cfg.get("url"):
-                    qdrant_base = str(cfg["url"])
-                else:
-                    # Reconstruct URL from host/port/https
-                    host = cfg.get("host", "localhost")
-                    port = cfg.get("port", 6333)
-                    proto = "https" if cfg.get("https") or int(port) == 443 else "http"
-                    if int(port) in (80, 443):
-                        qdrant_base = f"{proto}://{host}"
-                    else:
-                        qdrant_base = f"{proto}://{host}:{port}"
-            if not qdrant_api_key and cfg.get("api_key") and cfg["api_key"] != "CHANGE_ME":
-                qdrant_api_key = cfg["api_key"]
-            if not qdrant_vantage and cfg.get("vantage_point"):
-                qdrant_vantage = str(cfg["vantage_point"])
-        elif not qdrant_base:
-            # Explicitly disabled in skvector.yaml. Without this the code below
-            # falls through to the localhost default and probes a backend the
-            # operator already decommissioned, filing a false incident per sweep.
-            qdrant_base = "disabled"
-    if not qdrant_base:
-        qdrant_base = "http://localhost:6333"
-    if not qdrant_vantage:
-        qdrant_vantage = (
+    # -- SKVector (Qdrant): RETIRED ------------------------------------------
+    # skmemory moved vectors to the per-node skmem-pg long ago and the
+    # Qdrant stack has been removed, so this probe no longer reads
+    # skvector.yaml or falls back to localhost:6333 (either one files a false
+    # "down" incident per sweep). It runs only when an operator opts in by
+    # setting SKMEMORY_SKVECTOR_URL explicitly, which is also the rollback path.
+    qdrant_base = os.environ.get("SKMEMORY_SKVECTOR_URL", "").strip()
+    if qdrant_base and qdrant_base.lower() != "disabled":
+        qdrant_api_key = os.environ.get("SKMEMORY_SKVECTOR_API_KEY", "")
+        qdrant_vantage = os.environ.get("SKMEMORY_SKVECTOR_VANTAGE_POINT", "") or (
             socket.gethostname()
             if any(h in qdrant_base for h in ("//localhost", "//127.0.0.1"))
             else _ANY_VANTAGE
         )
-    if qdrant_base.lower() != "disabled":
         qdrant_url = qdrant_base.rstrip("/") + "/healthz"
         qdrant_headers: dict[str, str] = {}
         if qdrant_api_key:
