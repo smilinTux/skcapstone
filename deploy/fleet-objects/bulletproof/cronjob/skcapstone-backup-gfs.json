@@ -5,7 +5,7 @@
   },
   "name": "skcapstone-backup-gfs",
   "spec": {
-    "command": "scripts/backup-gfs.sh",
+    "command": "scripts/skcapstone-gfs-backup.sh",
     "conditions": [
       "MissedRun",
       "BackupFresh",

@@ -5,7 +5,7 @@
   },
   "name": "skchat-backup-offbox",
   "spec": {
-    "command": "deploy/backup-skchat.sh",
+    "command": "scripts/backup-skchat.sh",
     "conditions": [
       "MissedRun",
       "BackupFresh",
@@ -17,6 +17,7 @@
     "note": "chat history + group keys off-box (theme 5, zero backup path).",
     "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
     "schedule": "@daily",
-    "source": "skchat/docs/deploy-plan/skchat-bulletproof-deploy.md"
+    "source": "skchat/docs/deploy-plan/skchat-bulletproof-deploy.md",
+    "unit": "skchat-backup.timer"
   }
 }

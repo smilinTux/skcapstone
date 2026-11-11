@@ -24,6 +24,6 @@
     "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
     "runtime": "systemd-user",
     "source": "skchat/docs/deploy-plan/skchat-bulletproof-deploy.md",
-    "unit": "skchat-telegram-bridge@lumina.service"
+    "unit": "skchat-telegram-lumina.service"
   }
 }
