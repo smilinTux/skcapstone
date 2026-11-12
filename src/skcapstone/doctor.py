@@ -166,6 +166,7 @@ def run_diagnostics(
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
     report.checks.extend(_check_sync_conflicts(home))
+    report.checks.extend(_check_stignore(home))
     report.checks.extend(_check_multi_writer_layouts(home))
     report.checks.extend(_check_scheduler(home))
     report.checks.extend(_check_systemd_runtime(home))
@@ -813,6 +814,11 @@ def _check_multi_writer_layouts(home: Path) -> list[Check]:
     ]
 
 
+#: How many conflict paths ``sync:conflicts`` prints. The count is always exact; the
+#: list is capped so a flood (hundreds of copies) does not bury the rest of the report.
+_CONFLICT_PATHS_SHOWN = 10
+
+
 def _check_sync_conflicts(home: Path) -> list[Check]:
     """Detect Syncthing sync-conflict files under the shared root.
 
@@ -850,12 +856,15 @@ def _check_sync_conflicts(home: Path) -> list[Check]:
             )
         ]
     areas = sorted({p.relative_to(home).parts[0] for p in conflicts})
+    shown = sorted(str(p.relative_to(home)) for p in conflicts)[:_CONFLICT_PATHS_SHOWN]
+    more = len(conflicts) - len(shown)
+    paths = "; ".join(shown) + (f"; (+{more} more)" if more > 0 else "")
     return [
         Check(
             name="sync:conflicts",
             description="Syncthing sync-conflict files present",
             passed=False,
-            detail=f"{len(conflicts)} conflict file(s) in: {', '.join(areas)}",
+            detail=f"{len(conflicts)} conflict file(s) in: {', '.join(areas)}. Paths: {paths}",
             fix=(
                 "List with: find ~/.skcapstone -name '*.sync-conflict-*' ; keep "
                 "the authoritative copy and remove stale duplicates "
@@ -864,6 +873,129 @@ def _check_sync_conflicts(home: Path) -> list[Check]:
             category="sync",
         )
     ]
+
+
+def _check_stignore(home: Path) -> list[Check]:
+    """Check the Syncthing ignore layout against SYNCTHING_IGNORE_STANDARD. Report only.
+
+    ``.stignore`` is never synced, so per-node copies drift (one node lacked the
+    ``/secrets`` rule another had). The standard puts the rules in a synced
+    ``.stignore-shared`` and makes ``.stignore`` a shim that includes it. The effective
+    rules come from the Syncthing daemon (``/rest/db/ignores``) when it answers, else
+    from the files. A GPU worker's allowlist ``.stignore`` is a recognised variant, not
+    a violation. Nothing here changes a file; the fix text names the command.
+
+    Args:
+        home: Shared root directory (~/.skcapstone).
+
+    Returns:
+        Four checks: shim, shared file, shared-file drift, critical rules.
+    """
+    from .stignore_layout import diagnose
+
+    if not home.is_dir():
+        return []
+    diag = diagnose(home)
+    found = {f.code: f for f in diag.findings}
+    worker = diag.kind == "worker"
+    fix_install = "skcapstone sync stignore"
+    checks: list[Check] = []
+
+    if "not_shim" in found:
+        checks.append(
+            Check(
+                name="sync:stignore-shim",
+                description=".stignore is the shim that includes .stignore-shared",
+                passed=False,
+                detail=found["not_shim"].detail,
+                fix="skcapstone sync stignore --migrate",
+                category="sync",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                name="sync:stignore-shim",
+                description=".stignore is the shim that includes .stignore-shared",
+                passed=True,
+                detail="worker allowlist (no include by design)" if worker else "shim",
+                category="sync",
+            )
+        )
+
+    if "shared_missing" in found:
+        checks.append(
+            Check(
+                name="sync:stignore-shared",
+                description=".stignore-shared present",
+                passed=False,
+                detail=found["shared_missing"].detail,
+                fix=fix_install,
+                category="sync",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                name="sync:stignore-shared",
+                description=".stignore-shared present",
+                passed=True,
+                detail="not used on a worker allowlist" if worker else "present",
+                category="sync",
+            )
+        )
+
+    drift = found.get("shared_drift")
+    checks.append(
+        Check(
+            name="sync:stignore-shared-drift",
+            description=".stignore-shared matches the packaged canonical version",
+            passed=drift is None,
+            detail=drift.detail if drift else "identical" if not worker else "n/a on a worker",
+            fix=(
+                "Report only. If the packaged version is behind, update "
+                "src/skcapstone/defaults/.stignore-shared; if this node is behind, edit "
+                ".stignore-shared once (it syncs to every node)."
+                if drift
+                else ""
+            ),
+            category="sync",
+        )
+    )
+
+    crit = [f for f in diag.findings if f.code in ("critical_missing", "daemon_ignore_error")]
+    if diag.kind == "absent":
+        checks.append(
+            Check(
+                name="sync:stignore-critical-rules",
+                description="Critical ignore rules in the effective ruleset",
+                passed=False,
+                detail="no .stignore, so nothing is ignored",
+                fix=fix_install,
+                category="sync",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                name="sync:stignore-critical-rules",
+                description="Critical ignore rules in the effective ruleset",
+                passed=not crit,
+                detail=(
+                    "; ".join(f.detail for f in crit)
+                    if crit
+                    else f"all present (read from {diag.source})"
+                ),
+                fix=(
+                    "Add the rule to .stignore-shared once (it syncs to every node); on a "
+                    "worker, add it to .stignore above the allowlist."
+                    if crit
+                    else ""
+                ),
+                category="sync",
+            )
+        )
+    return checks
 
 
 def _check_scheduler(home: Path) -> list[Check]:

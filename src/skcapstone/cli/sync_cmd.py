@@ -243,6 +243,43 @@ def register_sync_commands(main: click.Group) -> None:
 
         console.print()
 
+    @sync.command("stignore")
+    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Sovereign root.")
+    @click.option(
+        "--migrate",
+        is_flag=True,
+        help="Rewrite a legacy .stignore as a shim, keeping its node-local rules (backed up).",
+    )
+    def sync_stignore(home, migrate):
+        """Install the Syncthing ignore layout: .stignore-shared plus a .stignore shim.
+
+        Writes the packaged .stignore-shared if absent, then the shim that includes
+        it. An existing legacy .stignore is never overwritten: it is backed up and
+        the difference printed. A worker allowlist .stignore is left alone. See
+        sk-standards SYNCTHING_IGNORE_STANDARD.
+        """
+        from ..stignore_layout import install
+
+        root = Path(home).expanduser()
+        result = install(root, migrate=migrate)
+        console.print(f"\n  [bold cyan]Syncthing ignore layout[/bold cyan] ({root})\n")
+        console.print(f"  .stignore-shared: [cyan]{result.shared}[/cyan]")
+        console.print(f"  .stignore:        [cyan]{result.stignore}[/cyan]")
+        if result.backup:
+            console.print(f"  backup:           {result.backup}")
+        for line in result.messages:
+            console.print(f"  {line}")
+        if result.stignore == "legacy":
+            console.print(f"\n  [yellow]Only in your .stignore ({len(result.local_only)}):[/yellow]")
+            for pattern in result.local_only:
+                console.print(f"    {pattern}")
+            console.print(f"  [yellow]Only in the shared file ({len(result.gained)}):[/yellow]")
+            for pattern in result.gained:
+                console.print(f"    {pattern}")
+        console.print()
+        if result.stignore in ("error", "refused"):
+            raise SystemExit(1)
+
     @sync.command("pair")
     @click.argument("device_id")
     @click.option("--name", "-n", default="peer", help="Friendly name for the device.")

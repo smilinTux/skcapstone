@@ -421,8 +421,8 @@ def _syncthing_endpoint() -> tuple[str | None, str | None]:
     return base, key
 
 
-def _folder_id(root: Path) -> str:
-    """The Syncthing folder id whose path is ``root``, else the conventional id."""
+def _folder_id(root: Path) -> str | None:
+    """The Syncthing folder id whose path is ``root``, or None when none is."""
     try:
         from .sync_policy.discovery import discover_folders
 
@@ -433,7 +433,7 @@ def _folder_id(root: Path) -> str:
                 return folder.folder_id
     except Exception:  # noqa: BLE001  best-effort discovery
         pass
-    return "skcapstone-sync"
+    return None
 
 
 def fetch_effective_rules(root: Path, *, timeout: float = 3.0) -> tuple[list[str] | None, str]:
@@ -454,6 +454,10 @@ def fetch_effective_rules(root: Path, *, timeout: float = 3.0) -> tuple[list[str
     if (parsed.hostname or "") not in _LOOPBACK:
         return None, "Syncthing API is not on loopback, not contacted"
     folder = _folder_id(root)
+    if folder is None:
+        # Never answer for a root the daemon does not serve: a test or a second home
+        # would otherwise be judged on some other folder's rules.
+        return None, f"no Syncthing folder is rooted at {root}"
     url = f"{parsed.scheme}://{parsed.netloc}/rest/db/ignores?" + urllib.parse.urlencode(
         {"folder": folder}
     )
@@ -517,6 +521,7 @@ class Diagnosis:
 def _critical_missing(rules: list[str], kind: str) -> list[str]:
     keys = [_key(r) for r in rules]
     if kind == "worker":
+        # classify() only returns "worker" when the catch-all `**` is present.
         missing = []
         first_allow = next(
             (i for i, r in enumerate(rules) if _PREFIX_RE.sub("", r).startswith("!")), len(rules)
@@ -524,8 +529,6 @@ def _critical_missing(rules: list[str], kind: str) -> list[str]:
         for wanted in WORKER_CRITICAL_RULES:
             if _key(wanted) not in keys[:first_allow]:
                 missing.append(wanted)
-        if "**" not in rules:
-            missing.append("** (catch-all closing the allowlist)")
         return missing
     return [wanted for wanted in CRITICAL_RULES if _key(wanted) not in keys]
 
