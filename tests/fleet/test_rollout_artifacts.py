@@ -12,7 +12,12 @@ from pathlib import Path
 import pytest
 
 from skcapstone.fleet import deployment_manifest, paths, rollout_artifacts
-from skcapstone.fleet.deployment_manifest import PER_HOST_ARTIFACTS, production_compatibility_shim
+from skcapstone.fleet.deployment_manifest import (
+    PER_HOST_ARTIFACTS,
+    PRODUCTION_CANONICAL_SCRIPTS,
+    production_compatibility_shim,
+    production_script_bytes,
+)
 from skcapstone.fleet.paths import paths_for_home
 from skcapstone.fleet.rollout_artifacts import install_artifact, install_units
 from skcapstone.fleet.staged_rollout import _DEPLOY_STEPS, _ROLLBACK_STEPS, _remote_drift
@@ -49,6 +54,32 @@ def test_production_shim_is_byte_identical_to_drift_contract(layout, name):
     target = home / ".local/bin" / name
     assert target.read_bytes() == production_compatibility_shim(name, home)
     assert target.stat().st_mode & 0o777 == 0o755
+
+
+@pytest.mark.parametrize("name", sorted(PRODUCTION_CANONICAL_SCRIPTS))
+@pytest.mark.parametrize("pip_python", ["python3", "python3.14"])
+def test_native_copy_gets_the_drift_contract_shebang_whatever_pip_wrote(layout, name, pip_python):
+    """A 3.14 venv's pip writes #!.../python3; the gate pins #!.../python."""
+    repo, home = layout
+    native = home / ".skenv/bin" / name
+    native.parent.mkdir(parents=True, exist_ok=True)
+    body = (repo / "scripts/fleet" / name).read_bytes().split(b"\n", 1)[1]
+    native.write_bytes(f"#!{home}/.skenv/bin/{pip_python}\n".encode() + body)
+    install_artifact(repo, home, name)
+    assert native.read_bytes() == production_script_bytes(
+        (repo / "scripts/fleet" / name).read_bytes(), home
+    )
+    assert native.stat().st_mode & 0o777 == 0o755
+
+
+def test_non_production_host_leaves_the_native_copy_alone(layout):
+    repo, home = layout
+    (paths_for_home(home).root / "production.json").unlink()
+    native = home / ".skenv/bin/skfleet-rotate.py"
+    native.parent.mkdir(parents=True, exist_ok=True)
+    native.write_bytes(b"#!/pip/wrote/this\n")
+    install_artifact(repo, home, "skfleet-rotate.py")
+    assert native.read_bytes() == b"#!/pip/wrote/this\n"
 
 
 @pytest.mark.parametrize("production", [False, True])
