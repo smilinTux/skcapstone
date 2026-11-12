@@ -1,6 +1,6 @@
 - ATLAS gate 5 hardening: the weak spots the fault-injection drill documented, and the
   holes the independent review of the first fix found, are fixed and are PASS criteria of
-  `scripts/atlas_p32_fault_injection_drill.py` (29 scenarios; 22 to 27 are new).
+  `scripts/atlas_p32_fault_injection_drill.py` (30 scenarios; 22 to 28 are new).
   - Stale evidence is refused, and judged against the source. A proposal that actuates
     must carry structured `evidence: {source, observed_at}` where `observed_at` is when
     the SOURCE data was true (adapters report `source_observed_at`; the envelope never
@@ -47,3 +47,14 @@
     binding tag is percent-escaped and rejects `|`; a ledger error on one intent no longer
     crashes the dispatch pass; an intent stranded in AUTHORIZED or EXECUTING by a crash is
     escalated with an alert and never re-run. Drill scenario 27 is new.
+  - Review round 6: the stranded sweep no longer escalates live dispatches (lifecycle events are
+    stamped from the clock at write time, a dispatch holds its per-change lock from commit to
+    close-out and the sweep skips a held change, and `run_dispatch_pass` and `honor-pending`
+    share the loop's single-flight lock); nothing is rolled back after an actuation that ran
+    (a bookkeeping error alerts instead); a future-dated vote closes the intent instead of
+    buying time; the loop closes escalated intents whose condition cleared so a later vote
+    cannot ride the next episode; the change locks move to a private node-local state
+    directory; actuation refuses unless this node is the designated actuator
+    (`SKOPERATOR_ACTUATOR_NODE` or `~/.config/skcapstone/atlas-actuator-node`, default NONE);
+    a crash in AUTHORIZED retires the still-approved change; and auto-lane intents older than
+    one pass are voided before anything else runs. Drill scenario 28 is new.

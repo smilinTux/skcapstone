@@ -101,8 +101,10 @@ order, and a refusal never writes AUTHORIZED because nothing was authorized:
 * **a human approval is per episode, and it expires.** It is read from the newest
   qualifying vote's `decided_at` against the real clock. Older than
   `honor-pending --max-approval-age` (default 24 hours, at most 7 days) it is refused and
-  the intent closed (ESCALATED, change retired to a terminal state). A vote dated after
-  the clock, a bad configuration, or an unreadable time is refused and closes nothing. When
+  the intent closed (ESCALATED, change retired to a terminal state). A vote dated more than
+  a minute after the clock is closed the same way, with its own reason: merely refusing it
+  would let it buy time (refused now, honored when its date arrives). A bad configuration
+  or an unreadable time is refused and closes nothing. When
   re-observation sees the condition definitely cleared, the intent is closed with the reason
   "condition cleared before dispatch" and its change retired too, so a recurrence needs a
   new proposal and a new human vote. This is deliberately conservative (fail closed) and can
@@ -169,3 +171,44 @@ condition the outcome is `performed, unverified`. The word `applied` is no longe
 produced. Nothing in the ledger, the ITIL correlation, the dispatcher or
 `skcapstone doctor` branches on the outcome string; the brief artifact and the tick
 report print it verbatim.
+
+## Multi-node: one actuator, node-local locks, nothing stranded alive
+
+The ledger, the ITIL records and the decisions store live under the fleet root, which
+Syncthing replicates, and `skoperator.timer` runs on several node profiles. An `flock` only
+orders processes on one kernel, so none of the locks below protects against a second node.
+
+**Exactly one node actuates.** Actuation (the loop's inline and ITIL lanes, `dispatch_intent`,
+`run_dispatch_pass`, `skoperator honor-pending`) refuses unless this node is the DESIGNATED
+actuator (`operator_seat/node_local.py`). The designation is node-local configuration, the
+environment variable `SKOPERATOR_ACTUATOR_NODE` (a systemd drop-in) or the first line of
+`~/.config/skcapstone/atlas-actuator-node`, compared with this node's name, and it DEFAULTS
+TO NONE: until an operator designates a node, nothing actuates anywhere. Other nodes still
+observe, propose and park decisions. The manual act verbs (`skcapstone cmdb operator act`,
+the per-adapter act functions) are separate entry points and are not covered by this rule.
+
+**Locks are node-local.** The per-change lock and the single-flight lock live in a node-local
+state directory (`$SKCAPSTONE_LOCAL_STATE_DIR`, else `$XDG_STATE_HOME/skcapstone`, else
+`~/.local/state/skcapstone`), created 0700, verified to be a real directory owned by this user
+with no group or world access (a symlink, wrong owner or loose mode refuses the dispatch), and
+opened `O_NOFOLLOW`.
+
+**A live dispatch is never swept as stranded.** Every lifecycle event is stamped from the
+clock at write time, never the pass start, and a dispatch holds its per-change lock from the
+moment it commits to the change until it has closed the change out. The stranded sweep takes
+that lock non-blocking and skips a change it cannot take. `run_dispatch_pass` and
+`honor-pending` also take the same single-flight lock as the loop (they refuse with "another
+Atlas operator pass is active" rather than overlap it). An intent a crash left in AUTHORIZED
+whose change is still only `approved` has that change retired (rejected, then closed), since
+`approved -> failed` is not a legal transition.
+
+**Nothing is rolled back after an actuation that ran.** Once the postcondition has verified,
+a bookkeeping error (the ledger, the ITIL record) is recorded as an `error:` outcome with an
+alert and the fix is left in place, in both the loop and the dispatcher.
+
+**Episodes close in the loop.** The loop closes every open escalate-lane intent (and retires
+its change) when its condition reads definitely cleared in this pass, so a human vote cast
+later cannot ride the next episode. A clear-and-refire that falls entirely between two
+passes is indistinguishable from one episode, because the loop only knows what it observed.
+The next loop or dispatch pass also voids auto-lane intents older than one pass (twice the
+runtime budget), the leftovers of a killed loop, before doing anything else.
