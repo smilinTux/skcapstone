@@ -58,7 +58,7 @@ from typing import Any, Callable
 
 from ..fleet import drill as fleet_drill
 from ..fleet import store
-from ..fleet.paths import FleetPaths
+from ..fleet.paths import FleetPaths, self_node_name
 from ..itil import ITILManager
 from . import (
     act_dispatch,
@@ -66,11 +66,16 @@ from . import (
     decisions,
     dispatch,
     loop,
+    node_local,
     policy,
     proposer,
     safety,
     skchat_adapter,
 )
+
+#: The real single-actuator-node rule, captured before ``run_all`` opens the gate for the
+#: drill's own throwaway fleet (scenario 28 puts it back to prove the rule).
+_REAL_ACTUATOR_REFUSAL = node_local.actuator_refusal
 
 SCHEMA_NOTE = "ATLAS P3.2 fault-injection drill (card b993eaaa, epic fb3cc09d)"
 
@@ -2586,6 +2591,214 @@ def scenario_one_approval_one_actuation_per_episode(ctx: DrillContext) -> Scenar
     )
 
 
+def scenario_single_actuator_live_dispatch_and_future_votes(ctx: DrillContext) -> ScenarioResult:
+    """Review round 6: one actuator node, node-local locks, live dispatches left alone, and a
+    future-dated vote cannot buy time.
+
+    (a) The REAL single-actuator-node rule: with no node designated (the default), or another
+    node designated, the loop and ``run_dispatch_pass`` refuse to actuate; designating this node
+    opens it. (b) The per-change lock lives in the node-local state directory, never beside the
+    (synced) ledger. (c) A dispatch whose actuation outlasts the stranded timeout is NOT
+    escalated by a sweeper (its lifecycle events are stamped from the clock at write time and
+    it holds its change lock), and its fix is not rolled back. (d) A vote dated five days ahead
+    closes the intent and retires the change instead of waiting to be honored.
+    """
+    slug = "s28-actuator-node-live-dispatch"
+    itil = ITILManager(ctx.itil_home)
+    ledger = ctx.scenario_ledger(slug)
+    created = datetime.now(timezone.utc)
+    bind = dispatch.change_binding_tag("skchat", "restart-telegram-bridge", "telegram-bridge")
+    voter = "capauth:drill-human@scratch"
+
+    def approved(decided_at: str | None = None):
+        change = itil.propose_change(
+            title="restart telegram bridge",
+            change_type="normal",
+            risk="low",
+            rollback_plan="restart again",
+            created_by="atlas-p32-drill",
+            tags=["operator", bind],
+        )
+        itil.submit_cab_vote(
+            change.id, agent=voter, decision="approved", subject=voter, subject_role="approver"
+        )
+        if decided_at:
+            path = itil.cab_dir / f"{change.id}-{voter}.json"
+            data = json.loads(path.read_text())
+            data["decided_at"] = decided_at
+            path.write_text(json.dumps(data))
+        return change
+
+    def intent(change_id: str, tag: str) -> str:
+        core = action_ledger.ActionIntent(
+            condition_fingerprint=f"fp-{slug}-{tag}",
+            application="skchat",
+            target_kind="CI",
+            target_id="telegram-bridge",
+            action="restart-telegram-bridge",
+            catalog_generation=_current_catalog_generation(ctx),
+            created_at=created,
+            itil_change_id=change_id,
+            condition_type="BridgeAlive",
+        )
+        ledger.create(core, actor="atlas-p32-drill")
+        for nxt, detail in (
+            (action_ledger.ActionState.DIAGNOSED, {}),
+            (action_ledger.ActionState.PROPOSED, {"disposition": "escalate"}),
+        ):
+            ledger.append(
+                core.intent_id, nxt, occurred_at=created, actor="atlas-p32-drill", detail=detail
+            )
+        return core.intent_id
+
+    def sweep(runner, **kwargs):
+        return dispatch.run_dispatch_pass(
+            ctx.paths,
+            ledger,
+            itil,
+            adapters={"skchat": skchat_adapter.observe},
+            problem_types=loop.PROBLEM_WHEN_TRUE,
+            apply_fn=act_dispatch.build_apply_fn(ctx.paths, _now_iso(), runner=runner, itil=itil),
+            now_iso=_now_iso(),
+            actor="atlas-p32-drill",
+            emit=lambda _m: None,
+            **kwargs,
+        )
+
+    # (a) the real single-actuator-node rule
+    saved_env = {k: os.environ.get(k) for k in (node_local.ENV_ACTUATOR, "XDG_CONFIG_HOME")}
+    os.environ.pop(node_local.ENV_ACTUATOR, None)
+    os.environ["XDG_CONFIG_HOME"] = str(ctx.root / "empty-config")
+    node_local.actuator_refusal = _REAL_ACTUATOR_REFUSAL
+    ctx.inject_wedge()
+    waiting = intent(approved().id, "waiting")
+    calls_before = len(ctx.calls)
+    try:
+        undesignated = node_local.actuator_refusal()
+        proposal = ctx.wedge_proposal()
+        refused_loop = _run_pass(
+            ctx,
+            propose=lambda b, r: [proposal],
+            apply_fn=act_dispatch.build_apply_fn(
+                ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=None
+            ),
+            execution_state=ctx.scenario_state(slug),
+            ledger=ctx.scenario_ledger(slug + "-loop"),
+            decisions_dir=ctx.decisions_dir / slug,
+        )["outcomes"][0]["outcome"]
+        refused_pass = sweep(ctx.runner_boom())
+        os.environ[node_local.ENV_ACTUATOR] = "some-other-node"
+        other_node = node_local.actuator_refusal()
+        os.environ[node_local.ENV_ACTUATOR] = self_node_name()
+        designated_here = node_local.actuator_refusal()
+    finally:
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        node_local.actuator_refusal = lambda: None
+    rule_ok = (
+        undesignated is not None
+        and "no actuator node" in undesignated
+        and refused_loop.startswith("refused: no actuator node")
+        and refused_pass == []
+        and other_node is not None
+        and designated_here is None
+        and len(ctx.calls) == calls_before
+        and ledger.current_state(waiting) is action_ledger.ActionState.PROPOSED
+    )
+
+    # (c) a live dispatch that outlasts the stranded timeout is left alone
+    live_change = approved()
+    live_id = intent(live_change.id, "live")
+    real_apply = act_dispatch.build_apply_fn(
+        ctx.paths, _now_iso(), runner=ctx.runner_success_and_heal(), itil=itil
+    )
+    swept: list[list[Any]] = []
+    rollbacks: list[dict] = []
+
+    def long_apply(prop: dict, classification: dict) -> Any:
+        swept.append(
+            dispatch.escalate_stranded(
+                ledger,
+                itil,
+                now_iso=_now_iso(),
+                clock=lambda: datetime.now(timezone.utc) + timedelta(minutes=11),
+            )
+        )
+        return real_apply(prop, classification)
+
+    live = dispatch.dispatch_intent(
+        ctx.paths,
+        ledger,
+        itil,
+        live_id,
+        adapters={"skchat": skchat_adapter.observe},
+        problem_types=loop.PROBLEM_WHEN_TRUE,
+        apply_fn=long_apply,
+        rollback_fn=lambda p, c, r: rollbacks.append(p) or {"performed": True},
+        now_iso=_now_iso(),
+        actor="atlas-p32-drill",
+        emit=lambda _m: None,
+    )
+    live_ok = (
+        live.outcome == "verified"
+        and swept == [[]]
+        and rollbacks == []
+        and ledger.current_state(live_id) is action_ledger.ActionState.VERIFIED
+    )
+
+    # (b) the lock lives in node-local state, not beside the ledger
+    lock_file = node_local.state_dir() / "atlas" / "change-locks" / f"{live_change.id}.lock"
+    locks_ok = lock_file.is_file() and not (ledger.root / "change-locks").exists()
+
+    # (d) a vote dated five days ahead closes the intent instead of waiting
+    ctx.inject_wedge()
+    future_change = approved(decided_at=(created + timedelta(days=5)).isoformat())
+    future_id = intent(future_change.id, "future")
+    future = dispatch.dispatch_intent(
+        ctx.paths,
+        ledger,
+        itil,
+        future_id,
+        adapters={"skchat": skchat_adapter.observe},
+        problem_types=loop.PROBLEM_WHEN_TRUE,
+        apply_fn=act_dispatch.build_apply_fn(
+            ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
+        ),
+        now_iso=_now_iso(),
+        actor="atlas-p32-drill",
+        emit=lambda _m: None,
+        max_approval_age_s=dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS,
+    )
+    retired = next(c for c in itil.list_changes() if c.id == future_change.id).status.value
+    future_ok = (
+        "dated in the future" in future.outcome
+        and ledger.current_state(future_id) is action_ledger.ActionState.ESCALATED
+        and retired in ("rejected", "closed")
+    )
+    ctx.heal_wedge()
+    return ScenarioResult(
+        name="28. one actuator node, node-local locks, live dispatches left alone",
+        passed=rule_ok and live_ok and locks_ok and future_ok,
+        evidence={
+            "no_designation": undesignated,
+            "loop_without_designation": refused_loop,
+            "other_node_designated": other_node,
+            "this_node_designated": designated_here,
+            "live_dispatch": live.outcome,
+            "sweeper_during_the_live_dispatch": swept,
+            "rollbacks": len(rollbacks),
+            "lock_file_node_local": str(lock_file),
+            "future_dated_vote": future.outcome,
+        },
+        note="actuation needs a designated actuator node (default none), the change lock is "
+        "node-local, a live dispatch is never swept as stranded or rolled back, and a "
+        "future-dated vote is closed (round 6, findings 1, 2 and 4)",
+    )
+
+
 SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_baseline_self_heal,
     scenario_performed_false_actdispatch_gate,
@@ -2616,6 +2829,7 @@ SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_escalated_proposal_needs_a_human_and_keeps_its_decision,
     scenario_approval_authorizes_one_thing_once,
     scenario_one_approval_one_actuation_per_episode,
+    scenario_single_actuator_live_dispatch_and_future_votes,
 ]
 
 
@@ -2645,7 +2859,12 @@ def run_all(root: Path | str | None = None, *, keep_root: bool = True) -> DrillR
     ctx.patch_env(
         SKCOMMS_OUTBOX_DIR=str(ctx.outbox_dir),
         SKCHAT_BRIDGE_HEARTBEAT=str(ctx.heartbeat_path),
+        # Node-local state (the per-change locks) stays inside the guarded drill root.
+        SKCAPSTONE_LOCAL_STATE_DIR=str(ctx.root / "node-local-state"),
     )
+    # The drill runs against its own throwaway fleet, so the single-actuator-node rule is
+    # opened for it (scenario 28 restores the real rule to prove it refuses).
+    node_local.actuator_refusal = lambda: None
     results: list[ScenarioResult] = []
     try:
         for scenario in SCENARIOS:
@@ -2666,6 +2885,7 @@ def run_all(root: Path | str | None = None, *, keep_root: bool = True) -> DrillR
         if store.is_frozen(ctx.paths):
             _unfreeze(ctx.paths)
     finally:
+        node_local.actuator_refusal = _REAL_ACTUATOR_REFUSAL
         ctx.restore_daemon_probe()
         ctx.restore_env()
     finished = _now_iso()
