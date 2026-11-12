@@ -7,6 +7,23 @@ from skcapstone.fleet.paths import FleetPaths
 from skcapstone.operator_seat import action_ledger, loop
 
 
+def _clock_for(now_iso: str):
+    """The injected real clock: 10 seconds after the pass clock the test names."""
+    from datetime import datetime, timedelta
+
+    base = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+    return lambda: base + timedelta(seconds=10)
+
+
+def _provision(paths) -> None:
+    store.set_frozen(
+        paths,
+        False,
+        writer=store.Writer(role="operator", node="node-158", identity="chef"),
+        reason="test provisioning",
+    )
+
+
 def _evidence(observed_at: str) -> dict:
     """Fresh structured evidence, observed 30 seconds before the pass clock."""
     return {"source": "obs:test", "observed_at": observed_at}
@@ -87,6 +104,7 @@ def test_loop_auto_proposal_not_applied_when_execution_off(tmp_path, monkeypatch
     res = loop.run_once(
         paths,
         now_iso="2026-07-29T00:00:00Z",
+        clock=_clock_for("2026-07-29T00:00:00Z"),
         propose=lambda b, r: [prop],
         apply_fn=lambda p, c: applied.append(p),
         execute=False,
@@ -98,11 +116,13 @@ def test_loop_auto_proposal_not_applied_when_execution_off(tmp_path, monkeypatch
 
 def test_loop_auto_proposal_performed_when_execution_on(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     applied = []
     prop = {"action": "restart_service", "object": "web", "evidence": _EV_0729}
     res = loop.run_once(
         paths,
         now_iso="2026-07-29T00:00:00Z",
+        clock=_clock_for("2026-07-29T00:00:00Z"),
         propose=lambda b, r: [prop],
         apply_fn=lambda p, c: applied.append(p),
         execute=True,
@@ -123,6 +143,7 @@ def test_loop_escalation_parks_for_approval(tmp_path, monkeypatch):
     loop.run_once(
         paths,
         now_iso="2026-07-29T00:00:00Z",
+        clock=_clock_for("2026-07-29T00:00:00Z"),
         propose=lambda b, r: [prop],
         decisions_dir=ddir,
         execute=True,
@@ -148,6 +169,7 @@ def test_loop_merges_extra_observers_builtins_win(tmp_path, monkeypatch):
     res = loop.run_once(
         paths,
         now_iso="2026-07-31T00:00:00Z",
+        clock=_clock_for("2026-07-31T00:00:00Z"),
         extra_observers={"skbrain": _skbrain_observe, "fleet": _fake_fleet},
         emit=lambda _s: None,
     )
@@ -179,6 +201,7 @@ def test_loop_frozen_never_applies_even_with_execute(tmp_path, monkeypatch):
     loop.run_once(
         paths,
         now_iso="2026-07-29T00:00:00Z",
+        clock=_clock_for("2026-07-29T00:00:00Z"),
         propose=lambda b, r: [{"action": "restart_service", "object": "x"}],
         apply_fn=lambda p, c: applied.append(p),
         execute=True,
@@ -190,6 +213,7 @@ def test_loop_frozen_never_applies_even_with_execute(tmp_path, monkeypatch):
 def test_loop_failing_apply_does_not_abort_the_pass(tmp_path, monkeypatch):
     # Blast radius: one bad proposal must not kill the proposals behind it.
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     bad = {"action": "restart_service", "object": "nonexistent", "evidence": _EV_0729}
     good = {"action": "restart_service", "object": "web", "evidence": _EV_0729}
     applied = []
@@ -202,6 +226,7 @@ def test_loop_failing_apply_does_not_abort_the_pass(tmp_path, monkeypatch):
     res = loop.run_once(
         paths,
         now_iso="2026-07-29T00:00:00Z",
+        clock=_clock_for("2026-07-29T00:00:00Z"),
         propose=lambda b, r: [bad, good],
         apply_fn=apply_fn,
         execute=True,
@@ -229,6 +254,7 @@ def test_loop_failing_apply_still_parks_later_escalations(tmp_path, monkeypatch)
     res = loop.run_once(
         paths,
         now_iso="2026-07-29T00:00:00Z",
+        clock=_clock_for("2026-07-29T00:00:00Z"),
         propose=lambda b, r: [bad, escalation],
         apply_fn=apply_fn,
         execute=True,
@@ -246,6 +272,7 @@ def test_loop_failing_apply_still_emits_a_report(tmp_path, monkeypatch):
     loop.run_once(
         paths,
         now_iso="2026-07-29T00:00:00Z",
+        clock=_clock_for("2026-07-29T00:00:00Z"),
         propose=lambda b, r: [{"action": "restart_service", "object": "nonexistent"}],
         apply_fn=lambda p, c: (_ for _ in ()).throw(ValueError("boom")),
         execute=True,
@@ -266,6 +293,7 @@ def test_loop_unresolvable_target_parks_instead_of_applying(tmp_path, monkeypatc
     res = loop.run_once(
         paths,
         now_iso="2026-07-29T00:00:00Z",
+        clock=_clock_for("2026-07-29T00:00:00Z"),
         propose=lambda b, r: [{"action": "restart_service", "object": "ghost"}],
         apply_fn=lambda p, c: applied.append(p),
         execute=True,
@@ -290,6 +318,7 @@ def test_verified_execution_requires_ratified_app_condition(tmp_path, monkeypatc
     res = loop.run_once(
         paths,
         now_iso="2026-08-20T00:00:00Z",
+        clock=_clock_for("2026-08-20T00:00:00Z"),
         propose=lambda b, r: [prop],
         explain={"actions": [{"name": "restart-daemon", "standard": True, "reversible": True}]},
         apply_fn=lambda p, c: applied.append(p) or {"performed": True},
@@ -303,6 +332,7 @@ def test_verified_execution_requires_ratified_app_condition(tmp_path, monkeypatc
 
 def test_verified_execution_reobserves_and_requires_condition_clear(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     human = store.Writer(role="operator", node="node-158", identity="chef")
     store.write_spec(
         paths,
@@ -342,6 +372,7 @@ def test_verified_execution_reobserves_and_requires_condition_clear(tmp_path, mo
     res = loop.run_once(
         paths,
         now_iso="2026-08-20T00:00:00Z",
+        clock=_clock_for("2026-08-20T00:00:00Z"),
         propose=lambda b, r: [prop],
         explain={"actions": [{"name": "restart", "standard": True, "reversible": True}]},
         apply_fn=lambda p, c: calls.__setitem__("apply", 1) or {"performed": True},
@@ -368,9 +399,11 @@ def test_verified_execution_reobserves_and_requires_condition_clear(tmp_path, mo
 
 def test_performed_false_is_a_failure(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     res = loop.run_once(
         paths,
         now_iso="2026-08-20T00:00:00Z",
+        clock=_clock_for("2026-08-20T00:00:00Z"),
         propose=lambda b, r: [
             {"action": "restart_service", "object": "svc", "evidence": _EV_0820}
         ],
@@ -383,6 +416,7 @@ def test_performed_false_is_a_failure(tmp_path, monkeypatch):
 
 def test_failed_verification_executes_typed_rollback(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     human = store.Writer(role="operator", node="node-158", identity="chef")
     store.write_spec(
         paths,
@@ -405,6 +439,7 @@ def test_failed_verification_executes_typed_rollback(tmp_path, monkeypatch):
     result = loop.run_once(
         paths,
         now_iso="2026-08-20T00:00:00Z",
+        clock=_clock_for("2026-08-20T00:00:00Z"),
         propose=lambda _b, _r: [
             {
                 "app": "demo",

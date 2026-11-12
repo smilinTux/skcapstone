@@ -97,9 +97,20 @@ def test_ledger_ref_carries_source_and_timestamp():
     assert evidence.ledger_ref(prop) == "obs:skchat:bridge@2026-08-19T23:59:30Z"
 
 
-def test_ledger_ref_prefers_an_explicit_evidence_ref():
+def test_ledger_ref_records_the_stamp_first_and_keeps_an_explicit_ref_too():
     prop = {**_prop(observed_at="2026-08-19T23:59:30Z"), "evidence_ref": "card:abc"}
-    assert evidence.ledger_ref(prop) == "card:abc"
+    assert evidence.ledger_ref(prop) == "obs:skchat:bridge@2026-08-19T23:59:30Z; card:abc"
+
+
+def test_ledger_ref_without_a_stamp_is_just_the_explicit_ref():
+    assert evidence.ledger_ref({"evidence_ref": "card:abc"}) == "card:abc"
+
+
+def test_a_long_explicit_ref_never_pushes_the_stamp_out_of_the_ledger_field():
+    prop = {**_prop(observed_at="2026-08-19T23:59:30Z"), "evidence_ref": "x" * 5000}
+    ref = evidence.ledger_ref(prop)
+    assert ref is not None and len(ref) <= 1024
+    assert ref.startswith("obs:skchat:bridge@2026-08-19T23:59:30Z; ")
 
 
 def test_ledger_ref_is_none_without_any_evidence():
@@ -110,3 +121,24 @@ def test_ledger_ref_is_bounded_to_the_ledger_field_limit():
     prop = {"evidence": {"source": "s" * 5000, "observed_at": "2026-08-19T23:59:30Z"}}
     ref = evidence.ledger_ref(prop)
     assert ref is not None and len(ref) <= 1024 and ref.endswith("@2026-08-19T23:59:30Z")
+
+
+def test_the_max_age_is_capped_so_the_check_cannot_be_neutralised():
+    assert evidence.MAX_ALLOWED_AGE_SECONDS == 3600.0
+    fresh = _prop(observed_at="2026-08-19T23:59:30Z")
+    assert evidence.refusal(fresh, NOW, 3600) is None
+    for too_big in (3601, 86400, 1e18, 10**400):
+        reason = evidence.refusal(fresh, NOW, too_big)
+        assert reason is not None and "max age" in reason, too_big
+
+
+def test_a_huge_integer_max_age_is_a_refusal_not_a_crash():
+    # math.isfinite(10**400) raises OverflowError; the pass must not die on it.
+    reason = evidence.refusal(_prop(observed_at="2026-08-19T23:59:30Z"), NOW, 10**400)
+    assert reason is not None and "max age" in reason
+
+
+@pytest.mark.parametrize("observed_at", ["0001-01-01T00:00:00+05:00", "9999-12-31T23:59:59-05:00"])
+def test_a_timestamp_that_overflows_utc_conversion_is_unparseable_not_a_crash(observed_at):
+    reason = evidence.refusal(_prop(observed_at=observed_at), NOW, 600)
+    assert reason is not None

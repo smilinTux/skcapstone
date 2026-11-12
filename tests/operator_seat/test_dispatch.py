@@ -21,6 +21,9 @@ from skcapstone.itil import ITILManager
 from skcapstone.operator_seat import action_ledger, dispatch, safety
 
 _NOW = "2026-08-25T00:00:00Z"
+#: The injected REAL clock the dispatcher measures evidence age against.
+_CLOCK = datetime(2026, 8, 25, 0, 0, 30, tzinfo=timezone.utc)
+_EVIDENCE = {"source": "obs:widget", "observed_at": "2026-08-25T00:00:00Z"}
 
 
 def _paths(tmp_path) -> FleetPaths:
@@ -49,6 +52,7 @@ def _make_proposed_intent(
     catalog_generation: str = "gen-0",
     itil_change_id: str | None,
     rollback: dict | None = None,
+    evidence: dict | None = _EVIDENCE,
 ) -> str:
     """Build a real, PROPOSED ledger intent (OBSERVED -> DIAGNOSED -> PROPOSED),
     bound to itil_change_id at BIRTH the same way loop.py now does it -- the
@@ -71,7 +75,11 @@ def _make_proposed_intent(
         intent.intent_id, action_ledger.ActionState.DIAGNOSED, occurred_at=created_at, actor="test"
     )
     ledger.append(
-        intent.intent_id, action_ledger.ActionState.PROPOSED, occurred_at=created_at, actor="test"
+        intent.intent_id,
+        action_ledger.ActionState.PROPOSED,
+        occurred_at=created_at,
+        actor="test",
+        detail={"evidence": evidence} if evidence else {},
     )
     return intent.intent_id
 
@@ -154,6 +162,7 @@ def test_dispatch_intent_actuates_and_verifies_an_approved_change(tmp_path):
         problem_types={"Ready"},
         apply_fn=_apply_fn_that_heals(observer),
         now_iso=_NOW,
+        clock=lambda: _CLOCK,
     )
 
     assert outcome.outcome == "verified"
@@ -212,6 +221,7 @@ def test_unapproved_change_never_actuates(tmp_path):
         problem_types={"Ready"},
         apply_fn=boom,
         now_iso=_NOW,
+        clock=lambda: _CLOCK,
     )
 
     assert outcome.outcome.startswith("pending:")
@@ -255,6 +265,7 @@ def test_rejected_change_never_actuates(tmp_path):
         problem_types={"Ready"},
         apply_fn=boom,
         now_iso=_NOW,
+        clock=lambda: _CLOCK,
     )
     assert outcome.outcome == "pending: ITIL change status=rejected"
     assert ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
@@ -287,6 +298,7 @@ def test_intent_with_no_linked_change_is_invisible_to_the_dispatcher(tmp_path):
         problem_types={"Ready"},
         apply_fn=boom,
         now_iso=_NOW,
+        clock=lambda: _CLOCK,
     )
     assert outcomes == []
     assert ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
@@ -301,6 +313,7 @@ def test_intent_with_no_linked_change_is_invisible_to_the_dispatcher(tmp_path):
         problem_types={"Ready"},
         apply_fn=boom,
         now_iso=_NOW,
+        clock=lambda: _CLOCK,
     )
     assert direct.outcome == "skipped: no linked ITIL change"
 
@@ -389,6 +402,7 @@ def test_stale_catalog_generation_refuses_and_escalates(tmp_path):
         problem_types={"Ready"},
         apply_fn=boom,
         now_iso=_NOW,
+        clock=lambda: _CLOCK,
     )
 
     assert outcome.outcome.startswith("escalated:")
@@ -445,6 +459,7 @@ def test_hardened_classification_refuses_and_escalates(tmp_path, monkeypatch):
         problem_types={"Ready"},
         apply_fn=boom,
         now_iso=_NOW,
+        clock=lambda: _CLOCK,
     )
     assert outcome.outcome.startswith("escalated:")
     assert "classification hardened" in outcome.outcome
@@ -485,6 +500,7 @@ def test_dispatch_refuses_when_frozen(tmp_path):
         problem_types=set(),
         apply_fn=boom,
         now_iso=_NOW,
+        clock=lambda: _CLOCK,
     )
     assert outcome.outcome == f"refused: {store.REASON_FROZEN}"
 
@@ -516,6 +532,7 @@ def test_dispatch_refuses_when_unprovisioned(tmp_path):
         problem_types=set(),
         apply_fn=boom,
         now_iso=_NOW,
+        clock=lambda: _CLOCK,
     )
     assert outcome.outcome == f"refused: {store.REASON_UNPROVISIONED}"
 
@@ -619,7 +636,51 @@ def test_freeze_landing_during_dispatch_does_not_feed_the_circuit_breaker(tmp_pa
         apply_fn=freeze_then_refuse,
         execution_state=state,
         now_iso=_NOW,
+        clock=lambda: _CLOCK,
     )
 
     assert outcome.outcome.startswith("failed:")
     assert state._load()["actions"] == {}
+
+
+def test_a_real_failure_that_coincides_with_a_freeze_still_feeds_the_circuit_breaker(tmp_path):
+    paths = _paths(tmp_path)
+    _provision(paths)
+    itil = ITILManager(tmp_path / "itil")
+    ledger = _ledger(tmp_path)
+    state = safety.ExecutionState(tmp_path / "state", cooldown_seconds=0)
+    chg = itil.propose_change(
+        title="fix widget-1",
+        change_type="normal",
+        risk="low",
+        rollback_plan="revert",
+        created_by="atlas",
+        tags=["operator"],
+    )
+    itil.submit_cab_vote(
+        chg.id,
+        agent="capauth:approver@scratch",
+        decision="approved",
+        subject="capauth:approver@scratch",
+        subject_role="approver",
+    )
+    intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
+
+    def freeze_then_fail_for_real(prop, classification):
+        store.set_frozen(paths, True, writer=_human_writer(), reason="coincides with a real fault")
+        raise RuntimeError("disk exploded")
+
+    dispatch.dispatch_intent(
+        paths,
+        ledger,
+        itil,
+        intent_id,
+        adapters={"widget": _FakeObserver("Ready", "widget-1")},
+        problem_types={"Ready"},
+        apply_fn=freeze_then_fail_for_real,
+        execution_state=state,
+        now_iso=_NOW,
+        clock=lambda: _CLOCK,
+    )
+    entries = list(state._load()["actions"].values())
+    assert [e["consecutive_failures"] for e in entries] == [1]

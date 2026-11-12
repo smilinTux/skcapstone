@@ -361,3 +361,17 @@ def test_run_defaults_max_evidence_age_to_the_module_default(tmp_path, monkeypat
     out = CliRunner().invoke(cli.operator, ["run", "--no-publish", "--no-bootstrap"])
     assert out.exit_code == 0, out.output
     assert seen["max_evidence_age_s"] == cli.evidence.DEFAULT_MAX_AGE_SECONDS
+
+
+def test_run_rejects_a_max_evidence_age_above_the_cap(tmp_path, monkeypatch):
+    _enroll(tmp_path, monkeypatch)
+    _stub_run_once(monkeypatch)
+    cap = cli.evidence.MAX_ALLOWED_AGE_SECONDS
+    too_big = CliRunner().invoke(
+        cli.operator, ["run", "--no-publish", "--no-bootstrap", "--max-evidence-age", str(cap + 1)]
+    )
+    assert too_big.exit_code == 2
+    at_cap = CliRunner().invoke(
+        cli.operator, ["run", "--no-publish", "--no-bootstrap", "--max-evidence-age", str(cap)]
+    )
+    assert at_cap.exit_code == 0, at_cap.output

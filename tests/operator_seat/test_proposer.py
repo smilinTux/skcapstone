@@ -89,7 +89,7 @@ _REPLY = (
 
 
 def test_proposal_evidence_is_stamped_from_the_observation_not_the_model():
-    firing = _stamped_firing(observed_at="2026-08-20T00:00:00Z")
+    firing = _stamped_firing(source_observed_at="2026-08-20T00:00:00Z")
     # The model tries to supply its own, newer evidence; it must be ignored.
     reply = _REPLY.replace(
         '"rationale"',
@@ -104,4 +104,11 @@ def test_proposal_evidence_is_stamped_from_the_observation_not_the_model():
 
 def test_no_observation_time_means_no_evidence_so_actuation_fails_closed():
     out = proposer.propose(_stamped_firing(), _EXPLAIN, chat=lambda _p: _REPLY)
+    assert "evidence" not in out[0]
+
+
+def test_a_probe_time_alone_is_not_evidence_for_actuation():
+    """An entry carrying only observed_at (probe or pass clock) gets no stamp."""
+    firing = _stamped_firing(observed_at="2026-08-20T00:00:00Z")
+    out = proposer.propose(firing, _EXPLAIN, chat=lambda _p: _REPLY)
     assert "evidence" not in out[0]

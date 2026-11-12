@@ -85,14 +85,21 @@ def test_firing_entry_carries_the_observation_time_for_evidence_stamping():
                 "type": "BridgeAlive",
                 "status": "False",
                 "object": "bridge",
-                "observed_at": "2026-08-20T00:00:00Z",
+                "source_observed_at": "2026-08-20T00:00:00Z",
             }
         ]
     }
     out = build_brief(obs, set())
-    assert out["firing"][0]["observed_at"] == "2026-08-20T00:00:00Z"
+    assert out["firing"][0]["source_observed_at"] == "2026-08-20T00:00:00Z"
 
 
 def test_entry_without_an_observation_time_gets_none_invented():
     out = build_brief({"fleet": [{"type": "Ready", "status": "False"}]}, set())
-    assert "observed_at" not in out["firing"][0]
+    assert "source_observed_at" not in out["firing"][0]
+
+
+def test_the_probe_time_is_not_a_source_time():
+    """observed_at is when the pass looked (or the pass clock); it is never evidence."""
+    obs = {"fleet": [{"type": "Ready", "status": "False", "observed_at": "2026-08-20T00:00:00Z"}]}
+    out = build_brief(obs, set())
+    assert "source_observed_at" not in out["firing"][0]

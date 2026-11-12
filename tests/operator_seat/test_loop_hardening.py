@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from skcapstone.fleet import store
@@ -15,6 +17,7 @@ from skcapstone.operator_seat import action_ledger, loop
 from .test_loop import _enroll
 
 NOW = "2026-08-20T00:00:00Z"
+CLOCK = datetime(2026, 8, 20, 0, 0, 30, tzinfo=timezone.utc)  # the real clock, injected
 FRESH = "2026-08-19T23:59:30Z"
 HUMAN = store.Writer(role="operator", node="node-158", identity="chef")
 
@@ -32,9 +35,12 @@ def _provision(paths):
 
 
 def _run(paths, proposals, *, apply_fn, **kwargs):
+    _provision(paths)
+    kwargs.setdefault("clock", lambda: CLOCK)
     return loop.run_once(
         paths,
         now_iso=NOW,
+        clock=lambda: CLOCK,
         propose=lambda b, r: proposals,
         apply_fn=apply_fn,
         execute=True,
@@ -74,6 +80,7 @@ def test_actuation_is_refused_without_fresh_structured_evidence(
     tmp_path, monkeypatch, extra, expected
 ):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     apply_fn = _Recorder()
     res = _run(paths, [_prop(**extra)], apply_fn=apply_fn)
     assert apply_fn.calls == []
@@ -86,6 +93,7 @@ def test_refused_evidence_creates_no_ledger_intent_and_burns_no_retry_budget(
     tmp_path, monkeypatch
 ):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     ledger = action_ledger.ActionLedger(tmp_path / "ledger")
     state = loop.safety.ExecutionState(tmp_path / "state", cooldown_seconds=0)
     apply_fn = _Recorder()
@@ -104,6 +112,7 @@ def test_refused_evidence_creates_no_ledger_intent_and_burns_no_retry_budget(
 
 def test_fresh_evidence_actuates_and_the_ledger_records_its_timestamp(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     apply_fn = _Recorder()
     ledger = action_ledger.ActionLedger(tmp_path / "ledger")
     human = HUMAN
@@ -137,6 +146,7 @@ def test_fresh_evidence_actuates_and_the_ledger_records_its_timestamp(tmp_path, 
     res = loop.run_once(
         paths,
         now_iso=NOW,
+        clock=lambda: CLOCK,
         propose=lambda b, r: [prop],
         explain={"actions": [{"name": "restart", "standard": True, "reversible": True}]},
         apply_fn=apply_fn,
@@ -151,6 +161,7 @@ def test_fresh_evidence_actuates_and_the_ledger_records_its_timestamp(tmp_path, 
 
 def test_max_evidence_age_is_configurable(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     two_minutes_old = _stamp("2026-08-19T23:58:00Z")
     tight = _Recorder()
     res = _run(paths, [_prop(evidence=two_minutes_old)], apply_fn=tight, max_evidence_age_s=60)
@@ -165,6 +176,7 @@ def test_a_bad_max_evidence_age_refuses_rather_than_disabling_the_check(
     tmp_path, monkeypatch, bad
 ):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     apply_fn = _Recorder()
     res = _run(paths, [_prop(evidence=_stamp())], apply_fn=apply_fn, max_evidence_age_s=bad)
     assert apply_fn.calls == []
@@ -173,9 +185,11 @@ def test_a_bad_max_evidence_age_refuses_rather_than_disabling_the_check(
 
 def test_evidence_is_not_required_when_execution_is_off(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     res = loop.run_once(
         paths,
         now_iso=NOW,
+        clock=lambda: CLOCK,
         propose=lambda b, r: [_prop()],
         apply_fn=_Recorder(),
         execute=False,
@@ -192,6 +206,7 @@ def test_evidence_is_not_required_when_execution_is_off(tmp_path, monkeypatch):
 def test_pass_with_no_freeze_reports_not_frozen_at_the_decision(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
     _provision(paths)
+    _provision(paths)
     res = _run(paths, [_prop(evidence=_stamp())], apply_fn=_Recorder())
     assert res["frozen"] is False
     assert res["frozen_mid_pass"] is False
@@ -201,6 +216,7 @@ def test_pass_with_no_freeze_reports_not_frozen_at_the_decision(tmp_path, monkey
 
 def test_freeze_landing_mid_pass_is_reported_and_refuses_the_action(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     _provision(paths)
     apply_fn = _Recorder()
     state = loop.safety.ExecutionState(tmp_path / "state", cooldown_seconds=0)
@@ -212,6 +228,7 @@ def test_freeze_landing_mid_pass_is_reported_and_refuses_the_action(tmp_path, mo
     res = loop.run_once(
         paths,
         now_iso=NOW,
+        clock=lambda: CLOCK,
         propose=propose_then_freeze,
         apply_fn=apply_fn,
         execute=True,
@@ -235,6 +252,7 @@ def test_freeze_landing_during_actuation_is_reported_and_not_counted_as_a_failur
 ):
     paths, _ = _enroll(tmp_path, monkeypatch)
     _provision(paths)
+    _provision(paths)
     state = loop.safety.ExecutionState(tmp_path / "state", cooldown_seconds=0)
 
     def freeze_then_refuse(prop, classification):
@@ -256,6 +274,7 @@ def test_freeze_landing_during_actuation_is_reported_and_not_counted_as_a_failur
 
 def test_a_pass_that_starts_frozen_is_not_flagged_mid_pass(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     store.set_frozen(paths, True, writer=HUMAN, reason="standing")
     res = loop.run_once(paths, now_iso=NOW, emit=lambda _s: None)
     assert res["frozen"] is True
@@ -302,17 +321,20 @@ _EXPLAIN = {"actions": [{"name": "restart", "standard": True, "reversible": True
 
 def test_no_verification_means_performed_unverified_never_applied(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     res = _run(paths, [_prop(evidence=_stamp())], apply_fn=_Recorder())
     assert res["outcomes"][0]["outcome"] == "performed, unverified"
 
 
 def test_ledger_alone_runs_verification_so_a_pass_reads_verified(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     prop = _demo_app(paths, monkeypatch)
     ledger = action_ledger.ActionLedger(tmp_path / "ledger")
     res = loop.run_once(
         paths,
         now_iso=NOW,
+        clock=lambda: CLOCK,
         propose=lambda b, r: [prop],
         explain=_EXPLAIN,
         apply_fn=_Recorder(),
@@ -327,6 +349,7 @@ def test_ledger_alone_runs_verification_so_a_pass_reads_verified(tmp_path, monke
 
 def test_a_failed_verification_is_never_reported_as_applied_or_verified(tmp_path, monkeypatch):
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     prop = _demo_app(paths, monkeypatch)
     # Condition never clears after the action.
     monkeypatch.setattr(
@@ -342,6 +365,7 @@ def test_a_failed_verification_is_never_reported_as_applied_or_verified(tmp_path
     res = loop.run_once(
         paths,
         now_iso=NOW,
+        clock=lambda: CLOCK,
         propose=lambda b, r: [prop],
         explain=_EXPLAIN,
         apply_fn=_Recorder(),
@@ -357,6 +381,7 @@ def test_a_failed_verification_is_never_reported_as_applied_or_verified(tmp_path
 def test_a_moving_evidence_timestamp_cannot_dodge_the_cooldown(tmp_path, monkeypatch):
     """Evidence is not part of the action fingerprint: each pass restamps it."""
     paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision(paths)
     state = loop.safety.ExecutionState(tmp_path / "state", cooldown_seconds=900)
     first = _Recorder({"performed": False, "reason": "boom"})
     _run(
