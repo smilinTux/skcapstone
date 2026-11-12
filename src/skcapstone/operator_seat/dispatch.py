@@ -51,7 +51,18 @@ from typing import Any, Callable
 
 from ..fleet import store
 from ..fleet.paths import FleetPaths
+from ..itil import CABDecisionValue, _is_human_approval
 from . import action_ledger, decisions, evidence, policy, safety
+
+#: Prefix of the tag the loop puts on every change it drafts, naming the ONE intent
+#: (app, action, target) that change authorizes.
+BINDING_TAG_PREFIX = "op-bind:"
+
+
+def change_binding_tag(app: str, action: str, target: str) -> str:
+    """The tag that binds a drafted ITIL change to the (app, action, target) it is for."""
+    return f"{BINDING_TAG_PREFIX}{app}|{action}|{target}"
+
 
 _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -133,18 +144,55 @@ def stored_lane(ledger: action_ledger.ActionLedger, intent_id: str) -> str | Non
     return lane if lane in ("auto", "escalate") else None
 
 
-def change_auto_approved(change: Any) -> bool:
-    """Whether the ITIL fold approved this change with NO human, whatever its type.
+def change_human_approved(itil: Any, change: Any) -> bool:
+    """Whether a qualifying HUMAN approved this change, derived from the votes.
 
-    The fold auto-approves ``standard`` changes and also ``normal`` ones tagged
-    ``auto-normal`` (operator-authored, not high risk), each recording an
-    ``auto-approved`` timeline entry. That entry, not the change type, is the fact:
-    anything approved without it needed a qualifying human CAB vote.
+    Never inferred from a missing ``auto-approved`` timeline marker: the fold only
+    writes that marker while the change is still PROPOSED, so a standard change that
+    goes approved, scheduled, unscheduled (or has its window missed) folds ``approved``
+    with no marker and used to read as human. A change is human-approved only when
+    there is a qualifying human approval vote (``_is_human_approval``, the drafter's own
+    excluded, exactly as the fold does) and no rejection. A ``standard`` change, or one
+    that meets the fold's auto-normal derivation, is auto-approved whatever its timeline
+    says, and a human vote on it does not change that. Fails closed: a vote store that
+    cannot be read means no human approval.
     """
-    return any(
-        isinstance(entry, dict) and entry.get("action") == "auto-approved"
-        for entry in (change.timeline or [])
-    )
+    if change.change_type.value == "standard":
+        return False
+    try:
+        votes = list(itil.get_cab_votes(change.id))
+    except Exception:  # noqa: BLE001 - unreadable votes are no approval
+        return False
+    rejected = any(v.decision == CABDecisionValue.REJECTED for v in votes)
+    if (
+        change.change_type.value == "normal"
+        and "auto-normal" in (change.tags or [])
+        and change.created_by == "operator"
+        and change.risk.value != "high"
+        and (change.rollback_plan or "").strip()
+        and not rejected
+    ):
+        return False
+    if rejected:
+        return False
+    approvals = [
+        v
+        for v in votes
+        if v.decision == CABDecisionValue.APPROVED and v.agent != change.prepared_by
+    ]
+    return any(_is_human_approval(v) for v in approvals)
+
+
+def change_bound_to(change: Any, intent: action_ledger.ActionIntent) -> bool:
+    """Whether the change was drafted for exactly this intent's (app, action, target).
+
+    An approval authorizes ONE thing. A change with no binding tag (a legacy or
+    hand-made one, or one a proposal pointed at), or one bound to something else, or
+    with more than one binding tag, authorizes nothing here.
+    """
+    expected = change_binding_tag(intent.application, intent.action, intent.target_id)
+    tags = [t for t in (change.tags or []) if str(t).startswith(BINDING_TAG_PREFIX)]
+    return tags == [expected]
 
 
 class UnauthorizedDecisionError(ValueError):
@@ -480,13 +528,26 @@ class DispatchOutcome:
         return {"intent_id": self.intent_id, "outcome": self.outcome, "detail": self.detail}
 
 
+def _close_out_change(
+    itil: Any, change_id: str, actor: str, status: str, note: str, emit: Callable[[str], Any]
+) -> None:
+    """Move a spent change on (deployed or failed). Best effort: the change already left
+    ``approved`` when it was taken, so it cannot be reused even if this write fails."""
+    try:
+        itil.update_change(change_id, actor, new_status=status, note=note)
+    except Exception as exc:  # noqa: BLE001 - the spent change is not reusable regardless
+        emit(f"dispatch: could not mark change {change_id} {status}: {exc}")
+
+
 def _preaction_refusal(
     paths: FleetPaths,
     ledger: action_ledger.ActionLedger,
-    intent_id: str,
+    itil: Any,
+    intent: action_ledger.ActionIntent,
     change: Any,
     prop: dict,
     *,
+    stale_reason: str | None,
     adapters: dict[str, Callable[..., dict]],
     problem_types: set[str],
     now_iso: str,
@@ -496,39 +557,62 @@ def _preaction_refusal(
     max_evidence_age_s: float,
     target_known: Callable[[dict], bool] | None,
     action_allowed: Callable[[dict], bool] | None,
+    execution_state: safety.ExecutionState | None,
 ) -> DispatchOutcome | None:
     """Everything that must hold before AUTHORIZED, or the refusal to return.
 
-    Refusals leave the intent PROPOSED unless it is an auto-lane intent that can never
-    become actionable (stale stored evidence, a definitely cleared condition), which is
-    voided so it cannot come back.
+    Nothing is written to the ledger for a refusal except the void of an auto-lane
+    intent that can never become actionable (stale stored evidence, a definitely
+    cleared condition). In particular a refusal never appends AUTHORIZED: nothing was
+    authorized. The order matters: what the change IS (bound to this intent, who
+    approved it, which lane the loop recorded) is settled before any other judgement,
+    so a stale catalog can never close an intent that has no human approval behind it.
     """
-    auto_approved = change_auto_approved(change)
+    intent_id = intent.intent_id
+    if not change_bound_to(change, intent):
+        return DispatchOutcome(
+            intent_id,
+            "refused: the ITIL change is not bound to this intent (an approval authorizes "
+            "one app, action and target)",
+        )
+    human_approved = change_human_approved(itil, change)
+    auto_approved = not human_approved
     lane = stored_lane(ledger, intent_id)
     if auto_approved and lane == "escalate":
         return DispatchOutcome(
             intent_id,
-            "pending: no human approval (the change was auto-approved but the proposal was "
-            "escalated for a human); left PROPOSED for its pending decision",
+            "pending: no human approval (the proposal was escalated for a human and the "
+            "change carries no qualifying human vote); left PROPOSED for its pending decision",
         )
+    if auto_approved and lane != "auto":
+        return DispatchOutcome(
+            intent_id,
+            "refused: no qualifying human approval and no recorded auto lane (cannot tell "
+            "it from a pending human decision)",
+        )
+    if stale_reason is not None:
+        return DispatchOutcome(intent_id, f"refused: {stale_reason}")
     if target_known is not None and not target_known(prop):
         return DispatchOutcome(intent_id, "refused: target not resolvable at dispatch")
     if action_allowed is not None and not action_allowed(prop):
         return DispatchOutcome(intent_id, "refused: action not allowed for this app at dispatch")
     clock_iso = _clock_iso(clock)
     if auto_approved:
-        if lane != "auto":
-            return DispatchOutcome(
-                intent_id,
-                "refused: auto-approved change with no recorded auto lane (cannot tell it "
-                "from a pending human decision)",
-            )
         stale = evidence.refusal(
             {"evidence": stored_evidence(ledger, intent_id)}, clock_iso, max_evidence_age_s
         )
         if stale is not None:
             void_proposed(ledger, intent_id, occurred_at=event_at, actor=actor, reason=stale)
             return DispatchOutcome(intent_id, f"refused: {stale}")
+    if execution_state is not None:
+        # Cooldown and an open circuit are SUPPRESSION: nothing is attempted, so it is
+        # not a failure, not recorded against the breaker, and never rolled back. The
+        # intent simply stays PROPOSED (the loop voids it if it is an auto-lane one).
+        eligible, reason = execution_state.eligibility(
+            safety.action_fingerprint(prop), time.time()
+        )
+        if not eligible:
+            return DispatchOutcome(intent_id, f"refused: execution suppressed: {reason}")
     verdict, why = reobserve(
         adapters,
         prop,
@@ -540,7 +624,7 @@ def _preaction_refusal(
     )
     if verdict == "firing":
         return None
-    if verdict == "cleared" and auto_approved and lane == "auto":
+    if verdict == "cleared" and auto_approved:
         void_proposed(ledger, intent_id, occurred_at=event_at, actor=actor, reason=why)
     return DispatchOutcome(intent_id, f"refused: {why}")
 
@@ -577,16 +661,20 @@ def dispatch_intent(
     * it re-checks the target (``target_known``) and the ratified action binding
       (``action_allowed``) when the caller supplies them, because the planner's
       verdict at proposal time is not a permission that lasts;
-    * an intent the loop recorded as ESCALATED is never acted on without a human
-      approval: if its change was auto-approved by the fold (the old loop gave every
-      standard-class proposal an auto-approving change, escalated or not), it stays
-      pending and is NEVER voided, because a human decision is waiting on it;
-    * a change the fold approved with no human (``change_auto_approved``: standard,
-      or ``auto-normal``) must carry fresh evidence stored on the intent's PROPOSED
-      event, against the REAL clock. Stored evidence only ages, so an auto-lane intent
-      that fails this, or whose condition definitely cleared, is voided
-      (``void_proposed``) rather than retried forever. An intent with no recorded lane
-      is refused and left alone.
+    * the change must be bound to THIS intent (``change_bound_to``: app, action and
+      target), and is used up by the run it authorizes: it moves to ``implementing``
+      before the actuator is called, then ``deployed`` or ``failed``, so a second
+      intent can never ride the same approval;
+    * "human-approved" is derived from the VOTES (``change_human_approved``), never from
+      a missing ``auto-approved`` marker. An intent the loop recorded as ESCALATED with
+      no qualifying human vote stays pending and is NEVER voided, because a human
+      decision is waiting on it; one with no recorded lane is refused and left alone;
+    * a change with no human behind it (standard, or ``auto-normal``) must carry fresh
+      evidence stored on the intent's PROPOSED event, against the REAL clock. Stored
+      evidence only ages, so an auto-lane intent that fails this, or whose condition
+      definitely cleared, is voided (``void_proposed``) rather than retried forever;
+    * cooldown and an open circuit are suppression, not failure: a refusal before
+      AUTHORIZED with nothing recorded and nothing rolled back.
 
     A human-approved intent skips the age limit but never the re-observation.
 
@@ -598,14 +686,11 @@ def dispatch_intent(
     without manufacturing a false escalation for the ordinary case of "still
     waiting on a human".
 
-    A STALE ``catalog_generation`` or a HARDENED classification is different:
-    the fold really did approve this change, so AUTHORIZED/EXECUTING are
-    appended (the ledger's lifecycle state machine only reaches ESCALATED via
-    FAILED, and the design deliberately adds no new transition -- section
-    3.4), but the pre-flight recheck refuses BEFORE ``apply_fn`` is ever
-    called, so no rollback is attempted for an actuation that never
-    happened, and the pass lands on FAILED -> ESCALATED with the reason on
-    both events' detail.
+    A STALE ``catalog_generation`` or a HARDENED classification refuses too, AFTER the
+    change, human-approval and lane checks, and leaves the intent PROPOSED with no
+    AUTHORIZED written: nothing was authorized, and closing the intent here would let a
+    stale catalog destroy a pending human decision. A proposal under the new catalog is
+    a new intent (``catalog_generation`` is part of the identity).
     """
     intent = ledger.read_intent(intent_id)
     current = ledger.current_state(intent_id)
@@ -645,37 +730,32 @@ def dispatch_intent(
             f"{intent.action!r} is no longer a ratified standard action"
         )
 
-    if stale_reason is None:
-        refusal = _preaction_refusal(
-            paths,
-            ledger,
-            intent_id,
-            change,
-            prop,
-            adapters=adapters,
-            problem_types=problem_types,
-            now_iso=now_iso,
-            event_at=event_at,
-            actor=actor,
-            clock=clock,
-            max_evidence_age_s=max_evidence_age_s,
-            target_known=target_known,
-            action_allowed=action_allowed,
-        )
-        if refusal is not None:
-            emit(f"dispatch: {refusal.outcome} ({intent_id})")
-            return refusal
+    refusal = _preaction_refusal(
+        paths,
+        ledger,
+        itil,
+        intent,
+        change,
+        prop,
+        stale_reason=stale_reason,
+        adapters=adapters,
+        problem_types=problem_types,
+        now_iso=now_iso,
+        event_at=event_at,
+        actor=actor,
+        clock=clock,
+        max_evidence_age_s=max_evidence_age_s,
+        target_known=target_known,
+        action_allowed=action_allowed,
+        execution_state=execution_state,
+    )
+    if refusal is not None:
+        emit(f"dispatch: {refusal.outcome} ({intent_id})")
+        return refusal
 
     classification = recheck["classification"]
 
-    # AUTHORIZED/EXECUTING are appended for BOTH outcomes below: the ledger's
-    # lifecycle state machine (action_ledger.py's _TRANSITIONS, deliberately
-    # untouched -- section 3.4, "the design is a consumer, three refusals,
-    # and a demotion") only reaches ESCALATED via FAILED, and FAILED is only
-    # reachable from EXECUTING. AUTHORIZED genuinely did happen here: the
-    # fold's own vote really did approve this change; what a stale/hardened
-    # recheck refuses is the ACTUATION step, which the try block below never
-    # lets run for that case (raises before ever calling apply_fn).
+    # Every refusal has been taken by now: what follows is a real authorization.
     ledger.append(
         intent_id,
         action_ledger.ActionState.AUTHORIZED,
@@ -685,7 +765,6 @@ def dispatch_intent(
             "itil_change_id": change.id,
             "approval_provenance": _approval_provenance(change),
             "reclassification": classification,
-            **({"stale_reason": stale_reason} if stale_reason else {}),
         },
     )
     ledger.append(
@@ -694,16 +773,20 @@ def dispatch_intent(
 
     fingerprint = safety.action_fingerprint(prop)
     result: Any = None
+    change_taken = False
     try:
-        if stale_reason is not None:
-            # Refuse before ever calling apply_fn -- never attempted, so the
-            # except block below must not attempt a rollback for it either
-            # (see the `isinstance(exc, _PreflightRefusalError)` guard).
-            raise _PreflightRefusalError(stale_reason)
-        if execution_state is not None:
-            eligible, reason = execution_state.eligibility(fingerprint, time.time())
-            if not eligible:
-                raise RuntimeError(f"execution suppressed: {reason}")
+        # Use the approval up BEFORE the actuator runs: the change moves to
+        # ``implementing``, so a second intent (or a concurrent dispatch) that reads it
+        # finds it no longer approved. If that cannot be done, nothing is attempted.
+        try:
+            taken = itil.update_change(
+                change.id, actor, new_status="implementing", note=f"dispatch of {intent_id}"
+            )
+        except Exception as exc:  # noqa: BLE001 - an approval that cannot be spent is not usable
+            raise _PreflightRefusalError(f"could not mark the change implementing: {exc}") from exc
+        if getattr(getattr(taken, "status", None), "value", None) != "implementing":
+            raise _PreflightRefusalError("the change did not move to implementing (already taken)")
+        change_taken = True
         result = apply_fn(prop, classification)
         performed = result.get("performed") if isinstance(result, dict) else None
         if isinstance(result, dict) and "actuation" in result:
@@ -720,6 +803,7 @@ def dispatch_intent(
             raise RuntimeError(reason)
         if execution_state is not None:
             execution_state.record(fingerprint, time.time(), success=True)
+        _close_out_change(itil, change.id, actor, "deployed", f"{intent_id} verified", emit)
         auto_change_id = result.get("change_id") if isinstance(result, dict) else None
         ledger.append(
             intent_id,
@@ -736,6 +820,8 @@ def dispatch_intent(
         # was actually attempted) and must never trigger a rollback (there is
         # nothing to roll back -- rollback_fn reverses a real actuation).
         preflight = isinstance(exc, _PreflightRefusalError)
+        if change_taken:
+            _close_out_change(itil, change.id, actor, "failed", str(exc)[:200], emit)
         # The kill switch REFUSING is not a fault of the action and must not feed the
         # circuit breaker. A genuine failure that merely coincides with a freeze is
         # still a failure and still counts.
@@ -873,7 +959,9 @@ __all__ = [
     "is_freeze_refusal",
     "reobserve",
     "stored_lane",
-    "change_auto_approved",
+    "change_human_approved",
+    "change_bound_to",
+    "change_binding_tag",
     "stored_evidence",
     "void_proposed",
 ]

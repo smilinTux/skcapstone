@@ -399,7 +399,13 @@ def _run_once(
     # real-world recurrence earns its own intent.
     occurrence_memo: dict[tuple, int] = {}
     for i, pl in enumerate(planned):
-        prop, disp = pl["proposal"], pl["disposition"]
+        # Never trust a proposal-supplied change id: a proposal is model output, and a
+        # change id on it could point at ANY approved change. The loop drafts its own
+        # (below, bound to this proposal) and the intent identity takes that one.
+        prop = {
+            k: v for k, v in pl["proposal"].items() if k not in ("change_id", "itil_change_id")
+        }
+        disp = pl["disposition"]
         # Decision point: the freeze is read fresh for every proposal, because it
         # can land at any moment after the top-of-pass check (the observe calls and
         # the model run in between). Whatever the gate says here is what this
@@ -429,11 +435,7 @@ def _run_once(
                 # apply_fn call, nothing against the retry budget.
                 outcomes.append(_outcome(prop, disp, f"refused: {refusal}", None, decision_freeze))
                 continue
-        if (
-            itil is not None
-            and lifecycle_ledger is not None
-            and not (prop.get("change_id") or prop.get("itil_change_id"))
-        ):
+        if itil is not None and lifecycle_ledger is not None:
             # Draft the ITIL change BEFORE the ledger intent exists, so its
             # frozen itil_change_id field (action_ledger.py, ``identity()``)
             # is set at birth and never needs rewriting later -- the
@@ -463,6 +465,15 @@ def _run_once(
                 else "normal"
             )
             tags = [t for t in record["tags"] if auto_lane or t != "auto-normal"]
+            # Bind the change to the ONE intent it is for (app, action, target, the same
+            # three the ledger identity uses): the dispatcher refuses any other.
+            tags.append(
+                dispatch.change_binding_tag(
+                    str(prop.get("app") or "unknown"),
+                    str(prop.get("action") or "unknown"),
+                    str(prop.get("object") or "unknown"),
+                )
+            )
             chg = itil.propose_change(
                 title=record["title"],
                 change_type=change_type,
