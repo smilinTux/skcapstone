@@ -33,10 +33,13 @@ class ExecutionState:
         *,
         cooldown_seconds: float = 900.0,
         retry_budget: int = 3,
+        lock_dir: str | Path | None = None,
     ) -> None:
         self.root = Path(root)
         self.path = self.root / "execution-state.json"
-        self.lock_path = self.root / "operator.lock"
+        # The single-flight lock may live OUTSIDE the (synced) state root: an flock only
+        # orders processes on one kernel, so a node-local directory is the honest place.
+        self.lock_path = (Path(lock_dir) if lock_dir is not None else self.root) / "operator.lock"
         self.cooldown_seconds = cooldown_seconds
         self.retry_budget = retry_budget
 
@@ -96,7 +99,8 @@ class ExecutionState:
     def single_flight(self) -> Iterator[None]:
         """Acquire the process-wide Atlas run lock without waiting."""
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

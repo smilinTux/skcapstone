@@ -37,10 +37,20 @@ from . import (
     fleet_adapter,
     kedb_seeds,
     loop,
+    node_local,
     notify,
     proposer,
     registration,
 )
+
+
+def _execution_state(paths) -> "loop.safety.ExecutionState":
+    """Cooldown and circuit state under the fleet root, with the single-flight lock in the
+    node-local state directory (an flock only orders processes on one kernel, so it does not
+    belong in a tree Syncthing replicates). ``run`` and ``honor-pending`` share it."""
+    return loop.safety.ExecutionState(
+        paths.root / "atlas" / "state", lock_dir=node_local.state_dir() / "atlas"
+    )
 
 
 def _now_iso() -> str:
@@ -237,7 +247,7 @@ def run_cmd(
         # so it can name an app ('skgateway') where the real objects are
         # 'upstreams' and 'connection-pool'. Unresolvable targets escalate.
         target_known=lambda p: fleet_adapter.fleet_target_known(paths, p),
-        execution_state=loop.safety.ExecutionState(paths.root / "atlas" / "state"),
+        execution_state=_execution_state(paths),
         # Physical execution is allowed only for a proposal bound to its owning
         # app + condition, human-ratified there, and verified by re-observation.
         require_verified_actions=honor,
@@ -366,26 +376,34 @@ def honor_pending_cmd(max_approval_age: float) -> None:
     rollback_fn = act_dispatch.build_rollback_fn(paths)
     extra_observers = discovery.discover_observers()
     adapters = {**extra_observers, **loop.ADAPTERS}
-    outcomes = dispatch.run_dispatch_pass(
-        paths,
-        ledger,
-        itil_manager,
-        adapters=adapters,
-        problem_types=loop.PROBLEM_WHEN_TRUE,
-        apply_fn=apply_fn,
-        rollback_fn=rollback_fn,
-        execution_state=loop.safety.ExecutionState(paths.root / "atlas" / "state"),
-        decisions_dir=_decisions_dir(paths),
-        now_iso=now,
-        actor="dispatcher",
-        emit=click.echo,
-        # The planner's verdicts at proposal time are not permissions that last: the
-        # target must still resolve and the action must still be ratified for the app
-        # (against the signed catalog) when the human approval is finally honored.
-        target_known=lambda p: fleet_adapter.fleet_target_known(paths, p),
-        action_allowed=lambda p: loop._operatorapp_allows(paths, p, require_signature=True),
-        max_approval_age_s=max_approval_age,
-    )
+    try:
+        outcomes = dispatch.run_dispatch_pass(
+            paths,
+            ledger,
+            itil_manager,
+            adapters=adapters,
+            problem_types=loop.PROBLEM_WHEN_TRUE,
+            apply_fn=apply_fn,
+            rollback_fn=rollback_fn,
+            execution_state=_execution_state(paths),
+            decisions_dir=_decisions_dir(paths),
+            now_iso=now,
+            actor="dispatcher",
+            emit=click.echo,
+            # The planner's verdicts at proposal time are not permissions that last: the
+            # target must still resolve and the action must still be ratified for the app
+            # (against the signed catalog) when the human approval is finally honored.
+            target_known=lambda p: fleet_adapter.fleet_target_known(paths, p),
+            action_allowed=lambda p: loop._operatorapp_allows(paths, p, require_signature=True),
+            max_approval_age_s=max_approval_age,
+        )
+    except RuntimeError as exc:
+        if "another Atlas operator pass is active" not in str(exc):
+            raise
+        raise click.ClickException(
+            "honor-pending: another Atlas operator pass (or honor-pending) is already running; "
+            "nothing was dispatched"
+        ) from exc
     if not outcomes:
         click.echo("honor-pending: nothing to dispatch")
         return

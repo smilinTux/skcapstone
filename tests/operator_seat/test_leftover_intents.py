@@ -325,9 +325,10 @@ def test_a_leftover_standard_intent_cannot_be_actuated_the_next_day(tmp_path, mo
     chg = _standard_change(itil)
     iid = _proposed_intent(ledger, chg.id, evidence=FRESH)  # observed a day before the clock
     apply_fn = _Apply(observer)
-    outcomes = _dispatch_pass(paths, observer, ledger, itil, apply_fn)
+    # A day later the auto-lane intent is also older than one pass, so the stale-auto sweep
+    # may void it before the evidence rule is even reached; either way it is closed unrun.
+    _dispatch_pass(paths, observer, ledger, itil, apply_fn)
     assert apply_fn.calls == []
-    assert outcomes[0].outcome.startswith("refused: evidence stale")
     # Voided, so it cannot come back on a later pass either.
     assert ledger.current_state(iid) is action_ledger.ActionState.ESCALATED
     assert _dispatch_pass(paths, observer, ledger, itil, apply_fn) == []

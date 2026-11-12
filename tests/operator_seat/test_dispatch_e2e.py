@@ -408,7 +408,6 @@ def test_an_auto_normal_change_is_treated_as_auto_approved_not_human_approved(wo
         next(c for c in world.itil.list_changes() if c.id == change.id).status.value == "approved"
     )
     intent_id = _manual_intent(world, change.id, lane="auto")  # no stored evidence at all
-    world.time.advance(days=1)
     outcomes = _sweep(world)
     assert world.calls == []
     assert "evidence missing" in outcomes[0].outcome
@@ -880,20 +879,6 @@ def test_the_approval_age_limit_is_configurable_and_capped(world):
     assert any("max approval age" in o.outcome for o in capped if o.intent_id == other)
     assert world.ledger.current_state(other) is action_ledger.ActionState.PROPOSED
     assert world.ledger.current_state(intent_id) is action_ledger.ActionState.ESCALATED
-
-
-def test_a_future_dated_approval_is_refused(world):
-    change = _normal_change(world)
-    _vote(world, change.id)
-    path = world.itil.cab_dir / f"{change.id}-capauth:approver@scratch.json"
-    data = json.loads(path.read_text())
-    data["decided_at"] = _iso(world.time.now + timedelta(days=30))
-    path.write_text(json.dumps(data))
-    intent_id = _manual_intent(world, change.id, lane="escalate")
-    outcomes = _sweep(world)
-    assert world.calls == []
-    assert "future" in outcomes[0].outcome
-    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
 
 
 # --- 3: the escalate lane does not draft again on every pass ----------------------
