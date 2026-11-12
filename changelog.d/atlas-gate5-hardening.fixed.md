@@ -70,3 +70,8 @@
     non-actuator parked without an ITIL change to the actuator's bound option, so it can still
     be approved; and a failing void can no longer replace a KeyboardInterrupt. Drill scenario 29
     is new.
+  - Round 9: reusing an open escalated intent re-attaches its change to the proposal before parking
+    (a decision an unbound non-actuator copy replaced is healed instead of failing approval forever);
+    `decisions.park` upgrades only for the same app, condition, object and action (else refused and
+    logged); and `resolve_decision` refuses to approve a decision whose change is not bound to that
+    decision's app, action and target.
