@@ -127,6 +127,7 @@ def test_full_drill_runs_clean_against_an_isolated_root(tmp_path):
         "26. an approval authorizes one thing, once, and only a vote is a human",
         "27. one approval, one actuation, per episode",
         "28. one actuator node, node-local locks, live dispatches left alone",
+        "29. the actuator rule is decided once; decisions are not shadowed",
     ):
         assert name in by_name, f"scenario missing from the drill: {name}"
         assert by_name[name].passed, f"{name}: {by_name[name].note}"

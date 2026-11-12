@@ -2795,6 +2795,81 @@ def scenario_single_actuator_live_dispatch_and_future_votes(ctx: DrillContext) -
     )
 
 
+def scenario_actuator_rule_decided_once_and_decisions_not_shadowed(
+    ctx: DrillContext,
+) -> ScenarioResult:
+    """Review round 8: the actuator rule is decided ONCE per pass, and a non-actuator's
+    unbound decision cannot shadow the actuator's bound one.
+
+    (a) The rule refuses on its first call and answers "designated" on every later one (a
+    designation file written mid-pass, or a failed read). The loop drops its ledger wiring
+    for the refused pass; a second evaluation used to flip it back and let the proposal fall
+    into the inline lane (a systemctl restart with no ledger intent). Now the pass refuses
+    and runs nothing. (b) The decisions store is replicated and its ids are content-based: a
+    non-actuator parks the decision with no ITIL change, and the actuator's bound park used
+    to be skipped, leaving a decision that could never be approved. A pending unbound record
+    is now upgraded to the bound option (never the other way, never a resolved record).
+    """
+    slug = "s29-one-evaluation-no-shadowing"
+    calls = {"n": 0}
+
+    def flapping() -> str | None:
+        calls["n"] += 1
+        return "this node is not the designated actuator" if calls["n"] == 1 else None
+
+    ctx.inject_wedge()
+    proposal = ctx.wedge_proposal()
+    ledger = ctx.scenario_ledger(slug)
+    calls_before = len(ctx.calls)
+    node_local.actuator_refusal = flapping
+    try:
+        res = _run_pass(
+            ctx,
+            propose=lambda b, r: [proposal],
+            apply_fn=act_dispatch.build_apply_fn(
+                ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=None
+            ),
+            execution_state=ctx.scenario_state(slug),
+            ledger=ledger,
+            decisions_dir=ctx.decisions_dir / slug,
+        )
+    finally:
+        node_local.actuator_refusal = lambda: None
+    outcome = res["outcomes"][0]["outcome"]
+    once_ok = (
+        outcome.startswith("refused: ")
+        and "not the designated actuator" in outcome
+        and calls["n"] == 1
+        and len(ctx.calls) == calls_before
+        and ledger.list_intents() == []
+    )
+
+    store_dir = ctx.decisions_dir / (slug + "-store")
+    unbound = {"action": "restart-telegram-bridge", "object": "telegram-bridge"}
+    bound = {**unbound, "itil_change_id": "chg-drill"}
+    decisions.park(store_dir, [unbound], decision_id="d-shadow", created_iso=_now_iso())
+    upgraded = decisions.park(store_dir, [bound], decision_id="d-shadow", created_iso=_now_iso())
+    downgraded = decisions.park(
+        store_dir, [unbound], decision_id="d-shadow", created_iso=_now_iso()
+    )
+    shadow_ok = upgraded["options"] == [bound] and downgraded["options"] == [bound]
+    ctx.heal_wedge()
+    return ScenarioResult(
+        name="29. the actuator rule is decided once; decisions are not shadowed",
+        passed=once_ok and shadow_ok,
+        evidence={
+            "outcome_of_the_flapping_pass": outcome,
+            "rule_evaluations_in_the_pass": calls["n"],
+            "systemctl_calls": len(ctx.calls) - calls_before,
+            "decision_after_the_bound_park": upgraded["options"],
+            "decision_after_a_later_unbound_park": downgraded["options"],
+        },
+        note="one evaluation per pass so a refusal cannot flip into an inline actuation, and "
+        "a pending unbound decision is upgraded to the actuator's bound option (round 8, "
+        "findings 1 and 2)",
+    )
+
+
 SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_baseline_self_heal,
     scenario_performed_false_actdispatch_gate,
@@ -2826,6 +2901,7 @@ SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_approval_authorizes_one_thing_once,
     scenario_one_approval_one_actuation_per_episode,
     scenario_single_actuator_live_dispatch_and_future_votes,
+    scenario_actuator_rule_decided_once_and_decisions_not_shadowed,
 ]
 
 
