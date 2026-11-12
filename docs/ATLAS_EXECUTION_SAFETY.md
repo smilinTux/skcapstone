@@ -88,15 +88,25 @@ always drafts its own change, tagged `op-bind:<app>|<action>|<target>`, the one 
 it is for. The dispatcher itself, for any intent however it was left, checks in this
 order, and a refusal never writes AUTHORIZED because nothing was authorized:
 
-* the change is bound to THIS intent (exactly one matching `op-bind:` tag). A change
-  approved for one action cannot run another, and a change with no binding authorizes
-  nothing;
+* the change is bound to THIS intent (exactly one matching `op-bind:` tag; the three parts
+  are percent-escaped and a raw `|` in any of them is rejected, so no part can forge the
+  separator). A change approved for one action cannot run another, and a change with no
+  binding authorizes nothing;
 * who approved it is derived from the VOTES, never from a missing marker: the fold
   writes its `auto-approved` timeline entry only while a change is still PROPOSED, so a
   standard change that goes approved, scheduled, unscheduled folds `approved` with no
   marker. A change is human-approved only if a qualifying human vote exists (the drafter's
   own excluded, as the fold does) and none rejects; `standard`, and the fold's
   `auto-normal` derivation, are auto-approved whatever the timeline says;
+* **a human approval is per episode, and it expires.** It is read from the newest
+  qualifying vote's `decided_at` against the real clock. Older than
+  `honor-pending --max-approval-age` (default 24 hours, at most 7 days) it is refused and
+  the intent closed (ESCALATED, change retired to a terminal state). A vote dated after
+  the clock, a bad configuration, or an unreadable time is refused and closes nothing. When
+  re-observation sees the condition definitely cleared, the intent is closed with the reason
+  "condition cleared before dispatch" and its change retired too, so a recurrence needs a
+  new proposal and a new human vote. This is deliberately conservative (fail closed) and can
+  be relaxed later by raising the limit or changing the closing rule;
 * an escalate-lane intent with no qualifying human vote is left pending, never acted on
   and never voided (a human decision is waiting on it); an intent with no recorded lane
   and no human vote is refused and left alone;
@@ -115,10 +125,25 @@ order, and a refusal never writes AUTHORIZED because nothing was authorized:
   human-approved one pending. A human-approved change skips the age limit, because
   approval legitimately arrives long after the observation, but never the re-observation.
 
-An approval is spent by the run it authorizes: the change moves to `implementing` before
-the actuator is called (so a second intent, or a concurrent dispatch, finds it no longer
-approved and nothing is attempted if that write fails), then to `deployed` after a
-verified run or `failed` after a failed one.
+An approval is spent by the run it authorizes, and taking it is a compare-and-swap. Under
+an exclusive per-change-id `flock` (shared by every dispatcher process on the host; it does
+not span nodes) the dispatcher re-reads the change, requires it still `approved`, moves it
+to `implementing` with a note naming the intent (`dispatch of <intent_id>`), and requires
+that the FIRST unconflicted `approved->implementing` entry on the timeline is its own. The
+timeline check matters because the fold keeps a conflicted second `implementing` event in
+the `implementing` status, so the status alone cannot tell the winner from the loser. Any
+other outcome refuses before the actuator is called. The change then goes to `deployed`
+after a verified run or `failed` after a failed one, so the ITIL record agrees with the
+ledger.
+
+An escalate-lane proposal that already has an open escalate-lane intent (same app, action,
+target, condition and catalog generation, its change still open) reuses it: the loop does not
+draft another change and intent on every pass. One bad intent never crashes a dispatch pass:
+a ledger error while recording an authorization is returned as an `error:` outcome and the
+pass carries on. An intent a crash stranded in AUTHORIZED or EXECUTING (older than ten
+minutes on the real clock) is escalated at the start of the next loop or dispatch pass: FAILED
+then ESCALATED, its change marked `failed`, a decision parked for a human and an alert
+emitted. It is never re-run, because the actuator may or may not have run.
 
 An injected clock must be timezone-aware; a naive one is refused, never read as local
 time. A discovered (manifest) observer's own `source_observed_at` is dropped in both

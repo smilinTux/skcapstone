@@ -1,6 +1,6 @@
 - ATLAS gate 5 hardening: the weak spots the fault-injection drill documented, and the
   holes the independent review of the first fix found, are fixed and are PASS criteria of
-  `scripts/atlas_p32_fault_injection_drill.py` (28 scenarios; 22 to 26 are new).
+  `scripts/atlas_p32_fault_injection_drill.py` (29 scenarios; 22 to 27 are new).
   - Stale evidence is refused, and judged against the source. A proposal that actuates
     must carry structured `evidence: {source, observed_at}` where `observed_at` is when
     the SOURCE data was true (adapters report `source_observed_at`; the envelope never
@@ -38,3 +38,12 @@
     and an open circuit at dispatch are a refusal (nothing recorded, nothing rolled back);
     and a stale or hardened catalog refuses without writing AUTHORIZED, after the lane and
     approval checks. Drill scenario 26 is new.
+  - Review round 5: spending an approval is a compare-and-swap (an exclusive per-change flock,
+    then the first unconflicted `approved->implementing` timeline entry must be this
+    dispatch's own), so two dispatchers can no longer both actuate on one approval; a human
+    approval is per episode and expires (`honor-pending --max-approval-age`, default 24 h,
+    capped at 7 days; a definitely cleared condition closes the intent and retires the
+    change); an open escalate-lane intent is reused instead of redrafted every pass; the
+    binding tag is percent-escaped and rejects `|`; a ledger error on one intent no longer
+    crashes the dispatch pass; an intent stranded in AUTHORIZED or EXECUTING by a crash is
+    escalated with an alert and never re-run. Drill scenario 27 is new.
