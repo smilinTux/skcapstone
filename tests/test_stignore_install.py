@@ -239,3 +239,23 @@ class TestClassify:
     )
     def test_kinds(self, text, kind):
         assert classify(text) == kind
+
+
+class TestInitInstallsTheLayout:
+    """`skcapstone init` (the onboard wizard) must install the layout, not leave it to a
+    later preflight: Syncthing can see the folder as soon as init creates it."""
+
+    def test_onboard_identity_step_installs_shared_then_shim(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        from skcapstone import onboard
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        fake = SimpleNamespace(fingerprint="ABCD" * 10, status=SimpleNamespace(value="active"))
+        monkeypatch.setattr("skcapstone.pillars.identity.generate_identity", lambda *a, **k: fake)
+        home = tmp_path / ".skcapstone"
+
+        onboard._step_identity(home, "Tester", None)
+
+        assert (home / ".stignore-shared").read_text() == packaged_shared_text()
+        assert classify((home / ".stignore").read_text()) == "shim"
