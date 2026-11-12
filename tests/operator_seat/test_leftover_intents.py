@@ -87,6 +87,7 @@ def _setup(tmp_path, monkeypatch, *, provision=True):
     return paths, observer, ledger, itil
 
 
+_BIND = "op-bind:demo|restart_service|svc"
 _PROP = {"app": "demo", "condition": "Ready", "action": "restart_service", "object": "svc"}
 _EXPLAIN = {"actions": [{"name": "restart_service", "standard": True, "reversible": True}]}
 
@@ -245,7 +246,7 @@ def _standard_change(itil):
         risk="low",
         rollback_plan="revert",
         created_by="atlas",
-        tags=["operator"],
+        tags=["operator", _BIND],
     )
 
 
@@ -256,7 +257,7 @@ def _normal_change_approved_by_a_human(itil):
         risk="low",
         rollback_plan="revert",
         created_by="atlas",
-        tags=["operator"],
+        tags=["operator", _BIND],
     )
     itil.submit_cab_vote(
         chg.id,

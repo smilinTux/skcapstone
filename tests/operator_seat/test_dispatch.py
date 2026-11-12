@@ -85,6 +85,12 @@ def _make_proposed_intent(
     return intent.intent_id
 
 
+def _propose(itil, *, bind=("widget", "fix-it", "widget-1"), **kwargs):
+    """Draft a change bound to the intent the way the loop does (app, action, target)."""
+    tags = list(kwargs.pop("tags", [])) + [f"op-bind:{bind[0]}|{bind[1]}|{bind[2]}"]
+    return itil.propose_change(tags=tags, **kwargs)
+
+
 class _FakeObserver:
     """A single-app observer whose reported condition flips when `heal()` is
     called -- the "live observation needed for postcondition verification"
@@ -135,7 +141,8 @@ def test_dispatch_intent_actuates_and_verifies_an_approved_change(tmp_path):
     ledger = _ledger(tmp_path)
     observer = _FakeObserver("Ready", "widget-1")
 
-    chg = itil.propose_change(
+    chg = _propose(
+        itil,
         title="fix widget-1",
         change_type="normal",
         risk="low",
@@ -199,7 +206,8 @@ def test_unapproved_change_never_actuates(tmp_path):
     ledger = _ledger(tmp_path)
     observer = _FakeObserver("Ready", "widget-1")
 
-    chg = itil.propose_change(
+    chg = _propose(
+        itil,
         title="fix widget-1",
         change_type="normal",
         risk="low",
@@ -238,7 +246,8 @@ def test_rejected_change_never_actuates(tmp_path):
     ledger = _ledger(tmp_path)
     observer = _FakeObserver("Ready", "widget-1")
 
-    chg = itil.propose_change(
+    chg = _propose(
+        itil,
         title="fix widget-1",
         change_type="normal",
         risk="low",
@@ -374,7 +383,8 @@ def test_stale_catalog_generation_refuses_and_escalates(tmp_path):
     record = store.read_spec(paths, "operatorapp", "widget")
     assert str(record["generation"]) == "2"
 
-    chg = itil.propose_change(
+    chg = _propose(
+        itil,
         title="fix widget-1",
         change_type="normal",
         risk="low",
@@ -407,9 +417,12 @@ def test_stale_catalog_generation_refuses_and_escalates(tmp_path):
         clock=lambda: _CLOCK,
     )
 
-    assert outcome.outcome.startswith("escalated:")
+    # A stale catalog REFUSES and leaves the intent PROPOSED: no AUTHORIZED is written,
+    # because nothing was authorized (round 4, finding 4).
+    assert outcome.outcome.startswith("refused:")
     assert "stale catalog_generation" in outcome.outcome
-    assert ledger.current_state(intent_id) is action_ledger.ActionState.ESCALATED
+    assert ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+    assert "authorized" not in [e.state.value for e in ledger.events(intent_id)]
     assert observer.healthy is False
 
 
@@ -432,7 +445,9 @@ def test_hardened_classification_refuses_and_escalates(tmp_path, monkeypatch):
     ledger = _ledger(tmp_path)
     observer = _FakeObserver("Ready", "widget-1")
 
-    chg = itil.propose_change(
+    chg = _propose(
+        itil,
+        bind=("fleet", "restart_service", "widget-1"),
         title="restart widget-1",
         change_type="standard",
         risk="low",
@@ -463,9 +478,10 @@ def test_hardened_classification_refuses_and_escalates(tmp_path, monkeypatch):
         now_iso=_NOW,
         clock=lambda: _CLOCK,
     )
-    assert outcome.outcome.startswith("escalated:")
+    assert outcome.outcome.startswith("refused:")
     assert "classification hardened" in outcome.outcome
-    assert ledger.current_state(intent_id) is action_ledger.ActionState.ESCALATED
+    assert ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+    assert "authorized" not in [e.state.value for e in ledger.events(intent_id)]
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +496,8 @@ def test_dispatch_refuses_when_frozen(tmp_path):
     itil = ITILManager(tmp_path / "itil")
     ledger = _ledger(tmp_path)
 
-    chg = itil.propose_change(
+    chg = _propose(
+        itil,
         title="fix widget-1",
         change_type="standard",
         risk="low",
@@ -512,7 +529,8 @@ def test_dispatch_refuses_when_unprovisioned(tmp_path):
     itil = ITILManager(tmp_path / "itil")
     ledger = _ledger(tmp_path)
 
-    chg = itil.propose_change(
+    chg = _propose(
+        itil,
         title="fix widget-1",
         change_type="standard",
         risk="low",
@@ -607,7 +625,8 @@ def test_freeze_landing_during_dispatch_does_not_feed_the_circuit_breaker(tmp_pa
     itil = ITILManager(tmp_path / "itil")
     ledger = _ledger(tmp_path)
     state = safety.ExecutionState(tmp_path / "state", cooldown_seconds=0)
-    chg = itil.propose_change(
+    chg = _propose(
+        itil,
         title="fix widget-1",
         change_type="normal",
         risk="low",
@@ -651,7 +670,8 @@ def test_a_real_failure_that_coincides_with_a_freeze_still_feeds_the_circuit_bre
     itil = ITILManager(tmp_path / "itil")
     ledger = _ledger(tmp_path)
     state = safety.ExecutionState(tmp_path / "state", cooldown_seconds=0)
-    chg = itil.propose_change(
+    chg = _propose(
+        itil,
         title="fix widget-1",
         change_type="normal",
         risk="low",

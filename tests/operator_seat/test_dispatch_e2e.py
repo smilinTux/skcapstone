@@ -183,18 +183,28 @@ def _escalated_intent(w, *, standard=True):
     return outcome["intent_id"]
 
 
-def _manual_intent(w, change_id, *, lane, evidence=None):
+def _manual_intent(
+    w,
+    change_id,
+    *,
+    lane,
+    evidence=None,
+    action="restart-telegram-bridge",
+    rollback=None,
+    tag="",
+):
     created = w.time.now
     intent = action_ledger.ActionIntent(
-        condition_fingerprint=f"fp-e2e-{change_id}",
+        condition_fingerprint=f"fp-e2e-{change_id}{tag}",
         application="skchat",
         target_kind="CI",
         target_id="telegram-bridge",
-        action="restart-telegram-bridge",
+        action=action,
         catalog_generation="e2e",
         created_at=created,
         itil_change_id=change_id,
         condition_type="BridgeAlive",
+        rollback=rollback or {},
     )
     w.ledger.create(intent, actor="test")
     w.ledger.append(
@@ -215,14 +225,17 @@ def _manual_intent(w, change_id, *, lane, evidence=None):
     return intent.intent_id
 
 
-def _normal_change(w, *, tags=("operator",), created_by="atlas"):
+BIND = "op-bind:skchat|restart-telegram-bridge|telegram-bridge"
+
+
+def _normal_change(w, *, tags=("operator",), created_by="atlas", bind=BIND):
     return w.itil.propose_change(
         title="restart telegram bridge",
         change_type="normal",
         risk="low",
         rollback_plan="restart again",
         created_by=created_by,
-        tags=list(tags),
+        tags=[*tags, bind],
     )
 
 
@@ -261,7 +274,7 @@ def test_a_legacy_auto_approved_change_on_an_escalated_intent_is_refused_not_voi
         risk="low",
         rollback_plan="restart again",
         created_by="atlas",
-        tags=["operator"],
+        tags=["operator", BIND],
     )
     intent_id = _manual_intent(world, change.id, lane="escalate", evidence=_stamp(world))
     world.time.advance(hours=2)
@@ -408,3 +421,295 @@ def _stamp(w):
         "source": "observation:skchat/BridgeAlive/telegram-bridge",
         "observed_at": _iso(w.time.now),
     }
+
+
+# ==========================================================================
+# Round 4 (third independent review of 315300c0)
+# ==========================================================================
+
+
+def _schedule_and_unschedule(w, change_id):
+    """approved -> scheduled -> approved: the fold stays approved but the
+    ``auto-approved`` timeline marker is gone (it is only written while PROPOSED)."""
+    when = _iso(w.time.now)
+    w.itil._append_event(
+        w.itil.changes_dir,
+        change_id,
+        "capauth:approver@scratch",
+        "schedule",
+        window_start=when,
+        window_end=when,
+        asap=True,
+        deploy_mode="confirm",
+    )
+    w.itil._append_event(
+        w.itil.changes_dir, change_id, "capauth:approver@scratch", "unschedule", note="rescheduled"
+    )
+    change = next(c for c in w.itil.list_changes() if c.id == change_id)
+    assert change.status.value == "approved"
+    assert not any(e.get("action") == "auto-approved" for e in change.timeline)
+    return change
+
+
+def _standard_bound_change(w):
+    return w.itil.propose_change(
+        title="restart telegram bridge",
+        change_type="standard",
+        risk="low",
+        rollback_plan="restart again",
+        created_by="atlas",
+        tags=["operator", BIND],
+    )
+
+
+def _states(w, intent_id):
+    return [e.state.value for e in w.ledger.events(intent_id)]
+
+
+# --- 1: "human-approved" needs a qualifying human vote, not a missing marker ----
+
+
+def test_a_rescheduled_standard_change_is_still_not_human_approved_for_an_escalated_intent(world):
+    change = _standard_bound_change(world)
+    _schedule_and_unschedule(world, change.id)
+    intent_id = _manual_intent(world, change.id, lane="escalate", evidence=_stamp(world))
+    outcomes = _sweep(world)
+    assert world.calls == []
+    assert outcomes[0].outcome.startswith("pending")
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+
+
+def test_a_rescheduled_standard_change_is_not_human_approved_for_a_legacy_no_lane_intent(world):
+    change = _standard_bound_change(world)
+    _schedule_and_unschedule(world, change.id)
+    intent_id = _manual_intent(world, change.id, lane=None, evidence=_stamp(world))
+    outcomes = _sweep(world)
+    assert world.calls == []
+    assert "no recorded auto lane" in outcomes[0].outcome
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+
+
+def test_a_rescheduled_standard_change_still_needs_fresh_evidence_for_an_auto_intent(world):
+    change = _standard_bound_change(world)
+    _schedule_and_unschedule(world, change.id)
+    ancient = {
+        "source": "observation:skchat/BridgeAlive/telegram-bridge",
+        "observed_at": "2019-01-01T00:00:00Z",
+    }
+    intent_id = _manual_intent(world, change.id, lane="auto", evidence=ancient)
+    outcomes = _sweep(world)
+    assert world.calls == []
+    assert "evidence stale" in outcomes[0].outcome
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.ESCALATED
+
+
+def test_a_rescheduled_auto_normal_change_is_not_human_approved(world):
+    change = _normal_change(world, tags=("operator", "auto-normal"), created_by="operator")
+    _schedule_and_unschedule(world, change.id)
+    intent_id = _manual_intent(world, change.id, lane="escalate")
+    outcomes = _sweep(world)
+    assert world.calls == []
+    assert outcomes[0].outcome.startswith("pending")
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+
+
+def test_a_rescheduled_change_that_a_human_really_approved_still_acts(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    _schedule_and_unschedule(world, change.id)
+    intent_id = _manual_intent(world, change.id, lane="escalate")
+    outcomes = _sweep(world)
+    assert outcomes[0].outcome == "verified"
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.VERIFIED
+
+
+def test_a_human_rejection_beats_an_approval(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    world.itil.submit_cab_vote(
+        change.id,
+        agent="capauth:other@scratch",
+        decision="rejected",
+        subject="capauth:other@scratch",
+        subject_role="approver",
+    )
+    intent_id = _manual_intent(world, change.id, lane="escalate")
+    _sweep(world)
+    assert world.calls == []
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+
+
+# --- 2: the change is bound to the intent, and used up ---------------------------
+
+
+def test_a_change_approved_for_one_action_does_not_authorize_another(world):
+    change = _normal_change(world)  # bound to restart-telegram-bridge
+    _vote(world, change.id)
+    intent_id = _manual_intent(world, change.id, lane="escalate", action="restart-daemon")
+    outcomes = _sweep(world)
+    assert world.calls == [], "a change approved for one action must not run another"
+    assert "not bound" in outcomes[0].outcome
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+
+
+def test_a_change_with_no_binding_authorizes_nothing(world):
+    change = world.itil.propose_change(
+        title="restart telegram bridge",
+        change_type="normal",
+        risk="low",
+        rollback_plan="restart again",
+        created_by="atlas",
+        tags=["operator"],
+    )
+    _vote(world, change.id)
+    _manual_intent(world, change.id, lane="escalate")
+    outcomes = _sweep(world)
+    assert world.calls == []
+    assert "not bound" in outcomes[0].outcome
+
+
+def test_a_change_is_used_up_by_a_verified_run(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    first = _manual_intent(world, change.id, lane="escalate", tag="-1")
+    assert _sweep(world)[0].outcome == "verified"
+    assert len(world.calls) == 1
+    done = next(c for c in world.itil.list_changes() if c.id == change.id)
+    assert done.status.value == "deployed"
+    # A second intent bound to the SAME change, with the condition firing again.
+    world.wedge()
+    second = _manual_intent(world, change.id, lane="escalate", tag="-2")
+    outcomes = [o for o in _sweep(world) if o.intent_id == second]
+    assert len(world.calls) == 1, "an approval is spent by the run it authorized"
+    assert outcomes[0].outcome.startswith("pending: ITIL change status=deployed")
+    assert world.ledger.current_state(first) is action_ledger.ActionState.VERIFIED
+
+
+def test_a_change_is_closed_out_as_failed_when_the_run_fails(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    world.runner = lambda cmd: subprocess.CompletedProcess(cmd, 0, "", "")  # never heals
+    _manual_intent(world, change.id, lane="escalate")
+    outcomes = _sweep(world)
+    assert outcomes[0].outcome.startswith("failed")
+    failed = next(c for c in world.itil.list_changes() if c.id == change.id)
+    assert failed.status.value == "failed"
+
+
+def test_the_loop_binds_each_drafted_change_to_its_intent(world):
+    intent_id = _escalated_intent(world)
+    change = _change(world, intent_id)
+    assert BIND in change.tags
+    assert [t for t in change.tags if t.startswith("op-bind:")] == [BIND]
+
+
+def test_a_proposal_supplied_change_id_is_never_trusted(world):
+    approved = _normal_change(world, bind="op-bind:skchat|something-else|elsewhere")
+    _vote(world, approved.id)
+    explain = act_dispatch.merged_explain()
+    res = loop.run_once(
+        world.paths,
+        now_iso=_iso(world.time.now),
+        propose=lambda b, r: [
+            {
+                "app": "skchat",
+                "condition": "BridgeAlive",
+                "action": "restart-telegram-bridge",
+                "object": "telegram-bridge",
+                "evidence": _stamp(world),
+                "change_id": approved.id,
+                "itil_change_id": approved.id,
+            }
+        ],
+        explain=explain,
+        decisions_dir=str(world.decisions),
+        apply_fn=_apply_fn(world),
+        execute=True,
+        lifecycle_ledger=world.ledger,
+        itil=world.itil,
+        target_known=lambda p: False,
+        clock=lambda: world.time.now,
+        emit=lambda _s: None,
+    )
+    intent_id = res["outcomes"][0]["intent_id"]
+    bound = world.ledger.read_intent(intent_id).itil_change_id
+    assert bound != approved.id, "the loop drafts its own change, whatever the proposal says"
+    assert world.calls == []
+
+
+# --- 3: suppression is a refusal, not a failure ----------------------------------
+
+
+def test_a_cooldown_is_a_refusal_with_no_failure_record_and_no_rollback(world, tmp_path):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    intent_id = _manual_intent(
+        world,
+        change.id,
+        lane="escalate",
+        rollback={"action": "restart-daemon"},
+    )
+    state = loop.safety.ExecutionState(tmp_path / "state", cooldown_seconds=900)
+    fingerprint = loop.safety.action_fingerprint(
+        {
+            "app": "skchat",
+            "condition": "BridgeAlive",
+            "object": "telegram-bridge",
+            "action": "restart-telegram-bridge",
+        }
+    )
+    state.record(fingerprint, time.time(), success=False, reason="earlier failure")
+    rollbacks = []
+    outcomes = _sweep(
+        world,
+        execution_state=state,
+        rollback_fn=lambda p, c, r: rollbacks.append(p) or {"performed": True},
+    )
+    assert world.calls == []
+    assert outcomes[0].outcome.startswith("refused: execution suppressed")
+    assert rollbacks == [], "nothing was attempted, so there is nothing to roll back"
+    assert state._load()["actions"][fingerprint]["consecutive_failures"] == 1
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+    assert "authorized" not in _states(world, intent_id)
+
+
+# --- 4: stale catalog never runs before the lane and human checks ---------------
+
+
+def _make_catalog_stale(w):
+    for _ in range(2):  # generation 2; the intents below were proposed against "e2e"
+        store.write_spec(
+            w.paths, "operatorapp", "skchat", {"ratifiedStandardActions": []}, writer=HUMAN
+        )
+
+
+def test_a_stale_catalog_refuses_a_human_approved_intent_without_authorizing_it(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    _make_catalog_stale(world)
+    intent_id = _manual_intent(world, change.id, lane="escalate")
+    outcomes = _sweep(world)
+    assert world.calls == []
+    assert "stale catalog_generation" in outcomes[0].outcome
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+    assert "authorized" not in _states(world, intent_id)
+
+
+def test_a_stale_catalog_does_not_close_an_escalate_lane_intent_with_no_human(world):
+    change = _standard_bound_change(world)
+    _make_catalog_stale(world)
+    intent_id = _manual_intent(world, change.id, lane="escalate", evidence=_stamp(world))
+    outcomes = _sweep(world)
+    assert world.calls == []
+    assert outcomes[0].outcome.startswith("pending")
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+    assert _states(world, intent_id) == ["observed", "diagnosed", "proposed"]
+
+
+def test_a_stale_catalog_does_not_close_a_legacy_no_lane_intent(world):
+    change = _standard_bound_change(world)
+    _make_catalog_stale(world)
+    intent_id = _manual_intent(world, change.id, lane=None, evidence=_stamp(world))
+    _sweep(world)
+    assert world.calls == []
+    assert _states(world, intent_id) == ["observed", "diagnosed", "proposed"]
