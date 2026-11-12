@@ -58,3 +58,8 @@
     (`SKOPERATOR_ACTUATOR_NODE` or `~/.config/skcapstone/atlas-actuator-node`, default NONE);
     a crash in AUTHORIZED retires the still-approved change; and auto-lane intents older than
     one pass are voided before anything else runs. Drill scenario 28 is new.
+  - Round 7 polish: the loop on a node that is not the designated actuator no longer sweeps or
+    drafts escalate-lane changes and intents; the whole node-local directory chain (state
+    directory down to the lock directory, the single-flight lock included) is verified free of
+    symlinks; an OSError taking a lock is contained per proposal instead of aborting the pass
+    (the deadline still aborts it); two stale docstrings are corrected.

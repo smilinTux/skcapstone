@@ -184,14 +184,20 @@ actuator (`operator_seat/node_local.py`). The designation is node-local configur
 environment variable `SKOPERATOR_ACTUATOR_NODE` (a systemd drop-in) or the first line of
 `~/.config/skcapstone/atlas-actuator-node`, compared with this node's name, and it DEFAULTS
 TO NONE: until an operator designates a node, nothing actuates anywhere. Other nodes still
-observe, propose and park decisions. The manual act verbs (`skcapstone cmdb operator act`,
+observe, propose and park decisions, and that is ALL they do: the loop on a node that is not the
+designated actuator does not sweep (stranded, stale auto-lane, cleared-episode closing) and does
+not draft changes or ledger intents, because the ledger and ITIL records are replicated and its
+clock or its local view of a condition could escalate the actuator's live intent or close a
+human-approved one the actuator is about to honor. The manual act verbs (`skcapstone cmdb operator act`,
 the per-adapter act functions) are separate entry points and are not covered by this rule.
 
 **Locks are node-local.** The per-change lock and the single-flight lock live in a node-local
 state directory (`$SKCAPSTONE_LOCAL_STATE_DIR`, else `$XDG_STATE_HOME/skcapstone`, else
-`~/.local/state/skcapstone`), created 0700, verified to be a real directory owned by this user
-with no group or world access (a symlink, wrong owner or loose mode refuses the dispatch), and
-opened `O_NOFOLLOW`.
+`~/.local/state/skcapstone`), created 0700. EVERY directory from that state directory down to
+the lock directory is verified on every acquisition to be a real directory (never a symlink)
+owned by this user with no group or world access, otherwise the dispatch is refused; the lock
+files are opened `O_NOFOLLOW`. Directories above the state directory are the operator's own
+layout and are not judged.
 
 **A live dispatch is never swept as stranded.** Every lifecycle event is stamped from the
 clock at write time, never the pass start, and a dispatch holds its per-change lock from the
