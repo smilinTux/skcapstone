@@ -1,6 +1,6 @@
 - ATLAS gate 5 hardening: the weak spots the fault-injection drill documented, and the
   holes the independent review of the first fix found, are fixed and are PASS criteria of
-  `scripts/atlas_p32_fault_injection_drill.py` (27 scenarios; 22 to 25 are new).
+  `scripts/atlas_p32_fault_injection_drill.py` (28 scenarios; 22 to 26 are new).
   - Stale evidence is refused, and judged against the source. A proposal that actuates
     must carry structured `evidence: {source, observed_at}` where `observed_at` is when
     the SOURCE data was true (adapters report `source_observed_at`; the envelope never
@@ -29,3 +29,12 @@
     action binding, and treats `Unknown` as "do not act" with a fresh-source-time re-observation.
     The end freeze state is reported as it is, naive clocks are refused, discovered observers
     cannot supply a source time, and skos reads its digest once. Drill scenario 25 is new.
+  - Review round 4: "human-approved" is now derived from the CAB votes, not inferred from a
+    missing `auto-approved` marker (a standard change that goes approved, scheduled,
+    unscheduled folds approved with no marker and used to read as human); the loop always
+    drafts its own change tagged `op-bind:<app>|<action>|<target>` and never trusts a
+    proposal-supplied change id, the dispatcher refuses a change not bound to the intent,
+    and a run spends the approval (`implementing`, then `deployed` or `failed`); cooldown
+    and an open circuit at dispatch are a refusal (nothing recorded, nothing rolled back);
+    and a stale or hardened catalog refuses without writing AUTHORIZED, after the lane and
+    approval checks. Drill scenario 26 is new.

@@ -83,25 +83,42 @@ gets a CAB-gated `normal` change without the `auto-normal` tag, so nothing auto-
 it at the fold; only a human CAB vote does. The loop records the lane (`auto` or
 `escalate`) and the evidence stamp on the intent's PROPOSED event.
 
-The dispatcher itself, for any intent however it was left, decides who approved from
-the fold's own `auto-approved` timeline entry (which covers `standard` and
-`auto-normal`), never from the change type, and then:
+The loop never trusts a change id on a proposal (a proposal is model output): it
+always drafts its own change, tagged `op-bind:<app>|<action>|<target>`, the one intent
+it is for. The dispatcher itself, for any intent however it was left, checks in this
+order, and a refusal never writes AUTHORIZED because nothing was authorized:
 
-* an escalate-lane intent whose change was auto-approved is left pending, never acted
-  on and never voided, because a human decision is waiting on it;
+* the change is bound to THIS intent (exactly one matching `op-bind:` tag). A change
+  approved for one action cannot run another, and a change with no binding authorizes
+  nothing;
+* who approved it is derived from the VOTES, never from a missing marker: the fold
+  writes its `auto-approved` timeline entry only while a change is still PROPOSED, so a
+  standard change that goes approved, scheduled, unscheduled folds `approved` with no
+  marker. A change is human-approved only if a qualifying human vote exists (the drafter's
+  own excluded, as the fold does) and none rejects; `standard`, and the fold's
+  `auto-normal` derivation, are auto-approved whatever the timeline says;
+* an escalate-lane intent with no qualifying human vote is left pending, never acted on
+  and never voided (a human decision is waiting on it); an intent with no recorded lane
+  and no human vote is refused and left alone;
+* a stale catalog generation, or a classification hardened since the proposal, refuses
+  and leaves the intent PROPOSED (a proposal under the new catalog is a new intent);
 * the target (`target_known`) and the ratified action binding (`action_allowed`) are
   re-checked when the caller supplies them (`skoperator honor-pending` does);
-* an auto-approved change must carry fresh evidence stored on the intent, against the
-  real clock, and is voided if that fails (stored evidence only ages); an intent with no
-  recorded lane is refused and left alone, since it cannot be told from a pending human
-  decision;
-* the owning app is re-observed before acting, and only a DEFINITE firing status
-  counts. `Unknown` is not "still firing" (it is for alerting, not for permission to
-  act), a missing condition or observer is not, and the re-observation must itself carry
-  a fresh source time. A definitely cleared condition voids an auto-lane intent and
-  leaves a human-approved one pending. A human-approved change skips the age limit,
-  because approval legitimately arrives long after the observation, but never the
-  re-observation.
+* a change with no human behind it must carry fresh evidence stored on the intent,
+  against the real clock, and is voided if that fails (stored evidence only ages);
+* cooldown and an open circuit are suppression, not failure: a refusal with nothing
+  recorded against the retry budget and nothing rolled back;
+* the owning app is re-observed, and only a DEFINITE firing status counts. `Unknown` is
+  not "still firing" (it is for alerting, not for permission to act), a missing
+  condition or observer is not, and the re-observation must itself carry a fresh source
+  time. A definitely cleared condition voids an auto-lane intent and leaves a
+  human-approved one pending. A human-approved change skips the age limit, because
+  approval legitimately arrives long after the observation, but never the re-observation.
+
+An approval is spent by the run it authorizes: the change moves to `implementing` before
+the actuator is called (so a second intent, or a concurrent dispatch, finds it no longer
+approved and nothing is attempted if that write fails), then to `deployed` after a
+verified run or `failed` after a failed one.
 
 An injected clock must be timezone-aware; a naive one is refused, never read as local
 time. A discovered (manifest) observer's own `source_observed_at` is dropped in both
