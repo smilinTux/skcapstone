@@ -2428,6 +2428,164 @@ def scenario_approval_authorizes_one_thing_once(ctx: DrillContext) -> ScenarioRe
     )
 
 
+class _SlowChangeITIL:
+    """An ITILManager whose ``update_change`` is slow, to make two dispatchers overlap."""
+
+    def __init__(self, inner: ITILManager, delay: float) -> None:
+        self._inner = inner
+        self._delay = delay
+
+    def update_change(self, *args: Any, **kwargs: Any) -> Any:
+        time.sleep(self._delay)
+        return self._inner.update_change(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def scenario_one_approval_one_actuation_per_episode(ctx: DrillContext) -> ScenarioResult:
+    """Review round 5: the spend is a compare-and-swap, an approval covers one episode, a
+    crash never causes a re-run.
+
+    (a) Two dispatchers, two intents, ONE approved change, overlapped on purpose: exactly one
+    may actuate and the ITIL record must end ``deployed``, agreeing with the ledger (it used
+    to end ``failed`` while the ledger said verified, with the actuator run twice). (b) When
+    the condition clears before dispatch the approved intent is closed and its change
+    retired, so a recurrence needs a new vote. (c) An intent a crash stranded in EXECUTING is
+    escalated with an alert and never re-run.
+    """
+    slug = "s27-one-approval-per-episode"
+    itil = ITILManager(ctx.itil_home)
+    ledger = ctx.scenario_ledger(slug)
+    created = datetime.now(timezone.utc)
+    bind = dispatch.change_binding_tag("skchat", "restart-telegram-bridge", "telegram-bridge")
+    voter = "capauth:drill-human@scratch"
+
+    def approved_change():
+        change = itil.propose_change(
+            title="restart telegram bridge",
+            change_type="normal",
+            risk="low",
+            rollback_plan="restart again",
+            created_by="atlas-p32-drill",
+            tags=["operator", bind],
+        )
+        itil.submit_cab_vote(
+            change.id, agent=voter, decision="approved", subject=voter, subject_role="approver"
+        )
+        return change
+
+    def intent(change_id: str, tag: str) -> str:
+        core = action_ledger.ActionIntent(
+            condition_fingerprint=f"fp-{slug}-{tag}",
+            application="skchat",
+            target_kind="CI",
+            target_id="telegram-bridge",
+            action="restart-telegram-bridge",
+            catalog_generation=_current_catalog_generation(ctx),
+            created_at=created,
+            itil_change_id=change_id,
+            condition_type="BridgeAlive",
+        )
+        ledger.create(core, actor="atlas-p32-drill")
+        for nxt, detail in (
+            (action_ledger.ActionState.DIAGNOSED, {}),
+            (action_ledger.ActionState.PROPOSED, {"disposition": "escalate"}),
+        ):
+            ledger.append(
+                core.intent_id, nxt, occurred_at=created, actor="atlas-p32-drill", detail=detail
+            )
+        return core.intent_id
+
+    def dispatch_one(manager, intent_id, apply_fn):
+        return dispatch.dispatch_intent(
+            ctx.paths,
+            ledger,
+            manager,
+            intent_id,
+            adapters={"skchat": skchat_adapter.observe},
+            problem_types=loop.PROBLEM_WHEN_TRUE,
+            apply_fn=apply_fn,
+            now_iso=_now_iso(),
+            actor="atlas-p32-drill",
+            emit=lambda _m: None,
+        )
+
+    # (a) the race
+    ctx.inject_wedge()
+    shared = approved_change()
+    first, second = intent(shared.id, "a"), intent(shared.id, "b")
+    slow = _SlowChangeITIL(itil, delay=0.3)
+    real_apply = act_dispatch.build_apply_fn(
+        ctx.paths, _now_iso(), runner=ctx.runner_success_and_heal(), itil=itil
+    )
+    actuations: list[str] = []
+    guard = threading.Lock()
+
+    def counting_apply(prop: dict, classification: dict) -> Any:
+        with guard:
+            actuations.append(prop["action"])
+        return real_apply(prop, classification)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        results = [
+            f.result(timeout=60)
+            for f in [pool.submit(dispatch_one, slow, i, counting_apply) for i in (first, second)]
+        ]
+    race_status = next(c for c in itil.list_changes() if c.id == shared.id).status.value
+    race_ok = len(actuations) == 1 and race_status == "deployed"
+
+    # (b) the episode clears before dispatch
+    ctx.heal_wedge()
+    cleared_change = approved_change()
+    cleared_id = intent(cleared_change.id, "cleared")
+    cleared = dispatch_one(itil, cleared_id, lambda p, c: (_ for _ in ()).throw(AssertionError))
+    retired = next(c for c in itil.list_changes() if c.id == cleared_change.id).status.value
+    cleared_ok = (
+        "condition cleared before dispatch" in cleared.outcome
+        and ledger.current_state(cleared_id) is action_ledger.ActionState.ESCALATED
+        and retired in ("rejected", "closed")
+    )
+
+    # (c) a crash stranded an intent in EXECUTING
+    ctx.inject_wedge()
+    stranded_change = approved_change()
+    stranded_id = intent(stranded_change.id, "stranded")
+    long_ago = created - timedelta(minutes=30)
+    for state in (action_ledger.ActionState.AUTHORIZED, action_ledger.ActionState.EXECUTING):
+        ledger.append(stranded_id, state, occurred_at=long_ago, actor="crashed")
+    itil.update_change(stranded_change.id, "crashed", new_status="implementing", note="x")
+    calls_before = len(ctx.calls)
+    alerts: list[str] = []
+    swept = dispatch.escalate_stranded(
+        ledger, itil, now_iso=_now_iso(), actor="atlas-p32-drill", emit=alerts.append
+    )
+    stranded_ok = (
+        any(o.intent_id == stranded_id for o in swept)
+        and ledger.current_state(stranded_id) is action_ledger.ActionState.ESCALATED
+        and any("ALERT" in a and stranded_id in a for a in alerts)
+        and len(ctx.calls) == calls_before
+    )
+    ctx.heal_wedge()
+    return ScenarioResult(
+        name="27. one approval, one actuation, per episode",
+        passed=race_ok and cleared_ok and stranded_ok,
+        evidence={
+            "race_actuations": len(actuations),
+            "race_outcomes": sorted(r.outcome.split(":")[0] for r in results),
+            "itil_status_after_the_race": race_status,
+            "cleared_episode": cleared.outcome,
+            "retired_change_status": retired,
+            "stranded_outcome": next(
+                (o.outcome for o in swept if o.intent_id == stranded_id), None
+            ),
+        },
+        note="the spend is a compare-and-swap under a per-change lock, a human approval is "
+        "closed with its episode, and a crash-stranded intent is escalated, never re-run "
+        "(round 5, findings 1, 2 and 5)",
+    )
+
+
 SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_baseline_self_heal,
     scenario_performed_false_actdispatch_gate,
@@ -2457,6 +2615,7 @@ SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_leftover_intent_is_not_actuated_later,
     scenario_escalated_proposal_needs_a_human_and_keeps_its_decision,
     scenario_approval_authorizes_one_thing_once,
+    scenario_one_approval_one_actuation_per_episode,
 ]
 
 
