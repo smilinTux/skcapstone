@@ -21,7 +21,7 @@ import pytest
 from skcapstone.fleet import stignore_doctor as sd
 
 REAL_TEMPLATE = (
-    Path(__import__("skcapstone").__file__).parent / "defaults" / ".stignore"
+    Path(__import__("skcapstone").__file__).parent / "defaults" / ".stignore-shared"
 ).read_text(encoding="utf-8")
 
 GOOD = """\

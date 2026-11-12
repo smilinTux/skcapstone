@@ -190,7 +190,20 @@ security/tokens
 // writable by the thing it authenticates, and a synced roster is exactly that
 // (any peer could drop a key in). Keys are installed per node by hand.
 **/capauth/fleet-trust
-// Codex auth and session state is per physical host.
+// ChatGPT and Codex authentication, session databases, caches, logs and MCP
+// lifecycle locks are physical-host state: acquired on each host and never
+// replicated (the sync policy audit probes these paths).
 **/.codex/auth.json
+**/.codex/sessions
+**/.codex/log
+**/.codex/cache
+**/ChatGPT/Cookies
+**/ChatGPT/Local Storage
+**/ChatGPT/Session Storage
+**/ChatGPT/IndexedDB
+**/ChatGPT/Cache
+**/ChatGPT/Code Cache
+**/OpenAI.Codex/LocalState
+**/skcapstone-mcp-slots
 // A backup of a ruleset is not a ruleset: do not replicate .stignore.bak-* copies.
 .stignore.bak-*
