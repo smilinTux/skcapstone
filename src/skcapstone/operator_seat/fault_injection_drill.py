@@ -2082,7 +2082,7 @@ def scenario_leftover_intent_is_not_actuated_later(ctx: DrillContext) -> Scenari
 
     def leftover(change_id, target, evidence_stamp):
         intent = action_ledger.ActionIntent(
-            condition_fingerprint=f"fp-{slug}-{target}",
+            condition_fingerprint=f"fp-{slug}-{change_id}",
             application="skchat",
             target_kind="CI",
             target_id=target,
@@ -2131,7 +2131,7 @@ def scenario_leftover_intent_is_not_actuated_later(ctx: DrillContext) -> Scenari
     )
 
     ctx.heal_wedge()  # the condition cleared while the intent waited
-    cleared_id = leftover(standard_change().id, "telegram-bridge-2", fresh_evidence())
+    cleared_id = leftover(standard_change().id, "telegram-bridge", fresh_evidence())
     second = sweep()
     cleared_refused = (
         bool(second)
