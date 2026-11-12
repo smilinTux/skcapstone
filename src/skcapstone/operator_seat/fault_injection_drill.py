@@ -66,6 +66,7 @@ from . import (
     decisions,
     dispatch,
     loop,
+    policy,
     proposer,
     safety,
     skchat_adapter,
@@ -2161,6 +2162,113 @@ def scenario_leftover_intent_is_not_actuated_later(ctx: DrillContext) -> Scenari
     )
 
 
+def scenario_escalated_proposal_needs_a_human_and_keeps_its_decision(
+    ctx: DrillContext,
+) -> ScenarioResult:
+    """Review round 3: an ESCALATED proposal never gets an auto-approving change.
+
+    The old loop typed the ITIL change from the proposal's class and ignored its
+    disposition, so a standard-class proposal the planner escalated (here: its target
+    does not resolve) got a ``standard`` change that auto-approves at the fold, and a
+    later ``run_dispatch_pass`` ran it with no human vote. Now it gets a CAB-gated
+    change, the sweep leaves it pending (and un-voided, so the parked decision still
+    works), and only a real CAB vote lets it run, after a fresh re-observation.
+    """
+    slug = "s25-escalated-needs-human"
+    itil = ITILManager(ctx.itil_home)
+    ledger = ctx.scenario_ledger(slug)
+    state = ctx.scenario_state(slug)
+    explain = act_dispatch.merged_explain()
+    for entry in explain["actions"]:
+        if entry["name"] == "restart-telegram-bridge":
+            entry["standard"] = True
+    saved_catalog = policy.RATIFIED_STANDARD_CATALOG
+    policy.RATIFIED_STANDARD_CATALOG = saved_catalog | {"restart-telegram-bridge"}
+    try:
+        ctx.inject_wedge()
+        proposal = ctx.wedge_proposal()
+        res = loop.run_once(
+            ctx.paths,
+            now_iso=_now_iso(),
+            propose=lambda b, r: [proposal],
+            explain=explain,
+            decisions_dir=str(ctx.decisions_dir / slug),
+            apply_fn=act_dispatch.build_apply_fn(
+                ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
+            ),
+            execute=True,
+            emit=lambda _m: None,
+            execution_state=state,
+            lifecycle_ledger=ledger,
+            ledger_actor="atlas-p32-drill",
+            itil=itil,
+            target_known=lambda p: False,
+        )
+        outcome = res["outcomes"][0]
+        intent_id = outcome["intent_id"]
+        change_id = ledger.read_intent(intent_id).itil_change_id
+        change = next(c for c in itil.list_changes() if c.id == change_id)
+
+        def sweep(runner):
+            return dispatch.run_dispatch_pass(
+                ctx.paths,
+                ledger,
+                itil,
+                adapters={"skchat": skchat_adapter.observe},
+                problem_types=loop.PROBLEM_WHEN_TRUE,
+                apply_fn=act_dispatch.build_apply_fn(
+                    ctx.paths, _now_iso(), runner=runner, itil=itil
+                ),
+                execution_state=state,
+                now_iso=_now_iso(),
+                actor="atlas-p32-drill",
+                emit=lambda _m: None,
+            )
+
+        calls_before = len(ctx.calls)
+        first = sweep(ctx.runner_boom())
+        pending = (
+            outcome["outcome"] == "escalated (parked for approval)"
+            and change.change_type.value == "normal"
+            and change.status.value == "proposed"
+            and bool(first)
+            and first[0].outcome.startswith("pending")
+            and ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+            and len(ctx.calls) == calls_before
+        )
+        itil.submit_cab_vote(
+            change_id,
+            agent="capauth:drill-human@scratch",
+            decision="approved",
+            subject="capauth:drill-human@scratch",
+            subject_role="approver",
+        )
+        second = sweep(ctx.runner_success_and_heal())
+        acted_after_human = (
+            bool(second)
+            and second[0].outcome == "verified"
+            and len(ctx.calls) == calls_before + 1
+            and ledger.current_state(intent_id) is action_ledger.ActionState.VERIFIED
+        )
+    finally:
+        policy.RATIFIED_STANDARD_CATALOG = saved_catalog
+        ctx.heal_wedge()
+    return ScenarioResult(
+        name="25. an escalated proposal needs a human and keeps its decision",
+        passed=pending and acted_after_human,
+        evidence={
+            "escalated_outcome": outcome["outcome"],
+            "change_type": change.change_type.value,
+            "change_status_before_vote": change.status.value,
+            "sweep_before_the_human": first[0].outcome if first else None,
+            "sweep_after_the_human": second[0].outcome if second else None,
+        },
+        note="the escalate lane gets a CAB-gated change, so nothing runs without a human and "
+        "the pending intent is never voided; after the vote it runs once, after a fresh "
+        "re-observation (review round 3, findings A and B)",
+    )
+
+
 SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_baseline_self_heal,
     scenario_performed_false_actdispatch_gate,
@@ -2188,6 +2296,7 @@ SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_unverified_outcome_is_not_applied,
     scenario_evidence_age_uses_source_time_on_the_real_clock,
     scenario_leftover_intent_is_not_actuated_later,
+    scenario_escalated_proposal_needs_a_human_and_keeps_its_decision,
 ]
 
 

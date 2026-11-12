@@ -145,7 +145,7 @@ def test_a_stale_source_is_refused_even_when_the_pass_clock_is_current(tmp_path,
     monkeypatch.setattr(
         skos_adapter,
         "_default_probe",
-        lambda: {
+        lambda digest=None: {
             "scheduler_alive": True,
             "gtd_draining": True,
             "digest_fresh": True,
