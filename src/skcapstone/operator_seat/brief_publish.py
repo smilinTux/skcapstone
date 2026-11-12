@@ -43,8 +43,10 @@ def _mid_pass_text(result: dict[str, Any]) -> str | None:
     summary = result.get("freeze_summary")
     if not result.get("frozen_mid_pass") or not isinstance(summary, dict):
         return None
+    frozen_now = bool(result.get("frozen")) or _freeze_state(result) == "frozen"
+    lifted = "" if frozen_now else " and was lifted before the pass ended"
     return (
-        f"landed mid-pass: {len(summary.get('taken_before_freeze', []))} action(s) taken "
+        f"landed mid-pass{lifted}: {len(summary.get('taken_before_freeze', []))} action(s) taken "
         f"before the freeze, {len(summary.get('refused_by_freeze', []))} refused, "
         f"{len(summary.get('still_firing', []))} condition(s) still firing."
     )
@@ -113,6 +115,9 @@ def render_html(result: dict[str, Any], now_iso: str) -> str:
         state = '<span class="ok">ALL QUIET</span> nothing firing.'
     else:
         state = f'<span class="alert">{len(firing)} firing</span>, {len(stale)} stale.'
+
+    if mid_pass and not (frozen or freeze_state == "frozen"):
+        state += f' <span class="muted">A freeze {html.escape(mid_pass)}</span>'
 
     firing_table = (
         f"<table><thead><tr><th>app</th><th>condition</th><th>object</th>"
@@ -206,6 +211,8 @@ def render_markdown(result: dict[str, Any], now_iso: str) -> str:
         lines.append("**All quiet** - nothing firing.")
     else:
         lines.append(f"**{len(firing)} firing**, {len(stale)} stale.")
+    if mid_pass and not (frozen or freeze_state == "frozen"):
+        lines.append(f"A freeze {mid_pass}")
     lines.append("")
     lines.append(_state_line(result, len(firing), len(stale)))
     lines.append("")

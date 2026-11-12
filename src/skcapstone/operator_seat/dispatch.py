@@ -62,7 +62,12 @@ def _parse_iso(now_iso: str) -> datetime:
 
 def _clock_iso(clock: Callable[[], datetime] | None) -> str:
     """The REAL clock now (or the injected one), as an aware ISO 8601 string."""
-    return (clock or (lambda: datetime.now(timezone.utc)))().astimezone(timezone.utc).isoformat()
+    moment = (clock or (lambda: datetime.now(timezone.utc)))()
+    if moment.tzinfo is None:
+        # Never read a naive clock as local time: leave it naive so evidence.refusal
+        # refuses it ("the clock is not a timezone-aware timestamp").
+        return moment.isoformat()
+    return moment.astimezone(timezone.utc).isoformat()
 
 
 def is_freeze_refusal(exc: BaseException) -> bool:
@@ -104,13 +109,42 @@ def void_proposed(
     return True
 
 
-def stored_evidence(ledger: action_ledger.ActionLedger, intent_id: str) -> dict | None:
-    """The structured evidence stamp the loop recorded on the intent's PROPOSED event."""
+def _proposed_detail(ledger: action_ledger.ActionLedger, intent_id: str) -> dict:
     for event in ledger.events(intent_id):
         if event.state is action_ledger.ActionState.PROPOSED:
-            stamp = event.detail.get("evidence")
-            return stamp if isinstance(stamp, dict) else None
-    return None
+            return dict(event.detail)
+    return {}
+
+
+def stored_evidence(ledger: action_ledger.ActionLedger, intent_id: str) -> dict | None:
+    """The structured evidence stamp the loop recorded on the intent's PROPOSED event."""
+    stamp = _proposed_detail(ledger, intent_id).get("evidence")
+    return stamp if isinstance(stamp, dict) else None
+
+
+def stored_lane(ledger: action_ledger.ActionLedger, intent_id: str) -> str | None:
+    """The lane the loop recorded on the PROPOSED event: ``auto`` or ``escalate``.
+
+    None for an intent that predates the field or was written by hand: it cannot be
+    told apart from a pending human decision, so it is never acted on as auto and
+    never voided.
+    """
+    lane = _proposed_detail(ledger, intent_id).get("disposition")
+    return lane if lane in ("auto", "escalate") else None
+
+
+def change_auto_approved(change: Any) -> bool:
+    """Whether the ITIL fold approved this change with NO human, whatever its type.
+
+    The fold auto-approves ``standard`` changes and also ``normal`` ones tagged
+    ``auto-normal`` (operator-authored, not high risk), each recording an
+    ``auto-approved`` timeline entry. That entry, not the change type, is the fact:
+    anything approved without it needed a qualifying human CAB vote.
+    """
+    return any(
+        isinstance(entry, dict) and entry.get("action") == "auto-approved"
+        for entry in (change.timeline or [])
+    )
 
 
 class UnauthorizedDecisionError(ValueError):
@@ -186,23 +220,35 @@ def verify_postcondition(
     return True, "postcondition verified"
 
 
-def reobserve_firing(
+def reobserve(
     observers: dict[str, Callable[..., dict]],
     proposal: dict,
     paths: FleetPaths,
     now_iso: str,
     problem_types: set[str],
-) -> tuple[bool, str]:
-    """Re-observe the owning app BEFORE acting and require the bound condition to
-    still be firing. Fails closed: no observer, an observer that raises, or no
-    matching condition all mean "do not act"."""
+    *,
+    clock_iso: str,
+    max_evidence_age_s: float,
+) -> tuple[str, str]:
+    """Re-observe the owning app BEFORE acting. Returns ``(verdict, reason)`` where the
+    verdict is ``"firing"`` (act), ``"cleared"`` (a definite not-firing reading) or
+    ``"indeterminate"`` (do not act, and do not conclude it cleared).
+
+    Only a DEFINITE ``True``/``False`` status counts. ``Unknown`` is not "still
+    firing" (``condition_firing`` treats it as firing so that a dead probe raises an
+    alarm; that is right for alerting and wrong for permission to act). No observer,
+    an observer that raises, no matching condition, an ``Unknown`` one, or a reading
+    with no fresh source time of its own (the re-observation must itself be fresh on
+    the real clock) are all indeterminate.
+    """
     observer = observers.get(proposal.get("app"))
     if observer is None:
-        return False, "owning observer unavailable"
+        return "indeterminate", "owning observer unavailable"
     try:
-        conditions = observer(paths, now_iso).get("conditions", [])
+        payload = observer(paths, now_iso)
+        conditions = payload.get("conditions", [])
     except Exception as exc:  # noqa: BLE001 - an unreadable probe is never "still firing"
-        return False, f"re-observation failed: {type(exc).__name__}"
+        return "indeterminate", f"re-observation failed: {type(exc).__name__}"
     matches = [
         item
         for item in conditions
@@ -210,10 +256,23 @@ def reobserve_firing(
         and (proposal.get("object") is None or item.get("object") == proposal.get("object"))
     ]
     if not matches:
-        return False, "bound condition not observed before action"
-    if not any(condition_firing(item, problem_types) for item in matches):
-        return False, "bound condition no longer firing (re-observed before action)"
-    return True, "condition still firing"
+        return "indeterminate", "bound condition not observed before action"
+    if any(item.get("status") not in ("True", "False") for item in matches):
+        return "indeterminate", "bound condition status Unknown at re-observation"
+    for item in matches:
+        stamp = item.get("source_observed_at", payload.get("source_observed_at"))
+        if evidence.parse_aware(stamp) is None:
+            return "indeterminate", "re-observation carries no usable source time"
+        stale = evidence.refusal(
+            {"evidence": {"source": "re-observation", "observed_at": stamp}},
+            clock_iso,
+            max_evidence_age_s,
+        )
+        if stale is not None:
+            return "indeterminate", f"re-observation not usable: {stale}"
+    if any(condition_firing(item, problem_types) for item in matches):
+        return "firing", "condition still firing"
+    return "cleared", "bound condition no longer firing (re-observed before action)"
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +402,7 @@ def _reconstruct_proposal(intent: action_ledger.ActionIntent) -> dict:
         "action": intent.action,
         "change_id": intent.itil_change_id,
         "itil_change_id": intent.itil_change_id,
+        "catalog_generation": intent.catalog_generation,
     }
     if intent.rollback:
         prop["rollback"] = dict(intent.rollback)
@@ -420,6 +480,71 @@ class DispatchOutcome:
         return {"intent_id": self.intent_id, "outcome": self.outcome, "detail": self.detail}
 
 
+def _preaction_refusal(
+    paths: FleetPaths,
+    ledger: action_ledger.ActionLedger,
+    intent_id: str,
+    change: Any,
+    prop: dict,
+    *,
+    adapters: dict[str, Callable[..., dict]],
+    problem_types: set[str],
+    now_iso: str,
+    event_at: datetime,
+    actor: str,
+    clock: Callable[[], datetime] | None,
+    max_evidence_age_s: float,
+    target_known: Callable[[dict], bool] | None,
+    action_allowed: Callable[[dict], bool] | None,
+) -> DispatchOutcome | None:
+    """Everything that must hold before AUTHORIZED, or the refusal to return.
+
+    Refusals leave the intent PROPOSED unless it is an auto-lane intent that can never
+    become actionable (stale stored evidence, a definitely cleared condition), which is
+    voided so it cannot come back.
+    """
+    auto_approved = change_auto_approved(change)
+    lane = stored_lane(ledger, intent_id)
+    if auto_approved and lane == "escalate":
+        return DispatchOutcome(
+            intent_id,
+            "pending: no human approval (the change was auto-approved but the proposal was "
+            "escalated for a human); left PROPOSED for its pending decision",
+        )
+    if target_known is not None and not target_known(prop):
+        return DispatchOutcome(intent_id, "refused: target not resolvable at dispatch")
+    if action_allowed is not None and not action_allowed(prop):
+        return DispatchOutcome(intent_id, "refused: action not allowed for this app at dispatch")
+    clock_iso = _clock_iso(clock)
+    if auto_approved:
+        if lane != "auto":
+            return DispatchOutcome(
+                intent_id,
+                "refused: auto-approved change with no recorded auto lane (cannot tell it "
+                "from a pending human decision)",
+            )
+        stale = evidence.refusal(
+            {"evidence": stored_evidence(ledger, intent_id)}, clock_iso, max_evidence_age_s
+        )
+        if stale is not None:
+            void_proposed(ledger, intent_id, occurred_at=event_at, actor=actor, reason=stale)
+            return DispatchOutcome(intent_id, f"refused: {stale}")
+    verdict, why = reobserve(
+        adapters,
+        prop,
+        paths,
+        now_iso,
+        problem_types,
+        clock_iso=clock_iso,
+        max_evidence_age_s=max_evidence_age_s,
+    )
+    if verdict == "firing":
+        return None
+    if verdict == "cleared" and auto_approved and lane == "auto":
+        void_proposed(ledger, intent_id, occurred_at=event_at, actor=actor, reason=why)
+    return DispatchOutcome(intent_id, f"refused: {why}")
+
+
 def dispatch_intent(
     paths: FleetPaths,
     ledger: action_ledger.ActionLedger,
@@ -437,20 +562,31 @@ def dispatch_intent(
     emit: Callable[[str], Any] = lambda _m: None,
     clock: Callable[[], datetime] | None = None,
     max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
+    target_known: Callable[[dict], bool] | None = None,
+    action_allowed: Callable[[dict], bool] | None = None,
 ) -> DispatchOutcome:
     """Dispatch one PROPOSED intent: refuse, verify, authorize, actuate, verify.
 
     Before anything is authorized the dispatcher checks, for ANY intent however it
     was left, that acting is still justified:
 
-    * it re-observes the owning app and requires the bound condition to be firing
-      NOW (a human-approved change may wait hours or days; the approval is for the
-      condition, not for whatever the estate looked like then);
-    * for an auto-approved ``standard`` change, which has no human behind it, the
-      structured evidence stored on the intent's PROPOSED event must also be fresh
-      against the REAL clock (``evidence.refusal``). Stored evidence only ages, so
-      a standard intent that fails this, or whose condition has cleared, is voided
-      (``void_proposed``) rather than left to be retried forever.
+    * it re-observes the owning app and requires the bound condition to be DEFINITELY
+      firing now (``reobserve``; Unknown is not firing, and the reading must itself
+      be fresh). A human-approved change may wait hours or days; the approval is for
+      the condition, not for whatever the estate looked like then;
+    * it re-checks the target (``target_known``) and the ratified action binding
+      (``action_allowed``) when the caller supplies them, because the planner's
+      verdict at proposal time is not a permission that lasts;
+    * an intent the loop recorded as ESCALATED is never acted on without a human
+      approval: if its change was auto-approved by the fold (the old loop gave every
+      standard-class proposal an auto-approving change, escalated or not), it stays
+      pending and is NEVER voided, because a human decision is waiting on it;
+    * a change the fold approved with no human (``change_auto_approved``: standard,
+      or ``auto-normal``) must carry fresh evidence stored on the intent's PROPOSED
+      event, against the REAL clock. Stored evidence only ages, so an auto-lane intent
+      that fails this, or whose condition definitely cleared, is voided
+      (``void_proposed``) rather than retried forever. An intent with no recorded lane
+      is refused and left alone.
 
     A human-approved intent skips the age limit but never the re-observation.
 
@@ -491,21 +627,6 @@ def dispatch_intent(
 
     event_at = _parse_iso(now_iso)
     prop = _reconstruct_proposal(intent)
-    auto_approved = change.change_type.value == "standard"
-    if auto_approved:
-        stale = evidence.refusal(
-            {"evidence": stored_evidence(ledger, intent_id)}, _clock_iso(clock), max_evidence_age_s
-        )
-        if stale is not None:
-            void_proposed(ledger, intent_id, occurred_at=event_at, actor=actor, reason=stale)
-            emit(f"dispatch: refused for {intent_id}, {stale}")
-            return DispatchOutcome(intent_id, f"refused: {stale}")
-    firing, why = reobserve_firing(adapters, prop, paths, now_iso, problem_types)
-    if not firing:
-        if auto_approved:
-            void_proposed(ledger, intent_id, occurred_at=event_at, actor=actor, reason=why)
-        emit(f"dispatch: refused for {intent_id}, {why}")
-        return DispatchOutcome(intent_id, f"refused: {why}")
     recheck = _reclassify(paths, intent)
     stale = recheck["generation_known"] and not recheck["generation_matches"]
     hardened = (
@@ -523,6 +644,27 @@ def dispatch_intent(
             "classification hardened since proposal: "
             f"{intent.action!r} is no longer a ratified standard action"
         )
+
+    if stale_reason is None:
+        refusal = _preaction_refusal(
+            paths,
+            ledger,
+            intent_id,
+            change,
+            prop,
+            adapters=adapters,
+            problem_types=problem_types,
+            now_iso=now_iso,
+            event_at=event_at,
+            actor=actor,
+            clock=clock,
+            max_evidence_age_s=max_evidence_age_s,
+            target_known=target_known,
+            action_allowed=action_allowed,
+        )
+        if refusal is not None:
+            emit(f"dispatch: {refusal.outcome} ({intent_id})")
+            return refusal
 
     classification = recheck["classification"]
 
@@ -677,6 +819,8 @@ def run_dispatch_pass(
     emit: Callable[[str], Any] = lambda _m: None,
     clock: Callable[[], datetime] | None = None,
     max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
+    target_known: Callable[[dict], bool] | None = None,
+    action_allowed: Callable[[dict], bool] | None = None,
 ) -> list[DispatchOutcome]:
     """Enumerate every PROPOSED, ITIL-bound ledger intent and dispatch each.
 
@@ -711,6 +855,8 @@ def run_dispatch_pass(
                 emit=emit,
                 clock=clock,
                 max_evidence_age_s=max_evidence_age_s,
+                target_known=target_known,
+                action_allowed=action_allowed,
             )
         )
     return outcomes
@@ -725,7 +871,9 @@ __all__ = [
     "dispatch_intent",
     "run_dispatch_pass",
     "is_freeze_refusal",
-    "reobserve_firing",
+    "reobserve",
+    "stored_lane",
+    "change_auto_approved",
     "stored_evidence",
     "void_proposed",
 ]

@@ -2095,7 +2095,10 @@ def scenario_leftover_intent_is_not_actuated_later(ctx: DrillContext) -> Scenari
         ledger.create(intent, actor="atlas-p32-drill")
         for nxt, detail in (
             (action_ledger.ActionState.DIAGNOSED, {}),
-            (action_ledger.ActionState.PROPOSED, {"evidence": evidence_stamp}),
+            (
+                action_ledger.ActionState.PROPOSED,
+                {"disposition": "auto", "evidence": evidence_stamp},
+            ),
         ):
             ledger.append(
                 intent.intent_id, nxt, occurred_at=created, actor="atlas-p32-drill", detail=detail

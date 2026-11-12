@@ -261,7 +261,10 @@ def _grading_backlog(digest: Optional[dict]) -> Optional[bool]:
     return False
 
 
-def _default_probe() -> dict:
+_UNREAD = object()
+
+
+def _default_probe(digest=_UNREAD) -> dict:
     """Best-effort skos health.
 
     The scheduler/GTD halves DELEGATE to skos' own operator-facet contract
@@ -298,7 +301,8 @@ def _default_probe() -> dict:
     except Exception:
         alive = None
         draining = None
-    digest = _read_digest()
+    if digest is _UNREAD:
+        digest = _read_digest()
     return {
         "scheduler_alive": alive,
         "gtd_draining": draining,
@@ -352,8 +356,11 @@ def observe(paths=None, now_iso: str | None = None) -> dict:
     # time is the digest's own time; with no usable digest time it carries none and
     # cannot be actuated on.
     probed_at = adapter.probe_time()
-    payload = skos_observe()
-    published = _digest_published_epoch(_read_digest())
+    # Read the digest ONCE: the backlog and the time stamped on it must come from the
+    # same digest, never a backlog from one and a newer digest's time.
+    digest = _read_digest()
+    payload = skos_observe(lambda: _default_probe(digest))
+    published = _digest_published_epoch(digest)
     digest_time = (
         datetime.fromtimestamp(published, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         if published is not None

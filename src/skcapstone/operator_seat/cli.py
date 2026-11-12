@@ -368,6 +368,11 @@ def honor_pending_cmd() -> None:
         now_iso=now,
         actor="dispatcher",
         emit=click.echo,
+        # The planner's verdicts at proposal time are not permissions that last: the
+        # target must still resolve and the action must still be ratified for the app
+        # (against the signed catalog) when the human approval is finally honored.
+        target_known=lambda p: fleet_adapter.fleet_target_known(paths, p),
+        action_allowed=lambda p: loop._operatorapp_allows(paths, p, require_signature=True),
     )
     if not outcomes:
         click.echo("honor-pending: nothing to dispatch")

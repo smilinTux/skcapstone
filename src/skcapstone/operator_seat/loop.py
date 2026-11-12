@@ -176,7 +176,12 @@ def _decision_now_iso(clock: Callable[[], datetime] | None) -> str:
 
     This, never the pass's ``now_iso``, is what evidence age is measured against.
     """
-    return (clock or (lambda: datetime.now(timezone.utc)))().astimezone(timezone.utc).isoformat()
+    moment = (clock or (lambda: datetime.now(timezone.utc)))()
+    if moment.tzinfo is None:
+        # Never read a naive clock as local time: leave it naive so evidence.refusal
+        # refuses it ("the clock is not a timezone-aware timestamp").
+        return moment.isoformat()
+    return moment.astimezone(timezone.utc).isoformat()
 
 
 def _outcome(
@@ -445,16 +450,26 @@ def _run_once(
                 dry_run="false",
                 rollback_plan=prop.get("rollback_plan") or "revert via controller reconcile",
             )
+            # The change type follows the DISPOSITION, not the class. A proposal the
+            # planner escalated (an unresolvable target, a denied binding, a major
+            # change) must get a CAB-gated change: a ``standard`` one auto-approves at
+            # the ITIL fold, which let ``run_dispatch_pass`` act on an escalated
+            # proposal with no human vote. The auto-normal tag is stripped for the
+            # same reason (the fold auto-approves a tagged operator-authored change).
+            auto_lane = disp == "auto"
             change_type = (
-                "standard" if pl["classification"].get("change_class") == "standard" else "normal"
+                "standard"
+                if auto_lane and pl["classification"].get("change_class") == "standard"
+                else "normal"
             )
+            tags = [t for t in record["tags"] if auto_lane or t != "auto-normal"]
             chg = itil.propose_change(
                 title=record["title"],
                 change_type=change_type,
                 risk=record["risk"],
                 rollback_plan=record["rollback_plan"],
                 created_by=ledger_actor,
-                tags=list(record["tags"]),
+                tags=tags,
             )
             prop["itil_change_id"] = chg.id
         intent_id: str | None = None
@@ -518,7 +533,10 @@ def _run_once(
                     action_ledger.ActionState.PROPOSED,
                     occurred_at=created_at,
                     actor=ledger_actor,
-                    detail={"evidence": dict(stamp)} if isinstance(stamp, dict) else {},
+                    detail={
+                        "disposition": disp,
+                        **({"evidence": dict(stamp)} if isinstance(stamp, dict) else {}),
+                    },
                 )
         if (
             disp == "auto"
@@ -557,6 +575,16 @@ def _run_once(
                     emit=emit,
                     clock=clock,
                     max_evidence_age_s=max_evidence_age_s,
+                    target_known=target_known,
+                    action_allowed=(
+                        (
+                            lambda proposal: _operatorapp_allows(
+                                paths, proposal, require_signature=require_signed_catalog
+                            )
+                        )
+                        if require_verified_actions
+                        else None
+                    ),
                 ).outcome
             except BaseException as exc:
                 # The deadline (or anything else) fired after the intent was written:
@@ -795,18 +823,21 @@ def _run_once(
     # the guard already refuses actuation, this makes the REPORT say so.
     gate = store.check_actuation_gate(paths)
     freeze_state = "active" if gate.allowed else (gate.reason or "unknown")
-    if gate.reason == store.REASON_FROZEN:
+    end_frozen = gate.reason == store.REASON_FROZEN
+    if end_frozen:
         froze_mid_pass = True
     freeze_summary = None
     if froze_mid_pass:
-        # Worst state seen at any decision point, after any attempt, or at the end
-        # of the pass: a freeze that landed mid-run is never reported as "not
-        # frozen". And it is reported as what happened: what ran before it, what it
-        # refused, and what is still firing, not as the whole pass standing down.
-        freeze_state = "frozen"
+        # ``freeze_state`` and ``frozen`` are the state at the END of the pass, as it
+        # is; ``frozen_mid_pass`` is the separate fact that a freeze landed after the
+        # pass began (even if it was lifted again). It is reported as what happened:
+        # what ran before it, what it refused, and what is still firing, not as the
+        # whole pass standing down.
         freeze_summary = _freeze_summary(the_brief, outcomes)
         report += (
-            "\nfreeze: landed mid-pass. "
+            "\nfreeze: landed mid-pass"
+            + ("" if end_frozen else " and was lifted before the pass ended")
+            + ". "
             f"{len(freeze_summary['taken_before_freeze'])} action(s) taken before the freeze, "
             f"{len(freeze_summary['refused_by_freeze'])} refused, "
             f"{len(freeze_summary['still_firing'])} condition(s) still firing."
@@ -818,7 +849,7 @@ def _run_once(
         )
     emit(report)
     return {
-        "frozen": froze_mid_pass,
+        "frozen": end_frozen,
         "frozen_mid_pass": froze_mid_pass,
         "freeze_state": freeze_state,
         "freeze_summary": freeze_summary,
