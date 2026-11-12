@@ -75,16 +75,43 @@ not actuated in the same pass (a gate closed after the write, the deadline fired
 dispatcher refused, a cooldown suppressed it) it is voided: the ledger gains a
 `PROPOSED -> ESCALATED` edge for this, with `voided` on the event, because the
 dispatcher enumerates PROPOSED intents and a leftover one used to be acted on later,
-unattended. The dispatcher itself, for any intent however it was left, re-observes the
-owning app and requires the bound condition to be firing now; an auto-approved
-`standard` change must additionally carry fresh evidence stored on the intent's
-PROPOSED event, and is voided if that fails (stored evidence only ages). A
-human-approved change skips the age limit, because approval legitimately arrives long
-after the observation, but never the re-observation.
+unattended.
+
+The ITIL change type follows the proposal's DISPOSITION, not its class. A proposal the
+planner escalated (an unresolvable target, a denied action binding, a major change)
+gets a CAB-gated `normal` change without the `auto-normal` tag, so nothing auto-approves
+it at the fold; only a human CAB vote does. The loop records the lane (`auto` or
+`escalate`) and the evidence stamp on the intent's PROPOSED event.
+
+The dispatcher itself, for any intent however it was left, decides who approved from
+the fold's own `auto-approved` timeline entry (which covers `standard` and
+`auto-normal`), never from the change type, and then:
+
+* an escalate-lane intent whose change was auto-approved is left pending, never acted
+  on and never voided, because a human decision is waiting on it;
+* the target (`target_known`) and the ratified action binding (`action_allowed`) are
+  re-checked when the caller supplies them (`skoperator honor-pending` does);
+* an auto-approved change must carry fresh evidence stored on the intent, against the
+  real clock, and is voided if that fails (stored evidence only ages); an intent with no
+  recorded lane is refused and left alone, since it cannot be told from a pending human
+  decision;
+* the owning app is re-observed before acting, and only a DEFINITE firing status
+  counts. `Unknown` is not "still firing" (it is for alerting, not for permission to
+  act), a missing condition or observer is not, and the re-observation must itself carry
+  a fresh source time. A definitely cleared condition voids an auto-lane intent and
+  leaves a human-approved one pending. A human-approved change skips the age limit,
+  because approval legitimately arrives long after the observation, but never the
+  re-observation.
+
+An injected clock must be timezone-aware; a naive one is refused, never read as local
+time. A discovered (manifest) observer's own `source_observed_at` is dropped in both
+spellings: evidence time comes only from an in-process adapter, so a discovered
+observer can report but cannot license an actuation.
 
 **The freeze is reported where, and as, it happened.** The gate is re-read for every
-proposal and again after every attempt. A pass result carries `frozen`,
-`frozen_mid_pass`, `freeze_state` (the worst state seen), `freeze_summary` (actions
+proposal and again after every attempt. A pass result carries `frozen` and
+`freeze_state` (the state at the END of the pass, as it is), `frozen_mid_pass` (a freeze
+landed after the pass began, even if it was lifted again), `freeze_summary` (actions
 taken before the freeze, actions it refused, conditions still firing) and, on each
 outcome, `freeze_state` at its decision point and `freeze_after`. The report and the
 published brief say what ran before a mid-pass freeze, not that Atlas "stood down";

@@ -1,6 +1,6 @@
 - ATLAS gate 5 hardening: the weak spots the fault-injection drill documented, and the
   holes the independent review of the first fix found, are fixed and are PASS criteria of
-  `scripts/atlas_p32_fault_injection_drill.py` (26 scenarios; 22 to 24 are new).
+  `scripts/atlas_p32_fault_injection_drill.py` (27 scenarios; 22 to 25 are new).
   - Stale evidence is refused, and judged against the source. A proposal that actuates
     must carry structured `evidence: {source, observed_at}` where `observed_at` is when
     the SOURCE data was true (adapters report `source_observed_at`; the envelope never
@@ -21,3 +21,11 @@
     does not feed the circuit breaker, a real failure coinciding with a freeze does.
   - The outcome word `applied` is gone: `verified` only after the post-action
     re-observation ran and passed, otherwise `performed, unverified`.
+  - Review round 3: an escalated proposal now gets a CAB-gated change (the ITIL change type
+    follows the disposition, the `auto-normal` tag is stripped), so `run_dispatch_pass`
+    can no longer run it without a human; the age rule never voids a pending human decision
+    (the loop records the lane on the intent); the dispatcher decides auto-approval from the
+    fold's `auto-approved` timeline entry (so `auto-normal` counts), re-checks the target and
+    action binding, and treats `Unknown` as "do not act" with a fresh-source-time re-observation.
+    The end freeze state is reported as it is, naive clocks are refused, discovered observers
+    cannot supply a source time, and skos reads its digest once. Drill scenario 25 is new.
