@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from skcapstone.fleet import store
-from skcapstone.operator_seat import act_dispatch, cmdb_adapter, loop, proposer, skchat_adapter
+from skcapstone.operator_seat import act_dispatch, loop, proposer, skchat_adapter, skos_adapter
 
 from .test_loop import _enroll
 
@@ -135,39 +135,42 @@ def test_the_decision_clock_defaults_to_the_real_clock_not_the_pass_clock(wedged
 
 
 def test_a_stale_source_is_refused_even_when_the_pass_clock_is_current(tmp_path, monkeypatch):
-    """A cached artifact from 2020 is stale evidence however fresh the probe is."""
+    """A digest published in 2020 is stale evidence however fresh the probe is.
+
+    The real skos adapter reports GradingBacklog from the digest, so its source
+    time is the digest's own window end, not the moment Atlas looked at it.
+    """
     paths, _ = _enroll(tmp_path, monkeypatch)
     store.set_frozen(paths, False, writer=HUMAN, reason="test provisioning")
-
-    class _NoFindings:
-        def __init__(self, home):
-            pass
-
-        def audit_relationships(self):
-            return []
-
     monkeypatch.setattr(
-        cmdb_adapter,
-        "_verified_latest_artifact",
-        lambda home: {"ended_at": "2020-01-01T00:00:00Z", "completeness": {"complete": True}},
+        skos_adapter,
+        "_default_probe",
+        lambda: {
+            "scheduler_alive": True,
+            "gtd_draining": True,
+            "digest_fresh": True,
+            "grading_backlog": True,
+        },
     )
     monkeypatch.setattr(
-        loop,
-        "ADAPTERS",
-        {"cmdb": lambda p, n: cmdb_adapter.observe(p, n, manager_factory=_NoFindings)},
+        skos_adapter, "_read_digest", lambda: {"window": {"to": "2020-01-01T00:00:00Z"}}
     )
+    monkeypatch.setattr(loop, "ADAPTERS", {"skos": skos_adapter.observe})
     reply = json.dumps(
         [
             {
-                "app": "cmdb",
-                "condition": "CmdbReconcileFresh",
-                "action": "reconcile",
+                "app": "skos",
+                "condition": "GradingBacklog",
+                "action": "drain",
+                "object": "grading-loop",
                 "change_class": "normal",
-                "rationale": "the last reconcile is old",
+                "rationale": "the grading backlog is high",
             }
         ]
     )
-    explain = {"actions": [{"name": "reconcile", "standard": True, "reversible": True}]}
+    explain = {
+        "actions": [{"name": "drain", "standard": True, "reversible": True, "blast_radius": "low"}]
+    }
     apply_fn = _Recorder()
     res = loop.run_once(
         paths,
@@ -178,6 +181,6 @@ def test_a_stale_source_is_refused_even_when_the_pass_clock_is_current(tmp_path,
         execute=True,
         emit=lambda _s: None,
     )
-    assert res["brief"]["firing"], "the stale artifact must make CmdbReconcileFresh fire"
+    assert res["brief"]["firing"], "the backlog must be firing"
     assert apply_fn.calls == []
     assert "stale" in res["outcomes"][0]["outcome"]
