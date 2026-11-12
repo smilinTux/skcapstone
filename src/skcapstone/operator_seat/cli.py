@@ -49,7 +49,9 @@ def _execution_state(paths) -> "loop.safety.ExecutionState":
     node-local state directory (an flock only orders processes on one kernel, so it does not
     belong in a tree Syncthing replicates). ``run`` and ``honor-pending`` share it."""
     return loop.safety.ExecutionState(
-        paths.root / "atlas" / "state", lock_dir=node_local.state_dir() / "atlas"
+        paths.root / "atlas" / "state",
+        lock_dir=node_local.state_dir() / "atlas",
+        verify_lock_dir=True,
     )
 
 

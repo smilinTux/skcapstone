@@ -147,7 +147,7 @@ def test_the_single_flight_lock_directory_is_verified_the_same_way(tmp_path, mon
         pass  # a clean chain works
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir(mode=0o700)
-    (node_local.state_dir() / "atlas").rmdir()
+    __import__("shutil").rmtree(node_local.state_dir() / "atlas")
     os.symlink(elsewhere, node_local.state_dir() / "atlas")
     with pytest.raises(node_local.UnsafeDirectoryError, match="symlink"):
         with state.single_flight():

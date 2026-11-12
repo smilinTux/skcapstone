@@ -241,9 +241,11 @@ def _valid_approval_age(value: Any) -> bool:
 def approval_refusal(times: list[str], clock_iso: str, max_age_s: Any) -> tuple[str, str] | None:
     """Why a human approval may not be used, as ``(kind, reason)``, or None when usable.
 
-    ``kind`` is ``"invalid"`` (bad configuration or clock: refuse, close nothing),
-    ``"future"`` (dated after the clock: refuse, close nothing) or ``"expired"`` (older than
-    the limit: the intent is closed). The newest qualifying vote counts.
+    ``kind`` is ``"invalid"`` (bad configuration, clock or unreadable time: refuse, close
+    nothing), ``"future"`` (dated more than the skew after the clock) or ``"expired"`` (older
+    than the limit). The caller CLOSES the intent and retires its change for both ``"future"``
+    and ``"expired"``: refusing a future-dated vote alone would let it buy time. The newest
+    qualifying vote counts.
     """
     if not _valid_approval_age(max_age_s):
         return "invalid", f"max approval age invalid: {max_age_s!r}"
@@ -628,7 +630,7 @@ def _change_lock(change_id: str, *, blocking: bool = False) -> Iterator[None]:
     """
     if not _CHANGE_ID_RE.fullmatch(change_id):
         raise ValueError(f"invalid change id for locking: {change_id!r}")
-    directory = node_local.private_dir(node_local.state_dir() / "atlas" / "change-locks")
+    directory = node_local.private_chain(node_local.state_dir(), "atlas", "change-locks")
     fd = os.open(directory / f"{change_id}.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         try:
@@ -1062,7 +1064,9 @@ def dispatch_intent(
     * cooldown and an open circuit are suppression, not failure: a refusal before
       AUTHORIZED with nothing recorded and nothing rolled back.
 
-    A human-approved intent skips the age limit but never the re-observation.
+    A human-approved intent is exempt from the EVIDENCE age limit (the approval legitimately
+    arrives long after the observation) but not from its own approval-age limit, and never
+    from the re-observation.
 
     Safe to call on an intent that turns out not to be ready: returns a
     ``"pending: ..."`` outcome and appends nothing when the intent is not
@@ -1112,6 +1116,9 @@ def dispatch_intent(
         )
     except node_local.UnsafeDirectoryError as exc:
         return DispatchOutcome(intent_id, f"refused: {exc}")
+    except OSError as exc:
+        emit(f"dispatch: error taking the change lock for {intent_id}: {exc}")
+        return DispatchOutcome(intent_id, f"error: could not take the change lock: {exc}")
     with stack:
         event_at = _parse_iso(now_iso)
         prop = _reconstruct_proposal(intent)

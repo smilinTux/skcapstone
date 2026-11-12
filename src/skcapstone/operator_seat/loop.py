@@ -425,6 +425,14 @@ def _run_once(
             "report": report,
         }
 
+    if (lifecycle_ledger is not None or itil is not None) and node_local.actuator_refusal():
+        # Not the designated actuator node: observe, propose and park decisions only. The
+        # ledger and the ITIL records are replicated, but a node that is not the actuator
+        # must not sweep, close or draft against them: its clock or its local view of a
+        # condition could escalate the actuator's live intent, or close a human-approved
+        # one the actuator is about to honor.
+        lifecycle_ledger = None
+        itil = None
     stranded: list[str] = []
     if lifecycle_ledger is not None and itil is not None:
         try:
@@ -755,9 +763,12 @@ def _run_once(
                         else None
                     ),
                 ).outcome
-            except BaseException as exc:
-                # The deadline (or anything else) fired after the intent was written:
-                # close it so it cannot be dispatched later, then let the pass fail.
+            except Exception as exc:
+                # The deadline (a TimeoutError) fired after the intent was written, or
+                # anything else did. Either way close the intent so it cannot be dispatched
+                # later. The deadline then fails the pass, as it must; any other error (an
+                # OSError taking a lock, a ledger fault) is contained to this proposal: it is
+                # recorded and the pass carries on with the next one.
                 try:
                     dispatch.void_proposed(
                         lifecycle_ledger,
@@ -768,6 +779,19 @@ def _run_once(
                     )
                 except Exception:  # noqa: BLE001 - never mask the original failure
                     pass
+                if isinstance(exc, TimeoutError):
+                    raise
+                emit(f"operator: error dispatching {intent_id}: {exc}")
+                outcomes.append(_outcome(prop, disp, f"error: {exc}", intent_id, decision_freeze))
+                continue
+            except BaseException:
+                dispatch.void_proposed(
+                    lifecycle_ledger,
+                    intent_id,
+                    occurred_at=event_at,
+                    actor=ledger_actor,
+                    reason="pass interrupted before dispatch",
+                )
                 raise
             # The dispatcher left it PROPOSED (a gate that closed after our check, an
             # approval that never came, the change not found): this is the auto lane,

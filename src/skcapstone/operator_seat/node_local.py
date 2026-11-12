@@ -50,27 +50,40 @@ def config_dir() -> Path:
     return (Path(base) if base else Path.home() / ".config") / "skcapstone"
 
 
-def private_dir(path: Path) -> Path:
-    """Create ``path`` (0700) and verify it is a real directory, owned by this user, with no
-    group or world access. Raises :class:`UnsafeDirectoryError` otherwise, never repairs."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    try:
-        path.mkdir(mode=0o700)
-    except FileExistsError:
-        pass
-    for candidate in (path.parent, path):
-        info = candidate.lstat()
-        if stat.S_ISLNK(info.st_mode):
-            raise UnsafeDirectoryError(f"lock directory {candidate} is a symlink")
-        if not stat.S_ISDIR(info.st_mode):
-            raise UnsafeDirectoryError(f"lock directory {candidate} is not a directory")
-        if info.st_uid != os.geteuid():
-            raise UnsafeDirectoryError(f"lock directory {candidate} is not owned by this user")
-        if info.st_mode & 0o077:
-            raise UnsafeDirectoryError(
-                f"lock directory {candidate} is not private (mode {stat.S_IMODE(info.st_mode):o})"
-            )
+def _verify_private(candidate: Path) -> None:
+    info = candidate.lstat()
+    if stat.S_ISLNK(info.st_mode):
+        raise UnsafeDirectoryError(f"lock directory {candidate} is a symlink")
+    if not stat.S_ISDIR(info.st_mode):
+        raise UnsafeDirectoryError(f"lock directory {candidate} is not a directory")
+    if info.st_uid != os.geteuid():
+        raise UnsafeDirectoryError(f"lock directory {candidate} is not owned by this user")
+    if info.st_mode & 0o077:
+        raise UnsafeDirectoryError(
+            f"lock directory {candidate} is not private (mode {stat.S_IMODE(info.st_mode):o})"
+        )
+
+
+def private_chain(base: Path, *parts: str) -> Path:
+    """Create (0700) and verify EVERY directory from ``base`` down to the leaf.
+
+    ``base`` is the node-local state directory itself (``SKCAPSTONE_LOCAL_STATE_DIR`` or
+    ``~/.local/state/skcapstone``) and each of ``parts`` a component below it. Every one of
+    them, the base included, must be a real directory (never a symlink), owned by this user,
+    with no group or world access; otherwise :class:`UnsafeDirectoryError` is raised and
+    nothing is repaired. Directories above ``base`` are the operator's own layout and are not
+    judged (``~/.local`` is legitimately a symlink on some machines). Returns the leaf.
+    """
+    path = Path(base)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for index, component in enumerate((None, *parts)):
+        if component is not None:
+            path = path / component
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        _verify_private(path)
     return path
 
 
@@ -100,12 +113,22 @@ def check_actuator(*, designated: str | None, this_node: str) -> str | None:
     return None
 
 
-def actuator_refusal() -> str | None:
-    """The single-actuator-node rule for THIS node. Fails closed on any error."""
+def real_actuator_refusal() -> str | None:
+    """The single-actuator-node rule for THIS node. Fails closed on any error.
+
+    Callers inside the package go through :func:`actuator_refusal` (so tests, and the drill's
+    own throwaway fleet, can open the gate); the drill reaches the real rule through this name,
+    which nothing patches, at the moment it needs it rather than at import.
+    """
     try:
         return check_actuator(designated=designated_actuator(), this_node=self_node_name())
     except Exception as exc:  # noqa: BLE001 - an unreadable designation is no designation
         return f"the actuator-node designation could not be read: {exc}"
+
+
+def actuator_refusal() -> str | None:
+    """Why this node may not actuate (see :func:`real_actuator_refusal`), or None."""
+    return real_actuator_refusal()
 
 
 __all__ = [
@@ -117,6 +140,7 @@ __all__ = [
     "check_actuator",
     "config_dir",
     "designated_actuator",
-    "private_dir",
+    "private_chain",
+    "real_actuator_refusal",
     "state_dir",
 ]

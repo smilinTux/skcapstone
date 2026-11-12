@@ -73,10 +73,6 @@ from . import (
     skchat_adapter,
 )
 
-#: The real single-actuator-node rule, captured before ``run_all`` opens the gate for the
-#: drill's own throwaway fleet (scenario 28 puts it back to prove the rule).
-_REAL_ACTUATOR_REFUSAL = node_local.actuator_refusal
-
 SCHEMA_NOTE = "ATLAS P3.2 fault-injection drill (card b993eaaa, epic fb3cc09d)"
 
 _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
@@ -2669,7 +2665,7 @@ def scenario_single_actuator_live_dispatch_and_future_votes(ctx: DrillContext) -
     saved_env = {k: os.environ.get(k) for k in (node_local.ENV_ACTUATOR, "XDG_CONFIG_HOME")}
     os.environ.pop(node_local.ENV_ACTUATOR, None)
     os.environ["XDG_CONFIG_HOME"] = str(ctx.root / "empty-config")
-    node_local.actuator_refusal = _REAL_ACTUATOR_REFUSAL
+    node_local.actuator_refusal = node_local.real_actuator_refusal
     ctx.inject_wedge()
     waiting = intent(approved().id, "waiting")
     calls_before = len(ctx.calls)
@@ -2864,6 +2860,7 @@ def run_all(root: Path | str | None = None, *, keep_root: bool = True) -> DrillR
     )
     # The drill runs against its own throwaway fleet, so the single-actuator-node rule is
     # opened for it (scenario 28 restores the real rule to prove it refuses).
+    previous_gate = node_local.actuator_refusal  # captured at call time, never at import
     node_local.actuator_refusal = lambda: None
     results: list[ScenarioResult] = []
     try:
@@ -2885,7 +2882,7 @@ def run_all(root: Path | str | None = None, *, keep_root: bool = True) -> DrillR
         if store.is_frozen(ctx.paths):
             _unfreeze(ctx.paths)
     finally:
-        node_local.actuator_refusal = _REAL_ACTUATOR_REFUSAL
+        node_local.actuator_refusal = previous_gate
         ctx.restore_daemon_probe()
         ctx.restore_env()
     finished = _now_iso()
