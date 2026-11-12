@@ -26,6 +26,26 @@ _CLOCK = datetime(2026, 8, 25, 0, 0, 30, tzinfo=timezone.utc)
 _EVIDENCE = {"source": "obs:widget", "observed_at": "2026-08-25T00:00:00Z"}
 
 
+@pytest.fixture(autouse=True)
+def _votes_decided_before_the_test_clock(monkeypatch):
+    """CAB votes record the REAL time they were cast. These tests run on a fixed clock in
+    the past, and an approval dated after the clock is (rightly) refused as future-dated,
+    so each vote is re-dated to just before the clock under test."""
+    import json as _json
+
+    original = ITILManager.submit_cab_vote
+
+    def patched(self, change_id, *args, **kwargs):
+        vote = original(self, change_id, *args, **kwargs)
+        path = self.cab_dir / f"{change_id}-{vote.agent}.json"
+        data = _json.loads(path.read_text())
+        data["decided_at"] = "2026-08-24T23:00:00+00:00"
+        path.write_text(_json.dumps(data))
+        return vote
+
+    monkeypatch.setattr(ITILManager, "submit_cab_vote", patched)
+
+
 def _paths(tmp_path) -> FleetPaths:
     return FleetPaths(root=tmp_path / "fleet")
 

@@ -27,6 +27,26 @@ NOW = "2026-08-20T00:00:00Z"
 FRESH = {"source": "obs:demo:svc", "observed_at": "2026-08-20T00:00:00Z"}
 
 
+@pytest.fixture(autouse=True)
+def _votes_decided_before_the_test_clock(monkeypatch):
+    """CAB votes record the REAL time they were cast. These tests run on a fixed clock in
+    the past, and an approval dated after the clock is (rightly) refused as future-dated,
+    so each vote is re-dated to just before the clock under test."""
+    import json as _json
+
+    original = ITILManager.submit_cab_vote
+
+    def patched(self, change_id, *args, **kwargs):
+        vote = original(self, change_id, *args, **kwargs)
+        path = self.cab_dir / f"{change_id}-{vote.agent}.json"
+        data = _json.loads(path.read_text())
+        data["decided_at"] = "2026-08-20T12:00:00+00:00"
+        path.write_text(_json.dumps(data))
+        return vote
+
+    monkeypatch.setattr(ITILManager, "submit_cab_vote", patched)
+
+
 class _CountingITIL:
     """Delegates to a real ITILManager, counting (and optionally hooking) drafts."""
 
@@ -345,9 +365,10 @@ def test_the_dispatcher_re_observes_and_will_not_act_on_a_condition_that_cleared
     apply_fn = _Apply(observer)
     outcomes = _dispatch_pass(paths, observer, ledger, itil, apply_fn)  # a day later
     assert apply_fn.calls == []
-    assert "no longer firing" in outcomes[0].outcome
-    # A human-approved intent is not voided: it may legitimately fire again.
-    assert ledger.current_state(iid) is action_ledger.ActionState.PROPOSED
+    assert "condition cleared before dispatch" in outcomes[0].outcome
+    # A human approval covers ONE episode: when it clears, the intent is closed and the
+    # change retired, so a recurrence needs a new proposal and a new human vote.
+    assert ledger.current_state(iid) is action_ledger.ActionState.ESCALATED
 
 
 def test_human_approved_intent_with_a_firing_condition_actuates_a_day_later_without_evidence(

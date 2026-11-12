@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -385,9 +386,14 @@ def test_a_human_approved_intent_days_later_does_not_act_on_a_cleared_condition(
     world.heal()  # it fixed itself while the approval sat
     outcomes = _sweep(world)
     assert world.calls == []
-    assert "no longer firing" in outcomes[0].outcome
-    # A human-approved intent is not voided: it may legitimately fire again.
-    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+    assert "condition cleared before dispatch" in outcomes[0].outcome
+    # A human approval covers ONE episode: it is closed with the episode, and the change is
+    # retired, so a recurrence cannot ride the old vote.
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.ESCALATED
+    retired = next(c for c in world.itil.list_changes() if c.id == change.id)
+    assert retired.status.value in ("rejected", "closed")
+    world.wedge()  # it fires again
+    assert _sweep(world) == [] and world.calls == []
 
 
 # --------------------------------------------------------------------------
@@ -713,3 +719,332 @@ def test_a_stale_catalog_does_not_close_a_legacy_no_lane_intent(world):
     _sweep(world)
     assert world.calls == []
     assert _states(world, intent_id) == ["observed", "diagnosed", "proposed"]
+
+
+# ==========================================================================
+# Round 5 (fourth independent review of 8536f7eb)
+# ==========================================================================
+
+
+class _SlowITIL:
+    """Delegates to a real ITILManager; ``update_change`` can sleep and run a hook first."""
+
+    def __init__(self, inner, delay=0.0, before_update=None):
+        self._inner = inner
+        self._delay = delay
+        self._before_update = before_update
+
+    def update_change(self, *args, **kwargs):
+        if self._before_update is not None:
+            hook, self._before_update = self._before_update, None
+            hook()
+        if self._delay:
+            time.sleep(self._delay)
+        return self._inner.update_change(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _dispatch_one(w, itil, intent_id, apply_fn):
+    return dispatch.dispatch_intent(
+        w.paths,
+        w.ledger,
+        itil,
+        intent_id,
+        adapters={"skchat": skchat_adapter.observe},
+        problem_types=loop.PROBLEM_WHEN_TRUE,
+        apply_fn=apply_fn,
+        now_iso=_iso(w.time.now),
+        clock=lambda: w.time.now,
+    )
+
+
+# --- 1: spending the approval is a compare-and-swap ------------------------------
+
+
+def test_two_dispatchers_racing_on_one_approval_actuate_once(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    first = _manual_intent(world, change.id, lane="escalate", tag="-a")
+    second = _manual_intent(world, change.id, lane="escalate", tag="-b")
+    slow = _SlowITIL(world.itil, delay=0.3)
+    applied = []
+    lock = threading.Lock()
+
+    def counting_apply(prop, classification):
+        with lock:
+            applied.append(prop["action"])
+        return _apply_fn(world)(prop, classification)
+
+    results = {}
+
+    def run(name, intent_id):
+        results[name] = _dispatch_one(world, slow, intent_id, counting_apply)
+
+    threads = [
+        threading.Thread(target=run, args=("a", first)),
+        threading.Thread(target=run, args=("b", second)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert len(applied) == 1, "one approval authorizes one actuation, even under a race"
+    assert len(world.calls) == 1
+    outcomes = sorted(r.outcome.split(":")[0] for r in results.values())
+    assert "verified" in outcomes and len(outcomes) == 2
+    final = next(c for c in world.itil.list_changes() if c.id == change.id)
+    assert final.status.value == "deployed", "the ITIL record must agree with the ledger"
+
+
+def test_a_rival_dispatch_that_took_the_change_first_is_detected_from_the_timeline(world):
+    """Even a conflicted second 'implementing' event folds ``implementing``: the winner is
+    the FIRST unconflicted approved->implementing entry, and it must be ours."""
+    change = _normal_change(world)
+    _vote(world, change.id)
+    intent_id = _manual_intent(world, change.id, lane="escalate")
+
+    def rival_takes_it():
+        world.itil._append_event(
+            world.itil.changes_dir,
+            change.id,
+            "rival",
+            "status",
+            to="implementing",
+            note="dispatch of ai-someone-else",
+        )
+
+    slow = _SlowITIL(world.itil, before_update=rival_takes_it)
+    applied = []
+    outcome = _dispatch_one(
+        world, slow, intent_id, lambda p, c: applied.append(p) or {"performed": True}
+    )
+    assert applied == [], "the actuator must not run on an approval another dispatch spent"
+    assert "taken" in outcome.outcome or "status=" in outcome.outcome
+
+
+# --- 2: a human approval is per episode, and it expires ---------------------------
+
+
+def test_a_cleared_episode_retires_the_change_so_a_recurrence_needs_a_new_vote(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    intent_id = _manual_intent(world, change.id, lane="escalate")
+    world.heal()
+    outcomes = _sweep(world)
+    assert "condition cleared before dispatch" in outcomes[0].outcome
+    states = _states(world, intent_id)
+    assert states[-1] == "escalated"
+    last = world.ledger.events(intent_id)[-1]
+    assert "condition cleared before dispatch" in last.detail.get("reason", "")
+    retired = next(c for c in world.itil.list_changes() if c.id == change.id)
+    assert retired.status.value in ("rejected", "closed")
+
+
+def test_a_human_approval_within_the_age_limit_acts(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    _manual_intent(world, change.id, lane="escalate")
+    world.time.advance(hours=23)
+    assert _sweep(world)[0].outcome == "verified"
+
+
+def test_an_expired_human_approval_is_refused_and_the_intent_closed(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    intent_id = _manual_intent(world, change.id, lane="escalate")
+    world.time.advance(hours=25)  # past the 24 hour default
+    outcomes = _sweep(world)
+    assert world.calls == []
+    assert "human approval expired" in outcomes[0].outcome
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.ESCALATED
+    retired = next(c for c in world.itil.list_changes() if c.id == change.id)
+    assert retired.status.value in ("rejected", "closed")
+
+
+def test_the_approval_age_limit_is_configurable_and_capped(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    intent_id = _manual_intent(world, change.id, lane="escalate")
+    world.time.advance(hours=2)
+    tight = _sweep(world, max_approval_age_s=3600)
+    assert world.calls == [] and "human approval expired" in tight[0].outcome
+    # A value above the cap is refused (fail closed), never clamped, and closes nothing.
+    change2 = _normal_change(world)
+    _vote(world, change2.id)
+    other = _manual_intent(world, change2.id, lane="escalate", tag="-2")
+    capped = _sweep(world, max_approval_age_s=10**9)
+    assert world.calls == []
+    assert any("max approval age" in o.outcome for o in capped if o.intent_id == other)
+    assert world.ledger.current_state(other) is action_ledger.ActionState.PROPOSED
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.ESCALATED
+
+
+def test_a_future_dated_approval_is_refused(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    path = world.itil.cab_dir / f"{change.id}-capauth:approver@scratch.json"
+    data = json.loads(path.read_text())
+    data["decided_at"] = _iso(world.time.now + timedelta(days=30))
+    path.write_text(json.dumps(data))
+    intent_id = _manual_intent(world, change.id, lane="escalate")
+    outcomes = _sweep(world)
+    assert world.calls == []
+    assert "future" in outcomes[0].outcome
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+
+
+# --- 3: the escalate lane does not draft again on every pass ----------------------
+
+
+def test_an_open_escalated_intent_is_reused_not_redrafted_each_pass(world):
+    first = _escalated_intent(world)
+    changes_before = len(world.itil.list_changes())
+    again = _loop_pass(world, target_known=lambda p: False)
+    assert again["outcomes"][0]["outcome"] == "escalated (parked for approval)"
+    assert again["outcomes"][0]["intent_id"] == first
+    assert len(world.itil.list_changes()) == changes_before, "no new change on every pass"
+    assert world.ledger.list_intents() == [first]
+
+
+def test_a_retired_escalated_intent_is_not_reused(world):
+    first = _escalated_intent(world)
+    change_id = world.ledger.read_intent(first).itil_change_id
+    world.itil.update_change(change_id, "test", new_status="rejected", note="not wanted")
+    again = _loop_pass(world, target_known=lambda p: False)
+    assert again["outcomes"][0]["intent_id"] != first
+
+
+# --- 4: the binding tag cannot be forged by a separator ---------------------------
+
+
+def test_binding_tags_are_unambiguous_and_reject_the_separator():
+    tag = dispatch.change_binding_tag
+    with pytest.raises(ValueError):
+        tag("skchat", "restart|x", "bridge")
+    with pytest.raises(ValueError):
+        tag("a|b", "c", "d")
+    triples = [
+        ("a", "b", "c"),
+        ("a%7Cb", "c", "d"),
+        ("a%257Cb", "c", "d"),
+        ("a b", "c", "d"),
+        ("a", "b c", "d"),
+        ("", "b", "c"),
+        ("a", "", "bc"),
+    ]
+    tags = [tag(*t) for t in triples]
+    assert len(set(tags)) == len(tags)
+
+
+def test_an_object_containing_the_separator_is_refused_by_the_loop_before_any_write(world):
+    explain = act_dispatch.merged_explain()
+    res = loop.run_once(
+        world.paths,
+        now_iso=_iso(world.time.now),
+        propose=lambda b, r: [
+            {
+                "app": "skchat",
+                "condition": "BridgeAlive",
+                "action": "restart-telegram-bridge",
+                "object": "telegram-bridge|elsewhere",
+                "evidence": _stamp(world),
+            }
+        ],
+        explain=explain,
+        decisions_dir=str(world.decisions),
+        apply_fn=_apply_fn(world),
+        execute=True,
+        lifecycle_ledger=world.ledger,
+        itil=world.itil,
+        clock=lambda: world.time.now,
+        emit=lambda _s: None,
+    )
+    assert world.calls == []
+    assert res["outcomes"][0]["outcome"].startswith("refused: ")
+    assert "cannot be bound" in res["outcomes"][0]["outcome"]
+    assert world.ledger.list_intents() == []
+    assert world.itil.list_changes() == []
+
+
+# --- 5: one bad intent does not crash the pass; stranded intents escalate ---------
+
+
+class _FailingLedger(action_ledger.ActionLedger):
+    def __init__(self, root, fail_for):
+        super().__init__(root)
+        self._fail_for = fail_for
+
+    def append(self, intent_id, state, **kwargs):
+        if intent_id == self._fail_for and state is action_ledger.ActionState.AUTHORIZED:
+            raise ValueError("invalid action transition: simulated")
+        return super().append(intent_id, state, **kwargs)
+
+
+def test_a_ledger_error_on_one_intent_is_recorded_and_the_pass_continues(world, tmp_path):
+    bad_change = _normal_change(world)
+    _vote(world, bad_change.id)
+    bad = _manual_intent(world, bad_change.id, lane="escalate", tag="-bad")
+    good_change = _normal_change(world)
+    _vote(world, good_change.id)
+    good = _manual_intent(world, good_change.id, lane="escalate", tag="-good")
+    world.ledger = _FailingLedger(tmp_path / "ledger", fail_for=bad)
+    outcomes = {o.intent_id: o.outcome for o in _sweep(world)}
+    assert outcomes[bad].startswith("error:")
+    assert outcomes[good] == "verified"
+    assert len(world.calls) == 1
+
+
+def _strand(w, change_id, *, age):
+    """An intent a crashed dispatcher left in EXECUTING, with its change `implementing`."""
+    intent_id = _manual_intent(w, change_id, lane="escalate")
+    when = w.time.now - age
+    w.ledger.append(
+        intent_id, action_ledger.ActionState.AUTHORIZED, occurred_at=when, actor="crashed"
+    )
+    w.ledger.append(
+        intent_id, action_ledger.ActionState.EXECUTING, occurred_at=when, actor="crashed"
+    )
+    w.itil.update_change(change_id, "crashed", new_status="implementing", note="dispatch of x")
+    return intent_id
+
+
+def test_an_intent_stranded_in_executing_is_escalated_with_an_alert_never_rerun(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    intent_id = _strand(world, change.id, age=timedelta(minutes=30))
+    alerts = []
+    outcomes = _sweep(world, decisions_dir=str(world.decisions), emit=alerts.append)
+    assert world.calls == [], "a stranded intent is never re-run"
+    assert any(o.intent_id == intent_id and "stranded" in o.outcome for o in outcomes)
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.ESCALATED
+    assert any("stranded" in a and intent_id in a for a in alerts)
+    assert [d for d in decisions_pending(world) if "stranded" in d["id"]]
+    final = next(c for c in world.itil.list_changes() if c.id == change.id)
+    assert final.status.value == "failed"
+
+
+def decisions_pending(w):
+    from skcapstone.operator_seat import decisions
+
+    return decisions.list_pending(str(w.decisions))
+
+
+def test_a_recently_started_executing_intent_is_left_alone(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    intent_id = _strand(world, change.id, age=timedelta(seconds=20))
+    _sweep(world, decisions_dir=str(world.decisions))
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.EXECUTING
+    assert world.calls == []
+
+
+def test_the_loop_escalates_a_stranded_intent_and_reports_it(world):
+    change = _normal_change(world)
+    _vote(world, change.id)
+    intent_id = _strand(world, change.id, age=timedelta(minutes=30))
+    res = _loop_pass(world, target_known=lambda p: False)
+    assert intent_id in res["stranded"]
+    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.ESCALATED
+    assert "stranded" in res["report"]
