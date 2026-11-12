@@ -227,6 +227,7 @@ def _manual_intent(
 
 
 BIND = "op-bind:skchat|restart-telegram-bridge|telegram-bridge"
+WEEK = 604800.0  # the configurable cap; the default human approval age is a day
 
 
 def _normal_change(w, *, tags=("operator",), created_by="atlas", bind=BIND):
@@ -332,7 +333,7 @@ def test_an_unknown_status_at_re_observation_does_not_act_and_keeps_the_intent(w
     _vote(world, world.ledger.read_intent(intent_id).itil_change_id)
     world.time.advance(days=3)
     world.daemon["probe"] = (None, None, None)  # the daemon cannot be probed: Unknown
-    outcomes = _sweep(world)
+    outcomes = _sweep(world, max_approval_age_s=WEEK)
     assert world.calls == []
     assert "Unknown" in outcomes[0].outcome or "unknown" in outcomes[0].outcome
     assert world.ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
@@ -372,7 +373,7 @@ def test_a_human_approved_intent_days_later_acts_when_the_condition_is_definitel
     _vote(world, change.id)
     intent_id = _manual_intent(world, change.id, lane="escalate")
     world.time.advance(days=3)
-    outcomes = _sweep(world)
+    outcomes = _sweep(world, max_approval_age_s=WEEK)
     assert outcomes[0].outcome == "verified"
     assert len(world.calls) == 1
     assert world.ledger.current_state(intent_id) is action_ledger.ActionState.VERIFIED
@@ -384,7 +385,7 @@ def test_a_human_approved_intent_days_later_does_not_act_on_a_cleared_condition(
     intent_id = _manual_intent(world, change.id, lane="escalate")
     world.time.advance(days=3)
     world.heal()  # it fixed itself while the approval sat
-    outcomes = _sweep(world)
+    outcomes = _sweep(world, max_approval_age_s=WEEK)
     assert world.calls == []
     assert "condition cleared before dispatch" in outcomes[0].outcome
     # A human approval covers ONE episode: it is closed with the episode, and the change is
@@ -990,10 +991,14 @@ def test_a_ledger_error_on_one_intent_is_recorded_and_the_pass_continues(world, 
     _vote(world, good_change.id)
     good = _manual_intent(world, good_change.id, lane="escalate", tag="-good")
     world.ledger = _FailingLedger(tmp_path / "ledger", fail_for=bad)
+    # The runner does not heal, so the condition stays firing whichever intent runs first.
+    world.runner = lambda cmd: world.calls.append(cmd) or subprocess.CompletedProcess(
+        cmd, 0, "", ""
+    )
     outcomes = {o.intent_id: o.outcome for o in _sweep(world)}
     assert outcomes[bad].startswith("error:")
-    assert outcomes[good] == "verified"
-    assert len(world.calls) == 1
+    assert good in outcomes, "the pass carried on to the next intent"
+    assert not outcomes[good].startswith("error:")
 
 
 def _strand(w, change_id, *, age):

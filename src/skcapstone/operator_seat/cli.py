@@ -320,7 +320,18 @@ def decide_cmd(decision_id: str, approve: bool, choice: int | None) -> None:
 
 
 @operator.command("honor-pending")
-def honor_pending_cmd() -> None:
+@click.option(
+    "--max-approval-age",
+    "max_approval_age",
+    type=click.FloatRange(min=0, min_open=True, max=dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS),
+    default=dispatch.DEFAULT_MAX_APPROVAL_AGE_SECONDS,
+    show_default=True,
+    help="Oldest human CAB approval (seconds, from the vote's decided_at) that may still be "
+    f"honored, at most {dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS:g}. A human approves a change "
+    "for one episode: past this, or once the condition has cleared, the intent is closed and "
+    "a new proposal needs a new vote.",
+)
+def honor_pending_cmd(max_approval_age: float) -> None:
     """Dispatch every PROPOSED ledger intent whose linked ITIL change now folds
     approved: the slow half of the dispatcher's "one code path, two speeds"
     (AUTONOMY_ARCHITECTURE.md section 3.2). Run this after `skoperator decide
@@ -373,6 +384,7 @@ def honor_pending_cmd() -> None:
         # (against the signed catalog) when the human approval is finally honored.
         target_known=lambda p: fleet_adapter.fleet_target_known(paths, p),
         action_allowed=lambda p: loop._operatorapp_allows(paths, p, require_signature=True),
+        max_approval_age_s=max_approval_age,
     )
     if not outcomes:
         click.echo("honor-pending: nothing to dispatch")

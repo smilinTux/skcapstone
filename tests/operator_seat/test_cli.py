@@ -375,3 +375,19 @@ def test_run_rejects_a_max_evidence_age_above_the_cap(tmp_path, monkeypatch):
         cli.operator, ["run", "--no-publish", "--no-bootstrap", "--max-evidence-age", str(cap)]
     )
     assert at_cap.exit_code == 0, at_cap.output
+
+
+def test_honor_pending_rejects_a_max_approval_age_above_the_cap():
+    from skcapstone.operator_seat import dispatch
+
+    runner = CliRunner()
+    too_big = runner.invoke(
+        cli.operator,
+        [
+            "honor-pending",
+            "--max-approval-age",
+            str(dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS + 1),
+        ],
+    )
+    assert too_big.exit_code == 2
+    assert "max-approval-age" in too_big.output.lower() or "invalid" in too_big.output.lower()

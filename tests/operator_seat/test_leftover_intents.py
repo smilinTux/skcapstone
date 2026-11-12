@@ -394,7 +394,7 @@ def test_no_owning_observer_means_no_actuation(tmp_path, monkeypatch):
         problem_types=set(),  # Ready is a health type: fires when False
         apply_fn=apply_fn,
         now_iso=NOW,
-        clock=lambda: CLOCK,
+        clock=lambda: CLOCK + timedelta(hours=13),  # after the (re-dated) human vote
     )
     assert apply_fn.calls == []
     assert "observer unavailable" in outcomes[0].outcome

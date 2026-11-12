@@ -167,6 +167,44 @@ _condition_firing = dispatch.condition_firing
 _verify_postcondition = dispatch.verify_postcondition
 
 
+_OPEN_CHANGE_STATES = frozenset({"proposed", "reviewing", "approved", "scheduled"})
+
+
+def _open_escalated_intent(ledger, itil, prop: dict, catalog_generation: str) -> str | None:
+    """An OPEN escalate-lane intent for this same proposal, or None.
+
+    Open means PROPOSED in the escalate lane for the same app, action, target, condition
+    and catalog generation, with its ITIL change still open (not rejected, closed or
+    spent). Such an intent is a decision already waiting for a human, and drafting another
+    change and intent for it on every pass only piles up approvals to ride.
+    """
+    key = (
+        str(prop.get("app") or "unknown"),
+        str(prop.get("action") or "unknown"),
+        str(prop.get("object") or "unknown"),
+        prop.get("condition"),
+        catalog_generation,
+    )
+    open_changes: dict[str, str] | None = None
+    for intent_id in ledger.list_intents(state=action_ledger.ActionState.PROPOSED):
+        intent = ledger.read_intent(intent_id)
+        if (
+            intent.application,
+            intent.action,
+            intent.target_id,
+            intent.condition_type,
+            intent.catalog_generation,
+        ) != key:
+            continue
+        if dispatch.stored_lane(ledger, intent_id) != "escalate" or not intent.itil_change_id:
+            continue
+        if open_changes is None:
+            open_changes = {c.id: c.status.value for c in itil.list_changes()}
+        if open_changes.get(intent.itil_change_id) in _OPEN_CHANGE_STATES:
+            return intent_id
+    return None
+
+
 #: Outcome words for an auto action that actually ran.
 _ACTED = frozenset({"verified", "performed, unverified"})
 
@@ -252,6 +290,7 @@ def _run_once(
     itil: Any | None = None,
     max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
     clock: Callable[[], datetime] | None = None,
+    max_approval_age_s: float = dispatch.DEFAULT_MAX_APPROVAL_AGE_SECONDS,
 ) -> dict:
     """Run one operator pass.
 
@@ -309,7 +348,14 @@ def _run_once(
     ``require_verified_actions`` makes it mandatory), otherwise
     ``performed, unverified``. Nothing reports ``applied`` any more.
 
-    Returns {frozen, frozen_mid_pass, freeze_state, freeze_summary, brief, route,
+    An escalate-lane proposal that already has an OPEN escalate-lane intent (same app,
+    action, target, condition and catalog generation, its change still open) reuses it:
+    the loop does not draft a new change and intent on every pass for a decision that is
+    already waiting. Intents a crash stranded in AUTHORIZED or EXECUTING are escalated with
+    an alert at the start of the pass (``dispatch.escalate_stranded``), never re-run, and
+    listed under ``stranded``.
+
+    Returns {frozen, frozen_mid_pass, freeze_state, freeze_summary, stranded, brief, route,
     proposals, planned, outcomes, report}.
     """
     paths = paths or default_paths()
@@ -324,6 +370,7 @@ def _run_once(
             "frozen_mid_pass": False,
             "freeze_state": "frozen",
             "freeze_summary": None,
+            "stranded": [],
             "brief": None,
             "route": None,
             "proposals": [],
@@ -332,6 +379,23 @@ def _run_once(
             "report": report,
         }
 
+    stranded: list[str] = []
+    if lifecycle_ledger is not None:
+        try:
+            stranded = [
+                o.intent_id
+                for o in dispatch.escalate_stranded(
+                    lifecycle_ledger,
+                    itil,
+                    now_iso=now_iso,
+                    clock=clock,
+                    actor=ledger_actor,
+                    decisions_dir=decisions_dir,
+                    emit=emit,
+                )
+            ]
+        except Exception as exc:  # noqa: BLE001 - bookkeeping must never stop the pass
+            emit(f"operator: stranded-intent sweep failed: {exc}")
     ptypes = problem_types if problem_types is not None else set(PROBLEM_WHEN_TRUE)
     # Discovered observers merge UNDER the built-ins: ADAPTERS spreads last so a
     # built-in always wins a name clash. Each observe fails safe on its own.
@@ -435,7 +499,33 @@ def _run_once(
                 # apply_fn call, nothing against the retry budget.
                 outcomes.append(_outcome(prop, disp, f"refused: {refusal}", None, decision_freeze))
                 continue
+        reuse_id: str | None = None
         if itil is not None and lifecycle_ledger is not None:
+            try:
+                dispatch.change_binding_tag(
+                    str(prop.get("app") or "unknown"),
+                    str(prop.get("action") or "unknown"),
+                    str(prop.get("object") or "unknown"),
+                )
+            except ValueError as exc:
+                outcomes.append(
+                    _outcome(
+                        prop,
+                        disp,
+                        f"refused: cannot be bound to a change ({exc})",
+                        None,
+                        decision_freeze,
+                    )
+                )
+                continue
+            if disp != "auto":
+                reuse_id = _open_escalated_intent(
+                    lifecycle_ledger,
+                    itil,
+                    prop,
+                    str(prop.get("catalog_generation") or catalog_generation),
+                )
+        if itil is not None and lifecycle_ledger is not None and reuse_id is None:
             # Draft the ITIL change BEFORE the ledger intent exists, so its
             # frozen itil_change_id field (action_ledger.py, ``identity()``)
             # is set at birth and never needs rewriting later -- the
@@ -483,8 +573,8 @@ def _run_once(
                 tags=tags,
             )
             prop["itil_change_id"] = chg.id
-        intent_id: str | None = None
-        if lifecycle_ledger is not None:
+        intent_id: str | None = reuse_id
+        if lifecycle_ledger is not None and reuse_id is None:
             created_at = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
             base_identity = {
                 "condition_fingerprint": safety.action_fingerprint(prop),
@@ -586,6 +676,7 @@ def _run_once(
                     emit=emit,
                     clock=clock,
                     max_evidence_age_s=max_evidence_age_s,
+                    max_approval_age_s=max_approval_age_s,
                     target_known=target_known,
                     action_allowed=(
                         (
@@ -858,8 +949,14 @@ def _run_once(
             "\nfreeze store: UNPROVISIONED. No human operator has provisioned the "
             "kill switch; every actuation refuses until `skoperator provision` runs."
         )
+    if stranded:
+        report += (
+            f"\nALERT: {len(stranded)} intent(s) stranded in AUTHORIZED/EXECUTING by a crash "
+            "were escalated and not re-run: " + ", ".join(stranded)
+        )
     emit(report)
     return {
+        "stranded": stranded,
         "frozen": end_frozen,
         "frozen_mid_pass": froze_mid_pass,
         "freeze_state": freeze_state,
