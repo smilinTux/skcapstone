@@ -384,7 +384,8 @@ def register_cmdb_commands(main: click.Group) -> None:
             )
             if apply and not scan_result.complete:
                 raise click.ClickException(
-                    "refusing --apply: network scan is incomplete; inspect collector health"
+                    "refusing --apply: network scan is incomplete; "
+                    + _incomplete_scan_detail(scan_result)
                 )
             scope_fingerprint = scan_result.scope_fingerprint()
             discovered_ids = [item.ci_id for item in scan_result.discovered]
@@ -814,3 +815,31 @@ def register_cmdb_commands(main: click.Group) -> None:
                 f"  {finding['kind']} {finding['source']} "
                 f"--{finding['relationship']}--> {finding['target']}"
             )
+
+
+def _incomplete_scan_detail(scan_result) -> str:
+    """Name what made a network scan incomplete, without commands or output.
+
+    The refusal writes no artifact, so this message (in the journal and the
+    cron ledger) is the only record of which target or collector failed.
+    """
+    parts: list[str] = []
+    if getattr(scan_result, "deadline_exceeded", False):
+        parts.append("scan deadline exceeded")
+    if getattr(scan_result, "failure_budget_exceeded", False):
+        parts.append("failure budget exceeded")
+    for failure in getattr(scan_result, "declared_failures", None) or []:
+        parts.append(f"declared: {failure}")
+    for target in getattr(scan_result, "targets", None) or []:
+        if getattr(target, "complete", True):
+            continue
+        reasons = list(getattr(target, "failures", None) or [])
+        reasons += [
+            f"{record.collector}:unavailable"
+            for record in getattr(target, "coverage", None) or []
+            if getattr(record, "status", "") == "unavailable"
+        ]
+        parts.append(f"{target.host}: {', '.join(reasons[:6]) or 'incomplete'}")
+        if len(reasons) > 6:
+            parts[-1] += f" (+{len(reasons) - 6} more)"
+    return "; ".join(parts) or "inspect collector health"
