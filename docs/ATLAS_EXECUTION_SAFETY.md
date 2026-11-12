@@ -218,3 +218,22 @@ later cannot ride the next episode. A clear-and-refire that falls entirely betwe
 passes is indistinguishable from one episode, because the loop only knows what it observed.
 The next loop or dispatch pass also voids auto-lane intents older than one pass (twice the
 runtime budget), the leftovers of a killed loop, before doing anything else.
+
+**The rule is decided once per pass, and the inline lane is closed in production.** The loop
+evaluates the actuator rule a single time at the start of a pass and uses that one answer
+everywhere in the pass: asking again mid-pass could flip a refusal into an approval (a
+designation file written meanwhile, or one failed read) after the ledger and ITIL wiring had
+already been dropped for a non-actuator, and the proposal would then fall into the inline
+lane. The inline lane (actuation with no ITIL change, no `dispatch_intent`, no change lock and
+no re-observation) also never actuates in a pass whose wiring was dropped, and production
+`skoperator run --execute --honor` refuses it outright (`allow_inline_actuation=False`), so
+every physical action goes through the ITIL lane. The inline lane remains available for the
+annotation-only deployment (`--execute` without `--honor`, which actuates nothing), for tests
+and for the drill.
+
+**A non-actuator's decision cannot shadow the actuator's.** A node that is not the designated
+actuator still parks the decision so a human can see it, but without an ITIL change. Because the
+decisions store is replicated and ids are content-based, `decisions.park` upgrades a PENDING
+record that has no bound option to the actuator's bound option (it keeps its id and birth time);
+it never replaces a bound record, downgrades one, or touches a resolved one. Otherwise the
+actuator's bound park would be skipped and `resolve_decision(approve=True)` would raise for good.

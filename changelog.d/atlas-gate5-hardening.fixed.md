@@ -1,6 +1,6 @@
 - ATLAS gate 5 hardening: the weak spots the fault-injection drill documented, and the
   holes the independent review of the first fix found, are fixed and are PASS criteria of
-  `scripts/atlas_p32_fault_injection_drill.py` (30 scenarios; 22 to 28 are new).
+  `scripts/atlas_p32_fault_injection_drill.py` (31 scenarios; 22 to 29 are new).
   - Stale evidence is refused, and judged against the source. A proposal that actuates
     must carry structured `evidence: {source, observed_at}` where `observed_at` is when
     the SOURCE data was true (adapters report `source_observed_at`; the envelope never
@@ -63,3 +63,10 @@
     directory down to the lock directory, the single-flight lock included) is verified free of
     symlinks; an OSError taking a lock is contained per proposal instead of aborting the pass
     (the deadline still aborts it); two stale docstrings are corrected.
+  - Round 8: the actuator-node rule is evaluated ONCE per pass (a refusal can no longer flip into
+    an approval mid-pass and let a proposal fall into the inline lane with no ledger, change
+    lock or re-observation); production `--execute --honor` refuses the inline lane outright
+    (`allow_inline_actuation=False`); `decisions.park` upgrades a pending decision a
+    non-actuator parked without an ITIL change to the actuator's bound option, so it can still
+    be approved; and a failing void can no longer replace a KeyboardInterrupt. Drill scenario 29
+    is new.
