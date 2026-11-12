@@ -124,6 +124,7 @@ def test_full_drill_runs_clean_against_an_isolated_root(tmp_path):
         "23. evidence age is the source's age on the real clock",
         "24. a leftover PROPOSED intent is not actuated later",
         "25. an escalated proposal needs a human and keeps its decision",
+        "26. an approval authorizes one thing, once, and only a vote is a human",
     ):
         assert name in by_name, f"scenario missing from the drill: {name}"
         assert by_name[name].passed, f"{name}: {by_name[name].note}"

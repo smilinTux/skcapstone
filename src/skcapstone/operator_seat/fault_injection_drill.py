@@ -948,7 +948,11 @@ def scenario_signed_ledger_and_itil(ctx: DrillContext) -> ScenarioResult:
         if e.previous_hash != prev_hash:
             chain_ok = False
         prev_hash = e.event_hash
-    correlated = intent is not None and intent.itil_change_id == pre_created.id
+    # A proposal-supplied change id is NEVER trusted (review round 4): the proposal
+    # pointed at an approved change for something else, and it must not become the
+    # intent's authorization. With no ITIL manager on the loop the intent is simply
+    # unbound; with one, the loop drafts its own change bound to this intent.
+    correlated = intent is not None and intent.itil_change_id != pre_created.id
 
     # act_dispatch's OWN auto-created ITIL change (from apply_fn's `itil=itil`,
     # which always fires) is still a SEPARATE record from the frozen intent's
@@ -976,15 +980,15 @@ def scenario_signed_ledger_and_itil(ctx: DrillContext) -> ScenarioResult:
             "ledger_itil_change_id (frozen intent field)": (
                 intent.itil_change_id if intent else None
             ),
+            "proposal_supplied_change_id_ignored": correlated,
             "auto_created_itil_change_id (act_dispatch's own record)": auto_change_id,
             "auto_change_id_recorded_on_verified_event_detail": auto_change_recorded_on_ledger,
             "sample_event_redacted": _redact_event(events[-1]) if events else None,
         },
-        note="ITIL correlation works end-to-end two ways now: the proposer-supplied "
-        "change_id is bound onto the frozen intent's itil_change_id field, AND "
-        "act_dispatch's own auto-created change (a separate record, since build_apply_fn "
-        "always opens one when itil= is wired) is recorded on the VERIFIED event's detail "
-        "-- so an auditor can trace either path from the ledger",
+        note="a proposal-supplied change_id is ignored (never trusted as an authorization), "
+        "AND act_dispatch's own auto-created change (a separate record, since build_apply_fn "
+        "always opens one when itil= is wired) is recorded on the VERIFIED event's detail, "
+        "so an auditor can still trace the actuation from the ledger",
     )
 
 
@@ -1315,14 +1319,15 @@ def scenario_dispatcher_stale_catalog_generation_escalates(ctx: DrillContext) ->
     outcome = outcomes[0] if outcomes else None
     passed = (
         outcome is not None
-        and outcome.outcome.startswith("escalated:")
+        and outcome.outcome.startswith("refused:")
         and "stale catalog_generation" in outcome.outcome
-        and ledger.current_state(intent_id) is action_ledger.ActionState.ESCALATED
+        and ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+        and "authorized" not in [e.state.value for e in ledger.events(intent_id)]
         and ctx.bridge_alive() is False
         and len(ctx.calls) == calls_before  # runner_boom never ran
     )
     return ScenarioResult(
-        name="21. stale catalog_generation refuses and escalates",
+        name="21. stale catalog_generation refuses without authorizing",
         passed=passed,
         evidence={
             "intent_id": intent_id,
@@ -1332,7 +1337,8 @@ def scenario_dispatcher_stale_catalog_generation_escalates(ctx: DrillContext) ->
         },
         note="a real, approved CAB vote is not enough once the ratified catalog has moved "
         "on: the dispatcher's own re-classification at dispatch time refuses the stale "
-        "approval rather than honoring it",
+        "approval, AFTER the human-approval check, leaving the intent PROPOSED with no "
+        "AUTHORIZED written (round 4: a stale catalog must not close an intent)",
     )
 
 
@@ -2085,7 +2091,12 @@ def _leftover_intent_scenario(ctx: DrillContext) -> ScenarioResult:
             risk="low",
             rollback_plan="restart again",
             created_by="atlas-p32-drill",
-            tags=["operator"],
+            tags=[
+                "operator",
+                dispatch.change_binding_tag(
+                    "skchat", "restart-telegram-bridge", "telegram-bridge"
+                ),
+            ],
         )
 
     def leftover(change_id, target, evidence_stamp):
@@ -2289,6 +2300,134 @@ def scenario_escalated_proposal_needs_a_human_and_keeps_its_decision(
     )
 
 
+def scenario_approval_authorizes_one_thing_once(ctx: DrillContext) -> ScenarioResult:
+    """Review round 4: a human approval is read from the VOTES, authorizes ONE intent, once.
+
+    Three holes, closed together. (a) "Human-approved" was inferred from a MISSING
+    ``auto-approved`` marker, but the fold only writes that marker while a change is
+    still PROPOSED, so a standard change that went approved, scheduled, unscheduled
+    read as human: here an ESCALATED intent behind such a change must stay pending.
+    (b) The change was never bound to the intent: a change a human approved for one
+    action also ran an intent for ANOTHER action. (c) The approval was never spent: a
+    second intent on the same change ran again. Now only a qualifying human vote counts,
+    the change is bound to (app, action, target), and a verified run moves it to
+    ``deployed``.
+    """
+    slug = "s26-one-approval-once"
+    itil = ITILManager(ctx.itil_home)
+    ledger = ctx.scenario_ledger(slug)
+    state = ctx.scenario_state(slug)
+    created = datetime.now(timezone.utc)
+    bind = dispatch.change_binding_tag("skchat", "restart-telegram-bridge", "telegram-bridge")
+    voter = "capauth:drill-human@scratch"
+
+    def draft(change_type: str):
+        return itil.propose_change(
+            title="restart telegram bridge",
+            change_type=change_type,
+            risk="low",
+            rollback_plan="restart again",
+            created_by="atlas-p32-drill",
+            tags=["operator", bind],
+        )
+
+    def intent(change_id: str, action: str, lane: str, tag: str) -> str:
+        core = action_ledger.ActionIntent(
+            condition_fingerprint=f"fp-{slug}-{tag}",
+            application="skchat",
+            target_kind="CI",
+            target_id="telegram-bridge",
+            action=action,
+            catalog_generation=_current_catalog_generation(ctx),
+            created_at=created,
+            itil_change_id=change_id,
+            condition_type="BridgeAlive",
+        )
+        ledger.create(core, actor="atlas-p32-drill")
+        for nxt, detail in (
+            (action_ledger.ActionState.DIAGNOSED, {}),
+            (
+                action_ledger.ActionState.PROPOSED,
+                {"disposition": lane, "evidence": fresh_evidence()},
+            ),
+        ):
+            ledger.append(
+                core.intent_id, nxt, occurred_at=created, actor="atlas-p32-drill", detail=detail
+            )
+        return core.intent_id
+
+    def sweep(runner):
+        return dispatch.run_dispatch_pass(
+            ctx.paths,
+            ledger,
+            itil,
+            adapters={"skchat": skchat_adapter.observe},
+            problem_types=loop.PROBLEM_WHEN_TRUE,
+            apply_fn=act_dispatch.build_apply_fn(ctx.paths, _now_iso(), runner=runner, itil=itil),
+            execution_state=state,
+            now_iso=_now_iso(),
+            actor="atlas-p32-drill",
+            emit=lambda _m: None,
+        )
+
+    def outcome_of(outcomes, intent_id):
+        return next((o.outcome for o in outcomes if o.intent_id == intent_id), None)
+
+    ctx.inject_wedge()
+    # (a) a standard change approved, scheduled, unscheduled: no marker, still not human.
+    standard = draft("standard")
+    when = _now_iso()
+    for kind, extra in (
+        ("schedule", {"window_start": when, "window_end": when, "asap": True}),
+        ("unschedule", {"note": "rescheduled"}),
+    ):
+        itil._append_event(itil.changes_dir, standard.id, voter, kind, **extra)
+    escalated_id = intent(standard.id, "restart-telegram-bridge", "escalate", "esc")
+    # (b) one human approval, bound to the bridge restart; another action rides it.
+    approved = draft("normal")
+    itil.submit_cab_vote(
+        approved.id, agent=voter, decision="approved", subject=voter, subject_role="approver"
+    )
+    other_id = intent(approved.id, "restart-daemon", "escalate", "other")
+    calls_before = len(ctx.calls)
+    first = sweep(ctx.runner_boom())
+    escalated_pending = (outcome_of(first, escalated_id) or "").startswith("pending") and (
+        ledger.current_state(escalated_id) is action_ledger.ActionState.PROPOSED
+    )
+    other_refused = "not bound" in (outcome_of(first, other_id) or "")
+    # (c) the bound intent runs once; the approval is then spent.
+    good_id = intent(approved.id, "restart-telegram-bridge", "escalate", "good")
+    second = sweep(ctx.runner_success_and_heal())
+    ran_once = outcome_of(second, good_id) == "verified" and len(ctx.calls) == calls_before + 1
+    spent = next(c for c in itil.list_changes() if c.id == approved.id).status.value == "deployed"
+    ctx.inject_wedge()
+    again_id = intent(approved.id, "restart-telegram-bridge", "escalate", "again")
+    third = sweep(ctx.runner_boom())
+    reuse_refused = (outcome_of(third, again_id) or "").startswith("pending: ITIL change status=")
+    no_extra_call = len(ctx.calls) == calls_before + 1
+    ctx.heal_wedge()
+    return ScenarioResult(
+        name="26. an approval authorizes one thing, once, and only a vote is a human",
+        passed=escalated_pending
+        and other_refused
+        and ran_once
+        and spent
+        and reuse_refused
+        and no_extra_call,
+        evidence={
+            "rescheduled_standard_change_escalated_intent": outcome_of(first, escalated_id),
+            "other_action_on_the_same_change": outcome_of(first, other_id),
+            "bound_intent": outcome_of(second, good_id),
+            "change_status_after_the_run": "deployed" if spent else "not deployed",
+            "second_intent_on_the_spent_change": outcome_of(third, again_id),
+            "physical_calls": len(ctx.calls) - calls_before,
+        },
+        note="human approval is derived from votes (not a missing marker), the change is "
+        "bound to its (app, action, target), and a verified run spends it (round 4, "
+        "findings 1 and 2)",
+    )
+
+
 SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_baseline_self_heal,
     scenario_performed_false_actdispatch_gate,
@@ -2317,6 +2456,7 @@ SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_evidence_age_uses_source_time_on_the_real_clock,
     scenario_leftover_intent_is_not_actuated_later,
     scenario_escalated_proposal_needs_a_human_and_keeps_its_decision,
+    scenario_approval_authorizes_one_thing_once,
 ]
 
 
