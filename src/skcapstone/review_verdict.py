@@ -86,6 +86,62 @@ def is_review_card(title: str) -> bool:
     return bool(_REVIEW_TITLE_RE.search(str(title or "")))
 
 
+class _Evidence:
+    """What one card's completion needs, gathered in a single pass."""
+
+    __slots__ = ("verdict", "checks", "hosted")
+
+    def __init__(self) -> None:
+        self.verdict: tuple[str, str] | None = None
+        self.checks: dict[str, tuple[str, str]] = {}
+        self.hosted: tuple[str, str] | None = None
+
+
+def _scan_evidence(card_id: str, home: Path) -> _Evidence:
+    """Read each card_events file once and collect everything completion needs.
+
+    The raw evidence store writes link_key/link_value. Some readers normalize
+    those to key/value, so accept both. Getting this wrong is silent: the lookup
+    simply finds nothing and the card looks verdict-less. Caught on the live
+    board when this returned none for e9d7900e, which had recorded PASS.
+    """
+    found = _Evidence()
+    evidence_dir = Path(home) / "coordination" / "card_events"
+    if not evidence_dir.is_dir():
+        return found
+    for path in sorted(glob.glob(str(evidence_dir / "*.jsonl"))):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    if card_id not in line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(row, dict) or row.get("card_id") != card_id:
+                        continue
+                    stamp = str(row.get("ts") or "")
+                    value = str(row.get("link_value") or row.get("value") or "")
+                    key = str(row.get("link_key") or row.get("key") or row.get("raw_key") or "")
+                    if value.strip() and _OUTCOME_KEY_RE.search(key):
+                        if found.verdict is None or stamp >= found.verdict[0]:
+                            found.verdict = (stamp, value)
+                    if row.get("action") == "link":
+                        ckey = str(row.get("link_key") or row.get("key") or "")
+                        if _CHECK_KEY_RE.search(ckey):
+                            prior = found.checks.get(ckey)
+                            if prior is None or stamp >= prior[0]:
+                                found.checks[ckey] = (stamp, value)
+                    hkey = row.get("link_key") or row.get("key")
+                    if hkey == "hosted_checks":
+                        if found.hosted is None or stamp >= found.hosted[0]:
+                            found.hosted = (stamp, value)
+        except OSError:
+            continue
+    return found
+
+
 def recorded_verdict(card_id: str, home: Path) -> str | None:
     """Return this card's recorded verdict from the evidence store, or None.
 
@@ -93,68 +149,21 @@ def recorded_verdict(card_id: str, home: Path) -> str | None:
     the structure store is the recurring mistake in this codebase and is exactly
     why other detectors reported zero while the board was full of counterexamples.
     """
-    evidence_dir = Path(home) / "coordination" / "card_events"
-    if not evidence_dir.is_dir():
-        return None
-    latest: tuple[str, str] | None = None
-    for path in sorted(glob.glob(str(evidence_dir / "*.jsonl"))):
-        try:
-            with open(path, encoding="utf-8", errors="replace") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line or card_id not in line:
-                        continue
-                    try:
-                        row = json.loads(line)
-                    except ValueError:
-                        continue
-                    if row.get("card_id") != card_id:
-                        continue
-                    # The raw evidence store writes link_key/link_value. Some
-                    # readers normalize those to key/value, so accept both. Getting
-                    # this wrong is silent: the lookup simply finds nothing and the
-                    # card looks verdict-less. Caught on the live board when this
-                    # returned none for e9d7900e, which had recorded PASS.
-                    key = str(row.get("link_key") or row.get("key") or row.get("raw_key") or "")
-                    value = str(row.get("link_value") or row.get("value") or "")
-                    if not value.strip() or not _OUTCOME_KEY_RE.search(key):
-                        continue
-                    stamp = str(row.get("ts") or "")
-                    if latest is None or stamp >= latest[0]:
-                        latest = (stamp, value)
-        except OSError:
-            continue
+    latest = _scan_evidence(card_id, home).verdict
     return latest[1] if latest else None
+
+
+def _missing_checks(checks: dict[str, tuple[str, str]]) -> list[str]:
+    return sorted(
+        key
+        for key in _REQUIRED_CI_LINK_KEYS
+        if key not in checks or checks[key][1] != _SUCCESS_CHECK_STATE
+    )
 
 
 def unsuccessful_checks(card_id: str, home: Path) -> list[str]:
     """Return missing or non-successful required CI links."""
-    evidence_dir = Path(home) / "coordination" / "card_events"
-    latest: dict[str, tuple[str, str]] = {}
-    for path in sorted(glob.glob(str(evidence_dir / "*.jsonl"))):
-        try:
-            with open(path, encoding="utf-8", errors="replace") as handle:
-                for line in handle:
-                    try:
-                        row = json.loads(line)
-                    except ValueError:
-                        continue
-                    if row.get("card_id") != card_id or row.get("action") != "link":
-                        continue
-                    key = str(row.get("link_key") or row.get("key") or "")
-                    value = str(row.get("link_value") or row.get("value") or "")
-                    if not _CHECK_KEY_RE.search(key):
-                        continue
-                    candidate = (str(row.get("ts") or ""), value)
-                    if key not in latest or candidate[0] >= latest[key][0]:
-                        latest[key] = candidate
-        except OSError:
-            continue
-    return sorted(
-        key
-        for key in _REQUIRED_CI_LINK_KEYS
-        if key not in latest or latest[key][1] != _SUCCESS_CHECK_STATE
-    )
+    return _missing_checks(_scan_evidence(card_id, home).checks)
 
 
 def _card_events(card_id: str, home: Path):
@@ -186,7 +195,9 @@ def _has_pr_or_ci_binding(key: object) -> bool:
     )
 
 
-def _uses_repository_hosted_checks(card_id: str, home: Path) -> bool:
+def _uses_repository_hosted_checks(
+    card_id: str, home: Path, evidence: _Evidence | None = None
+) -> bool:
     """Validate exact hosted check evidence for non-SKCapstone repositories."""
     try:
         core = json.loads(
@@ -204,27 +215,9 @@ def _uses_repository_hosted_checks(card_id: str, home: Path) -> bool:
     if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head):
         raise ValueError(f"review card {card_id} has no exact hosted checks head")
 
-    evidence_dir = Path(home) / "coordination" / "card_events"
-    latest: tuple[str, str] | None = None
-    for path in sorted(glob.glob(str(evidence_dir / "*.jsonl"))):
-        try:
-            with open(path, encoding="utf-8", errors="replace") as handle:
-                for line in handle:
-                    try:
-                        row = json.loads(line)
-                    except ValueError:
-                        continue
-                    key = row.get("link_key") or row.get("key")
-                    if row.get("card_id") != card_id or key != "hosted_checks":
-                        continue
-                    candidate = (
-                        str(row.get("ts") or ""),
-                        str(row.get("link_value") or row.get("value") or ""),
-                    )
-                    if latest is None or candidate[0] >= latest[0]:
-                        latest = candidate
-        except OSError:
-            continue
+    if evidence is None:
+        evidence = _scan_evidence(card_id, home)
+    latest = evidence.hosted
     match = _HOSTED_CHECKS_RE.fullmatch(latest[1]) if latest else None
     if match is None or match["passed"] != match["total"] or match["head"] != head:
         raise ValueError(f"review card {card_id} has missing, incomplete, or stale hosted checks")
@@ -244,11 +237,12 @@ def validate_review_completion(card_id: str, title: str, home: Path) -> None:
     """
     if not is_review_card(title):
         return
-    verdict = recorded_verdict(card_id, home)
+    evidence = _scan_evidence(card_id, home)
+    verdict = evidence.verdict[1] if evidence.verdict else None
     if verdict == "PASS":
-        if _uses_repository_hosted_checks(card_id, home):
+        if _uses_repository_hosted_checks(card_id, home, evidence):
             return
-        checks = unsuccessful_checks(card_id, home)
+        checks = _missing_checks(evidence.checks)
         if not checks:
             return
         raise ValueError(
