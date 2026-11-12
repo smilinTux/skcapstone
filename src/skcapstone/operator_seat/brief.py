@@ -41,10 +41,12 @@ def build_brief(
             # WHICH object is firing, not just the condition type.
             if "object" in condition:
                 entry["object"] = condition["object"]
-            # And WHEN it was observed: the evidence stamp a proposal rests on
-            # (operator_seat.evidence). Never invented here: no time, no stamp.
-            if "observed_at" in condition:
-                entry["observed_at"] = condition["observed_at"]
+            # And WHEN its SOURCE data was true: the evidence stamp a proposal rests
+            # on (operator_seat.evidence). ``observed_at`` (the probe or pass clock)
+            # is deliberately not carried: it is not evidence. Never invented here:
+            # no source time, no stamp.
+            if "source_observed_at" in condition:
+                entry["source_observed_at"] = condition["source_observed_at"]
 
             if status == "Unknown":
                 stale.append(entry)

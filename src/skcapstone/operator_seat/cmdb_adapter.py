@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..fleet import actuation, store
+from . import adapter
 
 PROBLEM_WHEN_TRUE = frozenset()
 _MAX_ARTIFACT_AGE = timedelta(hours=4)
@@ -175,10 +176,14 @@ def observe(paths=None, now_iso: str | None = None, *, manager_factory=None) -> 
     an unreadable probe into a false positive.
     """
     home = Path.home() / ".skcapstone"
+    audit_probed_at = adapter.probe_time()
     artifact = _verified_latest_artifact(home)
     freshness = completeness = "Unknown"
+    artifact_time = None
     if artifact is not None:
         ended = _parse_time(artifact.get("ended_at"))
+        if ended is not None:
+            artifact_time = str(artifact.get("ended_at"))
         now = _parse_time(now_iso) if now_iso else datetime.now(timezone.utc)
         if ended is not None and now is not None:
             freshness = "True" if now - ended <= _MAX_ARTIFACT_AGE else "False"
@@ -197,11 +202,17 @@ def observe(paths=None, now_iso: str | None = None, *, manager_factory=None) -> 
     except Exception:
         audit = "Unknown"
 
+    def stamped(condition: dict, source_time: str | None) -> dict:
+        return {**condition, "source_observed_at": source_time} if source_time else condition
+
+    # The first two read the reconcile ARTIFACT, so their source time is when that
+    # run ended, however recently Atlas looked at it. The relationship audit runs
+    # live, so it reports the moment it ran.
     return {
         "conditions": [
-            {"type": "CmdbReconcileFresh", "status": freshness},
-            {"type": "CmdbLastScanComplete", "status": completeness},
-            {"type": "CmdbAuditClean", "status": audit},
+            stamped({"type": "CmdbReconcileFresh", "status": freshness}, artifact_time),
+            stamped({"type": "CmdbLastScanComplete", "status": completeness}, artifact_time),
+            stamped({"type": "CmdbAuditClean", "status": audit}, audit_probed_at),
         ]
     }
 

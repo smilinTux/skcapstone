@@ -115,9 +115,9 @@ def propose(
             }
             # Evidence comes from the observation that put the condition in the
             # brief, never from the model's reply: the model cannot vouch for its
-            # own freshness. No observation time on the firing entry means no
-            # stamp, and the loop then refuses to actuate (fail closed).
-            observed_at = firing_by_identity[identity].get("observed_at")
+            # own freshness. No SOURCE time on the firing entry means no stamp, and
+            # the loop then refuses to actuate (fail closed).
+            observed_at = firing_by_identity[identity].get("source_observed_at")
             if observed_at:
                 proposal["evidence"] = {
                     "source": f"observation:{identity[0]}/{identity[1]}/{identity[2]}",

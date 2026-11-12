@@ -47,6 +47,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
+from . import adapter
+
 CONDITIONS = [
     "SchedulerAlive",
     "GtdSinkDraining",
@@ -188,6 +190,18 @@ def _digest_age_s(digest: Optional[dict], *, now: Optional[float] = None) -> Opt
     payload using the attribute name still works. skos' own
     ``operator_probe._window_end`` accepts the same pair; keep them in step.
     """
+    published = _digest_published_epoch(digest)
+    if published is None:
+        return None
+    return max(0.0, (time.time() if now is None else now) - published)
+
+
+def _digest_published_epoch(digest: Optional[dict]) -> Optional[float]:
+    """When the digest's data was true, as epoch seconds, or None when unknown.
+
+    Its own window end when parseable (what the run actually covered), else the
+    file's mtime; the same rule :func:`_digest_age_s` has always used.
+    """
     if digest is None:
         return None
     published: Optional[float] = None
@@ -202,9 +216,7 @@ def _digest_age_s(digest: Optional[dict], *, now: Optional[float] = None) -> Opt
             published = p.stat().st_mtime if p is not None else None
         except OSError:
             published = None
-    if published is None:
-        return None
-    return max(0.0, (time.time() if now is None else now) - published)
+    return published
 
 
 def _digest_events(digest: dict) -> Iterator[dict]:
@@ -335,7 +347,25 @@ def skos_observe(probe: Callable[[], dict] | None = None) -> dict:
 
 #: A loop-compatible observe (paths, now_iso) -> {conditions}; ignores both.
 def observe(paths=None, now_iso: str | None = None) -> dict:
-    return skos_observe()
+    # Scheduler, GTD sink and digest-age conditions are live reads: the real probe
+    # time. The grading backlog is READ FROM the published digest, so its source
+    # time is the digest's own time; with no usable digest time it carries none and
+    # cannot be actuated on.
+    probed_at = adapter.probe_time()
+    payload = skos_observe()
+    published = _digest_published_epoch(_read_digest())
+    digest_time = (
+        datetime.fromtimestamp(published, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if published is not None
+        else None
+    )
+    conditions = []
+    for condition in payload["conditions"]:
+        source_time = digest_time if condition.get("type") == "GradingBacklog" else probed_at
+        conditions.append(
+            {**condition, "source_observed_at": source_time} if source_time else dict(condition)
+        )
+    return {**payload, "conditions": conditions}
 
 
 __all__ = ["skos_explain", "skos_observe", "observe", "CONDITIONS", "PROBLEM_WHEN_TRUE"]
