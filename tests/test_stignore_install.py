@@ -259,3 +259,35 @@ class TestInitInstallsTheLayout:
 
         assert (home / ".stignore-shared").read_text() == packaged_shared_text()
         assert classify((home / ".stignore").read_text()) == "shim"
+
+
+class TestSyncStignoreCommand:
+    def _run(self, home, *args):
+        from click.testing import CliRunner
+
+        from skcapstone.cli import main
+
+        return CliRunner().invoke(main, ["sync", "stignore", "--home", str(home), *args])
+
+    def test_fresh_home_gets_the_layout(self, tmp_path):
+        result = self._run(tmp_path)
+        assert result.exit_code == 0, result.output
+        assert classify((tmp_path / ".stignore").read_text()) == "shim"
+        assert (tmp_path / ".stignore-shared").is_file()
+
+    def test_legacy_is_reported_not_rewritten_without_migrate(self, tmp_path):
+        (tmp_path / ".stignore").write_text(LEGACY)
+        result = self._run(tmp_path)
+        assert result.exit_code == 0, result.output
+        assert "scratch-disk" in result.output, "names the rules only the node has"
+        assert (tmp_path / ".stignore").read_text() == LEGACY
+
+    def test_migrate_converts_it(self, tmp_path):
+        (tmp_path / ".stignore").write_text(LEGACY)
+        result = self._run(tmp_path, "--migrate")
+        assert result.exit_code == 0, result.output
+        assert classify((tmp_path / ".stignore").read_text()) == "shim"
+
+    def test_a_refused_migration_exits_nonzero(self, tmp_path):
+        (tmp_path / ".stignore").write_text("*.key\n!keep.key\n")
+        assert self._run(tmp_path, "--migrate").exit_code == 1

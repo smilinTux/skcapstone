@@ -386,5 +386,7 @@ class TestExistingAuditsSeeTheIncludedRules:
         from skcapstone.fleet import stignore_doctor
 
         install(root)
-        report = stignore_doctor.check_folder(stignore_doctor.DEFAULT_RULESETS["skcapstone-sync"], root)
+        report = stignore_doctor.check_folder(
+            stignore_doctor.DEFAULT_RULESETS["skcapstone-sync"], root
+        )
         assert report is not None and report.clean, report.findings()

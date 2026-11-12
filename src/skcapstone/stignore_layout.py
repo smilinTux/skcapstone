@@ -469,7 +469,9 @@ def fetch_effective_rules(root: Path, *, timeout: float = 3.0) -> tuple[list[str
         context.verify_mode = ssl.CERT_NONE
     request = urllib.request.Request(url, headers={"X-API-Key": key})
     try:
-        with urllib.request.urlopen(request, timeout=timeout, context=context) as resp:  # noqa: S310
+        with urllib.request.urlopen(
+            request, timeout=timeout, context=context
+        ) as resp:  # noqa: S310
             payload = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         return None, f"Syncthing answered HTTP {exc.code} for folder {folder}"
@@ -614,7 +616,9 @@ def diagnose(root: Path, *, use_api: bool = True) -> Diagnosis:
         rules = _rules_from_files(root, missing_includes)
         if missing_includes and kind == "shim" and shared.is_file():
             findings.append(
-                Finding("include_unreadable", "error", f"cannot read: {', '.join(missing_includes)}")
+                Finding(
+                    "include_unreadable", "error", f"cannot read: {', '.join(missing_includes)}"
+                )
             )
 
     if kind != "absent":

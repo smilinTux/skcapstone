@@ -7,6 +7,7 @@ trust, security, coordination, and sync seeds all propagate across every
 node in the mesh automatically.
 """
 
+import logging
 import os
 import platform
 import shutil
@@ -14,8 +15,6 @@ import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
-
-import logging
 
 logger = logging.getLogger(__name__)
 
