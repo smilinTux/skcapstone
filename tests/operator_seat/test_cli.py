@@ -127,7 +127,8 @@ def test_decide_approve_with_linked_change_submits_a_cab_vote(tmp_path, monkeypa
         risk="low",
         rollback_plan="revert",
         created_by="atlas",
-        tags=["operator"],
+        # Bound to the decision's own app, action and target, as the loop drafts it.
+        tags=["operator", "op-bind:unknown|restart_service|x"],
     )
     ddir = str(paths.root / "decisions")
     decisions.park(

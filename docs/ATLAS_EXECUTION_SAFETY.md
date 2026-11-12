@@ -235,15 +235,15 @@ and for the drill.
 actuator still parks the decision so a human can see it, but without an ITIL change. Because the
 decisions store is replicated and ids are content-based, `decisions.park` upgrades a PENDING
 record that has no bound option to the actuator's bound option (it keeps its id and birth time);
-it never replaces a bound record, downgrades one, or touches a resolved one, and it only ever
+without that upgrade the actuator's bound park would be skipped and
+`resolve_decision(approve=True)` would raise for good. It never replaces a bound record,
+downgrades one, or touches a resolved one, and it only ever
 upgrades when the bound options are for the SAME proposals (same count and, pairwise, the same
 app, condition, object and action); anything else is refused and logged. When the actuator
 reuses an open escalated intent it re-attaches that intent's change to the proposal before
 parking, so a decision an unbound copy replaced is healed on the next pass. Approving
 (`resolve_decision`) also checks that the chosen option's ITIL change carries the `op-bind` tag
-for that option's app, action and target, and refuses before any write otherwise. Otherwise the
-actuator's bound park would be skipped and `resolve_decision(approve=True)` would raise for good.
-
+for that option's app, action and target, and refuses before any write otherwise.
 
 Known limit (it fails closed): the decisions store is replicated by Syncthing. A human
 rejection and an actuator upgrade made at the same moment on two nodes can conflict, and the
