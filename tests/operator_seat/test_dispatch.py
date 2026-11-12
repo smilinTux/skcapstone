@@ -53,6 +53,7 @@ def _make_proposed_intent(
     itil_change_id: str | None,
     rollback: dict | None = None,
     evidence: dict | None = _EVIDENCE,
+    lane: str = "auto",
 ) -> str:
     """Build a real, PROPOSED ledger intent (OBSERVED -> DIAGNOSED -> PROPOSED),
     bound to itil_change_id at BIRTH the same way loop.py now does it -- the
@@ -79,7 +80,7 @@ def _make_proposed_intent(
         action_ledger.ActionState.PROPOSED,
         occurred_at=created_at,
         actor="test",
-        detail={"evidence": evidence} if evidence else {},
+        detail={"disposition": lane, **({"evidence": evidence} if evidence else {})},
     )
     return intent.intent_id
 
@@ -100,9 +101,10 @@ class _FakeObserver:
     def __call__(self, paths, now_iso) -> dict:
         status = "False" if self.healthy else "True"
         return {
+            "source_observed_at": _EVIDENCE["observed_at"],
             "conditions": [
                 {"type": self.condition_type, "status": status, "object": self.object_id}
-            ]
+            ],
         }
 
 

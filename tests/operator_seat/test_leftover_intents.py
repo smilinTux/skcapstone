@@ -47,14 +47,22 @@ class _CountingITIL:
 
 
 class _Healable:
-    """A demo-app observer: firing (Ready=False) until the action heals it."""
+    """A demo-app observer: firing (Ready=False) until the action heals it.
+
+    A live observer stamps the time it read: ``stamp`` follows the clock under test.
+    """
 
     def __init__(self):
         self.healed = False
+        self.status_override = None
+        self.stamp = "2026-08-20T00:00:30Z"
 
     def __call__(self, paths, now_iso):
-        status = "True" if self.healed else "False"
-        return {"conditions": [{"type": "Ready", "status": status, "object": "svc"}]}
+        status = self.status_override or ("True" if self.healed else "False")
+        return {
+            "source_observed_at": self.stamp,
+            "conditions": [{"type": "Ready", "status": status, "object": "svc"}],
+        }
 
 
 class _Apply:
@@ -105,7 +113,9 @@ def _states(ledger):
     return {iid: ledger.current_state(iid) for iid in ledger.list_intents()}
 
 
-def _dispatch_pass(paths, observer, ledger, itil, apply_fn, *, clock=None):
+def _dispatch_pass(paths, observer, ledger, itil, apply_fn, *, clock=None, **kwargs):
+    clock = clock or (lambda: CLOCK + timedelta(days=1))
+    observer.stamp = clock().strftime("%Y-%m-%dT%H:%M:%SZ")  # a re-observation is fresh NOW
     return dispatch.run_dispatch_pass(
         paths,
         ledger,
@@ -114,7 +124,8 @@ def _dispatch_pass(paths, observer, ledger, itil, apply_fn, *, clock=None):
         problem_types=set(),  # Ready is a health type: fires when False
         apply_fn=apply_fn,
         now_iso=NOW,
-        clock=clock or (lambda: CLOCK + timedelta(days=1)),
+        clock=clock,
+        **kwargs,
     )
 
 
@@ -257,7 +268,7 @@ def _normal_change_approved_by_a_human(itil):
     return chg
 
 
-def _proposed_intent(ledger, change_id, *, evidence=None):
+def _proposed_intent(ledger, change_id, *, evidence=None, lane="auto"):
     created_at = datetime(2026, 8, 20, tzinfo=timezone.utc)
     intent = action_ledger.ActionIntent(
         condition_fingerprint="fp-demo-restart-svc",
@@ -279,7 +290,10 @@ def _proposed_intent(ledger, change_id, *, evidence=None):
         action_ledger.ActionState.PROPOSED,
         occurred_at=created_at,
         actor="test",
-        detail={"evidence": evidence} if evidence else {},
+        detail={
+            **({"disposition": lane} if lane else {}),
+            **({"evidence": evidence} if evidence else {}),
+        },
     )
     return intent.intent_id
 
@@ -326,7 +340,7 @@ def test_the_dispatcher_re_observes_and_will_not_act_on_a_condition_that_cleared
     """Human-approved honor-pending skips the age limit but must re-observe."""
     paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
     observer.healed = True  # it fixed itself while the approval was pending
-    iid = _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id)
+    iid = _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id, lane="escalate")
     apply_fn = _Apply(observer)
     outcomes = _dispatch_pass(paths, observer, ledger, itil, apply_fn)  # a day later
     assert apply_fn.calls == []
@@ -339,7 +353,7 @@ def test_human_approved_intent_with_a_firing_condition_actuates_a_day_later_with
     tmp_path, monkeypatch
 ):
     paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
-    iid = _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id)
+    iid = _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id, lane="escalate")
     apply_fn = _Apply(observer)
     outcomes = _dispatch_pass(paths, observer, ledger, itil, apply_fn)
     assert outcomes[0].outcome == "verified"
@@ -348,7 +362,7 @@ def test_human_approved_intent_with_a_firing_condition_actuates_a_day_later_with
 
 def test_no_owning_observer_means_no_actuation(tmp_path, monkeypatch):
     paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
-    _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id)
+    _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id, lane="escalate")
     apply_fn = _Apply(observer)
     outcomes = dispatch.run_dispatch_pass(
         paths,
@@ -382,3 +396,71 @@ def test_ledger_allows_voiding_a_proposed_intent_but_nothing_else_from_proposed(
         detail={"voided": True},
     )
     assert ledger.current_state(iid) is action_ledger.ActionState.ESCALATED
+
+
+def test_a_standard_intent_with_no_recorded_lane_is_refused_and_never_voided(
+    tmp_path, monkeypatch
+):
+    """A legacy intent cannot be told apart from a pending human decision: never act on
+    it, never destroy it."""
+    paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
+    iid = _proposed_intent(ledger, _standard_change(itil).id, evidence=FRESH, lane=None)
+    apply_fn = _Apply(observer)
+    outcomes = _dispatch_pass(paths, observer, ledger, itil, apply_fn, clock=lambda: CLOCK)
+    assert apply_fn.calls == []
+    assert "no recorded auto lane" in outcomes[0].outcome
+    assert ledger.current_state(iid) is action_ledger.ActionState.PROPOSED
+
+
+@pytest.mark.parametrize("status", ["Unknown", None])
+def test_unknown_or_unobserved_is_not_firing_and_the_intent_stays(tmp_path, monkeypatch, status):
+    paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
+    observer.status_override = status or "Unknown"
+    iid = _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id, lane="escalate")
+    apply_fn = _Apply(observer)
+    outcomes = _dispatch_pass(paths, observer, ledger, itil, apply_fn)
+    assert apply_fn.calls == []
+    assert "Unknown" in outcomes[0].outcome
+    assert ledger.current_state(iid) is action_ledger.ActionState.PROPOSED
+
+
+def test_an_unknown_standard_intent_is_not_voided_either(tmp_path, monkeypatch):
+    paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
+    observer.status_override = "Unknown"
+    iid = _proposed_intent(ledger, _standard_change(itil).id, evidence=FRESH)
+    apply_fn = _Apply(observer)
+    _dispatch_pass(paths, observer, ledger, itil, apply_fn, clock=lambda: CLOCK)
+    assert apply_fn.calls == []
+    assert ledger.current_state(iid) is action_ledger.ActionState.PROPOSED
+
+
+def test_a_re_observation_older_than_the_allowed_age_does_not_act(tmp_path, monkeypatch):
+    paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
+    iid = _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id, lane="escalate")
+    apply_fn = _Apply(observer)
+    clock = lambda: CLOCK + timedelta(days=1)  # noqa: E731
+    observer.stamp = "2026-08-20T00:00:30Z"  # the adapter hands back a day-old reading
+    outcomes = dispatch.run_dispatch_pass(
+        paths,
+        ledger,
+        itil,
+        adapters={"demo": observer},
+        problem_types=set(),
+        apply_fn=apply_fn,
+        now_iso=NOW,
+        clock=clock,
+    )
+    assert apply_fn.calls == []
+    assert "stale" in outcomes[0].outcome
+    assert ledger.current_state(iid) is action_ledger.ActionState.PROPOSED
+
+
+def test_a_naive_clock_is_refused_not_read_as_local_time(tmp_path, monkeypatch):
+    paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
+    iid = _proposed_intent(ledger, _standard_change(itil).id, evidence=FRESH)
+    apply_fn = _Apply(observer)
+    outcomes = _dispatch_pass(
+        paths, observer, ledger, itil, apply_fn, clock=lambda: datetime(2026, 8, 20, 0, 0, 30)
+    )
+    assert apply_fn.calls == []
+    assert "timezone" in outcomes[0].outcome
