@@ -46,18 +46,71 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from ..fleet import store
 from ..fleet.paths import FleetPaths
-from . import action_ledger, decisions, policy, safety
+from . import action_ledger, decisions, evidence, policy, safety
 
 _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def _parse_iso(now_iso: str) -> datetime:
     return datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+
+
+def _clock_iso(clock: Callable[[], datetime] | None) -> str:
+    """The REAL clock now (or the injected one), as an aware ISO 8601 string."""
+    return (clock or (lambda: datetime.now(timezone.utc)))().astimezone(timezone.utc).isoformat()
+
+
+def is_freeze_refusal(exc: BaseException) -> bool:
+    """Whether a failure IS the kill switch refusing, not a fault of the action.
+
+    Every actuation surface refuses with ``fleet is frozen: ...`` (or the actuator
+    gate's bare ``frozen`` reason). A genuine failure that merely COINCIDES with a
+    freeze is not matched, so it still counts against the retry budget.
+    """
+    text = str(exc).strip().lower()
+    return "fleet is frozen" in text or text == f"actuation failed: {store.REASON_FROZEN}"
+
+
+def void_proposed(
+    ledger: action_ledger.ActionLedger,
+    intent_id: str,
+    *,
+    occurred_at: datetime,
+    actor: str,
+    reason: str,
+) -> bool:
+    """Close a PROPOSED intent that will not be actuated, so nothing acts on it later.
+
+    The dispatcher enumerates PROPOSED, ITIL-bound intents; an intent written but not
+    actuated in the pass that wrote it would otherwise sit there until a later pass
+    (or ``skoperator honor-pending``) acted on it, unattended and on old evidence.
+    The void is the existing terminal ESCALATED state reached over the PROPOSED edge,
+    with ``voided`` on its detail. Returns whether anything was closed.
+    """
+    if ledger.current_state(intent_id) is not action_ledger.ActionState.PROPOSED:
+        return False
+    ledger.append(
+        intent_id,
+        action_ledger.ActionState.ESCALATED,
+        occurred_at=occurred_at,
+        actor=actor,
+        detail={"voided": True, "reason": reason, "decision_parked": False},
+    )
+    return True
+
+
+def stored_evidence(ledger: action_ledger.ActionLedger, intent_id: str) -> dict | None:
+    """The structured evidence stamp the loop recorded on the intent's PROPOSED event."""
+    for event in ledger.events(intent_id):
+        if event.state is action_ledger.ActionState.PROPOSED:
+            stamp = event.detail.get("evidence")
+            return stamp if isinstance(stamp, dict) else None
+    return None
 
 
 class UnauthorizedDecisionError(ValueError):
@@ -131,6 +184,36 @@ def verify_postcondition(
     if any(condition_firing(item, problem_types) for item in matches):
         return False, "bound condition still firing after action"
     return True, "postcondition verified"
+
+
+def reobserve_firing(
+    observers: dict[str, Callable[..., dict]],
+    proposal: dict,
+    paths: FleetPaths,
+    now_iso: str,
+    problem_types: set[str],
+) -> tuple[bool, str]:
+    """Re-observe the owning app BEFORE acting and require the bound condition to
+    still be firing. Fails closed: no observer, an observer that raises, or no
+    matching condition all mean "do not act"."""
+    observer = observers.get(proposal.get("app"))
+    if observer is None:
+        return False, "owning observer unavailable"
+    try:
+        conditions = observer(paths, now_iso).get("conditions", [])
+    except Exception as exc:  # noqa: BLE001 - an unreadable probe is never "still firing"
+        return False, f"re-observation failed: {type(exc).__name__}"
+    matches = [
+        item
+        for item in conditions
+        if item.get("type") == proposal.get("condition")
+        and (proposal.get("object") is None or item.get("object") == proposal.get("object"))
+    ]
+    if not matches:
+        return False, "bound condition not observed before action"
+    if not any(condition_firing(item, problem_types) for item in matches):
+        return False, "bound condition no longer firing (re-observed before action)"
+    return True, "condition still firing"
 
 
 # ---------------------------------------------------------------------------
@@ -352,8 +435,24 @@ def dispatch_intent(
     now_iso: str,
     actor: str = "dispatcher",
     emit: Callable[[str], Any] = lambda _m: None,
+    clock: Callable[[], datetime] | None = None,
+    max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
 ) -> DispatchOutcome:
     """Dispatch one PROPOSED intent: refuse, verify, authorize, actuate, verify.
+
+    Before anything is authorized the dispatcher checks, for ANY intent however it
+    was left, that acting is still justified:
+
+    * it re-observes the owning app and requires the bound condition to be firing
+      NOW (a human-approved change may wait hours or days; the approval is for the
+      condition, not for whatever the estate looked like then);
+    * for an auto-approved ``standard`` change, which has no human behind it, the
+      structured evidence stored on the intent's PROPOSED event must also be fresh
+      against the REAL clock (``evidence.refusal``). Stored evidence only ages, so
+      a standard intent that fails this, or whose condition has cleared, is voided
+      (``void_proposed``) rather than left to be retried forever.
+
+    A human-approved intent skips the age limit but never the re-observation.
 
     Safe to call on an intent that turns out not to be ready: returns a
     ``"pending: ..."`` outcome and appends nothing when the intent is not
@@ -391,6 +490,22 @@ def dispatch_intent(
         return DispatchOutcome(intent_id, f"pending: ITIL change status={change.status.value}")
 
     event_at = _parse_iso(now_iso)
+    prop = _reconstruct_proposal(intent)
+    auto_approved = change.change_type.value == "standard"
+    if auto_approved:
+        stale = evidence.refusal(
+            {"evidence": stored_evidence(ledger, intent_id)}, _clock_iso(clock), max_evidence_age_s
+        )
+        if stale is not None:
+            void_proposed(ledger, intent_id, occurred_at=event_at, actor=actor, reason=stale)
+            emit(f"dispatch: refused for {intent_id}, {stale}")
+            return DispatchOutcome(intent_id, f"refused: {stale}")
+    firing, why = reobserve_firing(adapters, prop, paths, now_iso, problem_types)
+    if not firing:
+        if auto_approved:
+            void_proposed(ledger, intent_id, occurred_at=event_at, actor=actor, reason=why)
+        emit(f"dispatch: refused for {intent_id}, {why}")
+        return DispatchOutcome(intent_id, f"refused: {why}")
     recheck = _reclassify(paths, intent)
     stale = recheck["generation_known"] and not recheck["generation_matches"]
     hardened = (
@@ -409,7 +524,6 @@ def dispatch_intent(
             f"{intent.action!r} is no longer a ratified standard action"
         )
 
-    prop = _reconstruct_proposal(intent)
     classification = recheck["classification"]
 
     # AUTHORIZED/EXECUTING are appended for BOTH outcomes below: the ledger's
@@ -480,10 +594,10 @@ def dispatch_intent(
         # was actually attempted) and must never trigger a rollback (there is
         # nothing to roll back -- rollback_fn reverses a real actuation).
         preflight = isinstance(exc, _PreflightRefusalError)
-        # A kill switch that landed during the attempt is not a fault of the
-        # action either: it must not feed the circuit breaker.
-        frozen_now = store.check_actuation_gate(paths).reason == store.REASON_FROZEN
-        if execution_state is not None and not preflight and not frozen_now:
+        # The kill switch REFUSING is not a fault of the action and must not feed the
+        # circuit breaker. A genuine failure that merely coincides with a freeze is
+        # still a failure and still counts.
+        if execution_state is not None and not preflight and not is_freeze_refusal(exc):
             try:
                 execution_state.record(fingerprint, time.time(), success=False, reason=str(exc))
             except Exception as state_exc:  # noqa: BLE001 - see loop.py's identical rationale
@@ -561,6 +675,8 @@ def run_dispatch_pass(
     now_iso: str,
     actor: str = "dispatcher",
     emit: Callable[[str], Any] = lambda _m: None,
+    clock: Callable[[], datetime] | None = None,
+    max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
 ) -> list[DispatchOutcome]:
     """Enumerate every PROPOSED, ITIL-bound ledger intent and dispatch each.
 
@@ -593,6 +709,8 @@ def run_dispatch_pass(
                 now_iso=now_iso,
                 actor=actor,
                 emit=emit,
+                clock=clock,
+                max_evidence_age_s=max_evidence_age_s,
             )
         )
     return outcomes
@@ -606,4 +724,8 @@ __all__ = [
     "resolve_decision",
     "dispatch_intent",
     "run_dispatch_pass",
+    "is_freeze_refusal",
+    "reobserve_firing",
+    "stored_evidence",
+    "void_proposed",
 ]

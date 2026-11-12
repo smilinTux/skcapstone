@@ -455,7 +455,7 @@ def test_hardened_classification_refuses_and_escalates(tmp_path, monkeypatch):
         ledger,
         itil,
         intent_id,
-        adapters={"widget": observer},
+        adapters={"fleet": observer},
         problem_types={"Ready"},
         apply_fn=boom,
         now_iso=_NOW,

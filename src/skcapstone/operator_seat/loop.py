@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from ..fleet import signing, store
@@ -167,6 +167,62 @@ _condition_firing = dispatch.condition_firing
 _verify_postcondition = dispatch.verify_postcondition
 
 
+#: Outcome words for an auto action that actually ran.
+_ACTED = frozenset({"verified", "performed, unverified"})
+
+
+def _decision_now_iso(clock: Callable[[], datetime] | None) -> str:
+    """The REAL clock now (or the injected one) as an aware ISO 8601 string.
+
+    This, never the pass's ``now_iso``, is what evidence age is measured against.
+    """
+    return (clock or (lambda: datetime.now(timezone.utc)))().astimezone(timezone.utc).isoformat()
+
+
+def _outcome(
+    prop: dict,
+    disposition: str,
+    outcome: str,
+    intent_id: str | None,
+    freeze_state: str,
+    freeze_after: str | None = None,
+) -> dict:
+    return {
+        "action": prop.get("action"),
+        "app": prop.get("app"),
+        "condition": prop.get("condition"),
+        "object": prop.get("object"),
+        "disposition": disposition,
+        "outcome": outcome,
+        "intent_id": intent_id,
+        "freeze_state": freeze_state,
+        "freeze_after": freeze_after if freeze_after is not None else freeze_state,
+    }
+
+
+def _freeze_summary(the_brief: dict, outcomes: list[dict]) -> dict:
+    """What a mid-pass freeze left behind, from the outcomes that were recorded."""
+    taken = [o["action"] for o in outcomes if o["outcome"] in _ACTED]
+    refused = [
+        o["action"]
+        for o in outcomes
+        if o["outcome"].startswith("refused: ") and o["freeze_state"] == store.REASON_FROZEN
+    ]
+    resolved = {
+        (o["app"], o["condition"], o["object"]) for o in outcomes if o["outcome"] == "verified"
+    }
+    still_firing = [
+        entry
+        for entry in the_brief.get("firing", [])
+        if (entry.get("app"), entry.get("type"), entry.get("object")) not in resolved
+    ]
+    return {
+        "taken_before_freeze": taken,
+        "refused_by_freeze": refused,
+        "still_firing": still_firing,
+    }
+
+
 def _run_once(
     paths=None,
     *,
@@ -190,6 +246,7 @@ def _run_once(
     deadline: float | None = None,
     itil: Any | None = None,
     max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
+    clock: Callable[[], datetime] | None = None,
 ) -> dict:
     """Run one operator pass.
 
@@ -221,23 +278,34 @@ def _run_once(
     whose ``evidence`` is missing, unparseable, future-dated or older than
     ``max_evidence_age_s`` is refused BEFORE any ITIL change, ledger intent or
     apply_fn call, and the outcome reads ``refused: ...``. A bad
-    ``max_evidence_age_s`` refuses too; the check cannot be switched off.
+    ``max_evidence_age_s`` refuses too; the check cannot be switched off. Age is
+    measured against ``clock`` (default: the REAL wall clock) read at the decision
+    point, never against ``now_iso``, which is only the pass's own timestamp: the
+    evidence is stamped from the source data's time, and a pass clock that is
+    wrong, or a model call that was slow, must not make old evidence look fresh.
 
-    The freeze is re-read at every actuation decision point, not only at the top
-    of the pass, and the result reports it: ``frozen`` is True when the fleet was
-    frozen at any decision point or at the end of the pass, ``frozen_mid_pass``
-    says the freeze landed after the pass had started, ``freeze_state`` is the
-    worst state seen, and each outcome carries the ``freeze_state`` at its own
-    decision. A freeze refusal is not a fault, so it never feeds the circuit
-    breaker.
+    The actuation gate is re-read at every actuation decision point, not only at
+    the top of the pass. ANY closed gate (frozen, unprovisioned) refuses before an
+    ITIL change or ledger intent is written. ``frozen`` is True when the fleet was
+    frozen at any decision point, after any attempt, or at the end of the pass;
+    ``frozen_mid_pass`` says the freeze landed after the pass had started;
+    ``freeze_summary`` then says what actually happened (actions taken before the
+    freeze, actions refused by it, conditions still firing); and each outcome
+    carries ``freeze_state`` (at its decision point) and ``freeze_after``. A freeze
+    REFUSAL is not a fault of the action and never feeds the circuit breaker; a real
+    failure that merely coincides with a freeze still does.
+
+    An intent written for an auto action that is not actuated in this pass (a gate
+    closed after the write, the deadline fired, the dispatcher refused) is voided
+    (``dispatch.void_proposed``) so it can never be acted on later, unattended.
 
     Outcome words for an auto action that ran: ``verified`` only when the
     post-action re-observation ran and passed (a lifecycle ledger or
     ``require_verified_actions`` makes it mandatory), otherwise
     ``performed, unverified``. Nothing reports ``applied`` any more.
 
-    Returns {frozen, frozen_mid_pass, freeze_state, brief, route, proposals,
-    planned, outcomes, report}.
+    Returns {frozen, frozen_mid_pass, freeze_state, freeze_summary, brief, route,
+    proposals, planned, outcomes, report}.
     """
     paths = paths or default_paths()
 
@@ -250,6 +318,7 @@ def _run_once(
             "frozen": True,
             "frozen_mid_pass": False,
             "freeze_state": "frozen",
+            "freeze_summary": None,
             "brief": None,
             "route": None,
             "proposals": [],
@@ -334,23 +403,26 @@ def _run_once(
         decision_freeze = "active" if gate.allowed else (gate.reason or "unknown")
         if decision_freeze == store.REASON_FROZEN:
             froze_mid_pass = True
-        if disp == "auto" and execute and apply_fn is not None:
-            if decision_freeze == store.REASON_FROZEN:
-                refusal = "fleet is frozen: the operator does not actuate"
+        actuating = disp == "auto" and execute and apply_fn is not None
+        if actuating:
+            if not gate.allowed:
+                # ANY closed gate refuses here, before anything is written: a blocked
+                # gate that only the dispatcher noticed used to leave a drafted ITIL
+                # change and a PROPOSED intent behind for a later pass to act on.
+                if gate.reason == store.REASON_FROZEN:
+                    refusal = "fleet is frozen: the operator does not actuate"
+                elif gate.reason == store.REASON_UNPROVISIONED:
+                    refusal = (
+                        "freeze store unprovisioned: no human has provisioned the kill switch"
+                    )
+                else:
+                    refusal = f"actuation gate closed: {gate.reason}"
             else:
-                refusal = evidence.refusal(prop, now_iso, max_evidence_age_s)
+                refusal = evidence.refusal(prop, _decision_now_iso(clock), max_evidence_age_s)
             if refusal is not None:
                 # Refused before any write: no ITIL change, no ledger intent, no
                 # apply_fn call, nothing against the retry budget.
-                outcomes.append(
-                    {
-                        "action": prop.get("action"),
-                        "disposition": disp,
-                        "outcome": f"refused: {refusal}",
-                        "intent_id": None,
-                        "freeze_state": decision_freeze,
-                    }
-                )
+                outcomes.append(_outcome(prop, disp, f"refused: {refusal}", None, decision_freeze))
                 continue
         if (
             itil is not None
@@ -437,11 +509,16 @@ def _run_once(
                 )
                 current = action_ledger.ActionState.DIAGNOSED
             if current is action_ledger.ActionState.DIAGNOSED:
+                # The structured evidence stamp rides on this (hash-chained, signed)
+                # event so the dispatcher can later require it to be fresh before
+                # it acts on an auto-approved change, however long the intent waited.
+                stamp = prop.get("evidence")
                 lifecycle_ledger.append(
                     intent_id,
                     action_ledger.ActionState.PROPOSED,
                     occurred_at=created_at,
                     actor=ledger_actor,
+                    detail={"evidence": dict(stamp)} if isinstance(stamp, dict) else {},
                 )
         if (
             disp == "auto"
@@ -460,26 +537,52 @@ def _run_once(
             # pass's own classification, so "standard change, auto-approved
             # by the fold" really is just the fastest kind of approved
             # change -- one code path, two speeds.
-            if deadline is not None:
-                safety.assert_before_deadline(deadline)
-            outcome = dispatch.dispatch_intent(
-                paths,
+            event_at = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+            try:
+                if deadline is not None:
+                    safety.assert_before_deadline(deadline)
+                outcome = dispatch.dispatch_intent(
+                    paths,
+                    lifecycle_ledger,
+                    itil,
+                    intent_id,
+                    adapters=adapters,
+                    problem_types=ptypes,
+                    apply_fn=apply_fn,
+                    rollback_fn=rollback_fn,
+                    execution_state=execution_state,
+                    decisions_dir=decisions_dir,
+                    now_iso=now_iso,
+                    actor=ledger_actor,
+                    emit=emit,
+                    clock=clock,
+                    max_evidence_age_s=max_evidence_age_s,
+                ).outcome
+            except BaseException as exc:
+                # The deadline (or anything else) fired after the intent was written:
+                # close it so it cannot be dispatched later, then let the pass fail.
+                try:
+                    dispatch.void_proposed(
+                        lifecycle_ledger,
+                        intent_id,
+                        occurred_at=event_at,
+                        actor=ledger_actor,
+                        reason=f"pass aborted before dispatch: {exc}",
+                    )
+                except Exception:  # noqa: BLE001 - never mask the original failure
+                    pass
+                raise
+            # The dispatcher left it PROPOSED (a gate that closed after our check, an
+            # approval that never came, the change not found): this is the auto lane,
+            # there is no human waiting on it, so close it instead of leaving it for a
+            # later pass to act on unattended.
+            dispatch.void_proposed(
                 lifecycle_ledger,
-                itil,
                 intent_id,
-                adapters=adapters,
-                problem_types=ptypes,
-                apply_fn=apply_fn,
-                rollback_fn=rollback_fn,
-                execution_state=execution_state,
-                decisions_dir=decisions_dir,
-                now_iso=now_iso,
+                occurred_at=event_at,
                 actor=ledger_actor,
-                emit=emit,
-            ).outcome
-            if store.check_actuation_gate(paths).reason == store.REASON_FROZEN:
-                decision_freeze = store.REASON_FROZEN
-                froze_mid_pass = True
+                reason=f"not actuated in the pass that wrote it: {outcome}",
+            )
         elif disp == "auto" and execute and apply_fn is not None:
             # Pre-itil, self-contained inline actuation. Kept byte-identical
             # for callers that have not wired an ITIL manager into this pass
@@ -559,15 +662,13 @@ def _run_once(
                     )
                 outcome = "verified" if verify_required else "performed, unverified"
             except Exception as exc:
-                # A kill switch that landed during the attempt is not a fault of the
-                # action: report it and keep it away from the circuit breaker.
-                if store.check_actuation_gate(paths).reason == store.REASON_FROZEN:
-                    decision_freeze = store.REASON_FROZEN
-                    froze_mid_pass = True
+                # The kill switch REFUSING is not a fault of the action and stays away
+                # from the circuit breaker; a real failure that merely coincides
+                # with a freeze is still a failure and still counts.
                 if (
                     execution_state is not None
                     and attempt_started
-                    and decision_freeze != store.REASON_FROZEN
+                    and not dispatch.is_freeze_refusal(exc)
                 ):
                     try:
                         execution_state.record(
@@ -647,6 +748,16 @@ def _run_once(
                                 "rollback_error": str(rollback_error) if rollback_error else None,
                             },
                         )
+                elif intent_id is not None:
+                    # Refused before AUTHORIZED (cooldown, circuit, deadline): the
+                    # intent was written but will not run, so close it.
+                    dispatch.void_proposed(
+                        lifecycle_ledger,
+                        intent_id,
+                        occurred_at=datetime.fromisoformat(now_iso.replace("Z", "+00:00")),
+                        actor=ledger_actor,
+                        reason=f"not actuated in the pass that wrote it: {exc}",
+                    )
                 outcome = (
                     f"failed then rolled back: {exc}"
                     if rollback_result is not None and rollback_error is None
@@ -664,15 +775,15 @@ def _run_once(
             outcome = "escalated (parked for approval)"
         else:
             outcome = "escalate (no decision store)"
-        outcomes.append(
-            {
-                "action": prop.get("action"),
-                "disposition": disp,
-                "outcome": outcome,
-                "intent_id": intent_id,
-                "freeze_state": decision_freeze,
-            }
-        )
+        freeze_after = decision_freeze
+        if actuating:
+            # A freeze AFTER an attempt is flagged whether the attempt succeeded or
+            # failed (the success path used to say nothing).
+            after = store.check_actuation_gate(paths)
+            freeze_after = "active" if after.allowed else (after.reason or "unknown")
+            if after.reason == store.REASON_FROZEN:
+                froze_mid_pass = True
+        outcomes.append(_outcome(prop, disp, outcome, intent_id, decision_freeze, freeze_after))
 
     report = brain.format_report(the_brief, proposals)
     if outcomes:
@@ -686,13 +797,19 @@ def _run_once(
     freeze_state = "active" if gate.allowed else (gate.reason or "unknown")
     if gate.reason == store.REASON_FROZEN:
         froze_mid_pass = True
+    freeze_summary = None
     if froze_mid_pass:
-        # Worst state seen at any decision point or at the end of the pass: a
-        # freeze that landed mid-run is never reported as "not frozen".
+        # Worst state seen at any decision point, after any attempt, or at the end
+        # of the pass: a freeze that landed mid-run is never reported as "not
+        # frozen". And it is reported as what happened: what ran before it, what it
+        # refused, and what is still firing, not as the whole pass standing down.
         freeze_state = "frozen"
+        freeze_summary = _freeze_summary(the_brief, outcomes)
         report += (
-            "\nfreeze: landed after the pass began; actuation was refused at the "
-            "decision point."
+            "\nfreeze: landed mid-pass. "
+            f"{len(freeze_summary['taken_before_freeze'])} action(s) taken before the freeze, "
+            f"{len(freeze_summary['refused_by_freeze'])} refused, "
+            f"{len(freeze_summary['still_firing'])} condition(s) still firing."
         )
     if freeze_state == store.REASON_UNPROVISIONED:
         report += (
@@ -704,6 +821,7 @@ def _run_once(
         "frozen": froze_mid_pass,
         "frozen_mid_pass": froze_mid_pass,
         "freeze_state": freeze_state,
+        "freeze_summary": freeze_summary,
         "brief": the_brief,
         "route": route,
         "proposals": proposals,

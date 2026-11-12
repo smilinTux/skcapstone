@@ -72,18 +72,6 @@ def _setup(tmp_path, monkeypatch, *, provision=True):
     paths, _ = _enroll(tmp_path, monkeypatch)
     if provision:
         store.set_frozen(paths, False, writer=HUMAN, reason="test provisioning")
-    store.write_spec(
-        paths,
-        "operatorapp",
-        "demo",
-        {
-            "name": "demo",
-            "conditions": ["Ready"],
-            "proposedStandardActions": ["restart"],
-            "ratifiedStandardActions": ["restart"],
-        },
-        writer=HUMAN,
-    )
     observer = _Healable()
     monkeypatch.setattr(loop, "ADAPTERS", {"demo": observer})
     ledger = action_ledger.ActionLedger(tmp_path / "ledger")
@@ -91,8 +79,8 @@ def _setup(tmp_path, monkeypatch, *, provision=True):
     return paths, observer, ledger, itil
 
 
-_PROP = {"app": "demo", "condition": "Ready", "action": "restart", "object": "svc"}
-_EXPLAIN = {"actions": [{"name": "restart", "standard": True, "reversible": True}]}
+_PROP = {"app": "demo", "condition": "Ready", "action": "restart_service", "object": "svc"}
+_EXPLAIN = {"actions": [{"name": "restart_service", "standard": True, "reversible": True}]}
 
 
 def _pass(paths, observer, ledger, itil, *, apply_fn=None, **kwargs):
@@ -123,7 +111,7 @@ def _dispatch_pass(paths, observer, ledger, itil, apply_fn, *, clock=None):
         ledger,
         itil,
         adapters={"demo": observer},
-        problem_types={"Ready"},
+        problem_types=set(),  # Ready is a health type: fires when False
         apply_fn=apply_fn,
         now_iso=NOW,
         clock=clock or (lambda: CLOCK + timedelta(days=1)),
@@ -276,7 +264,7 @@ def _proposed_intent(ledger, change_id, *, evidence=None):
         application="demo",
         target_kind="CI",
         target_id="svc",
-        action="restart",
+        action="restart_service",
         catalog_generation="gen-0",
         created_at=created_at,
         itil_change_id=change_id,
@@ -367,7 +355,7 @@ def test_no_owning_observer_means_no_actuation(tmp_path, monkeypatch):
         ledger,
         itil,
         adapters={},
-        problem_types={"Ready"},
+        problem_types=set(),  # Ready is a health type: fires when False
         apply_fn=apply_fn,
         now_iso=NOW,
         clock=lambda: CLOCK,
