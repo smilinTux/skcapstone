@@ -1954,6 +1954,13 @@ def _redact_event(event: action_ledger.ActionEvent) -> dict:
     return payload
 
 
+def _current_catalog_generation(ctx: DrillContext, app: str = "skchat") -> str:
+    """The app's live OperatorApp generation in the drill root (earlier scenarios may have
+    bumped it), so an intent written here is not stale for an unrelated reason."""
+    record = store.read_spec(ctx.paths, "operatorapp", app)
+    return str(record["generation"]) if record and record.get("generation") else "drill"
+
+
 def scenario_evidence_age_uses_source_time_on_the_real_clock(ctx: DrillContext) -> ScenarioResult:
     """Review round 2, finding 1: freshness is the SOURCE data's age on the REAL clock.
 
@@ -2088,7 +2095,7 @@ def scenario_leftover_intent_is_not_actuated_later(ctx: DrillContext) -> Scenari
             target_kind="CI",
             target_id=target,
             action="restart-telegram-bridge",
-            catalog_generation="drill",
+            catalog_generation=_current_catalog_generation(ctx),
             created_at=created,
             itil_change_id=change_id,
             condition_type="BridgeAlive",
@@ -2203,6 +2210,7 @@ def scenario_escalated_proposal_needs_a_human_and_keeps_its_decision(
             ledger_actor="atlas-p32-drill",
             itil=itil,
             target_known=lambda p: False,
+            catalog_generation=_current_catalog_generation(ctx),
         )
         outcome = res["outcomes"][0]
         intent_id = outcome["intent_id"]
