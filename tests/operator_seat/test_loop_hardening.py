@@ -352,3 +352,26 @@ def test_a_failed_verification_is_never_reported_as_applied_or_verified(tmp_path
     outcome = res["outcomes"][0]["outcome"]
     assert outcome.startswith("failed:")
     assert "applied" not in outcome and not outcome.startswith("verified")
+
+
+def test_a_moving_evidence_timestamp_cannot_dodge_the_cooldown(tmp_path, monkeypatch):
+    """Evidence is not part of the action fingerprint: each pass restamps it."""
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    state = loop.safety.ExecutionState(tmp_path / "state", cooldown_seconds=900)
+    first = _Recorder({"performed": False, "reason": "boom"})
+    _run(
+        paths,
+        [_prop(evidence=_stamp("2026-08-19T23:59:00Z"))],
+        apply_fn=first,
+        execution_state=state,
+    )
+    second = _Recorder()
+    res = _run(
+        paths,
+        [_prop(evidence=_stamp("2026-08-19T23:59:55Z"))],
+        apply_fn=second,
+        execution_state=state,
+    )
+    assert len(first.calls) == 1
+    assert second.calls == []
+    assert "cooldown" in res["outcomes"][0]["outcome"]

@@ -18,7 +18,7 @@ import pytest
 from skcapstone.fleet import store
 from skcapstone.fleet.paths import FleetPaths
 from skcapstone.itil import ITILManager
-from skcapstone.operator_seat import action_ledger, dispatch
+from skcapstone.operator_seat import action_ledger, dispatch, safety
 
 _NOW = "2026-08-25T00:00:00Z"
 
@@ -579,3 +579,47 @@ def test_dispatch_module_never_imports_the_brain_or_a_propose_path():
                     offenders.append(f"{module}.{alias.name}")
 
     assert offenders == [], f"dispatch.py must never import a propose-path module: {offenders}"
+
+
+def test_freeze_landing_during_dispatch_does_not_feed_the_circuit_breaker(tmp_path):
+    """A kill switch that lands while the actuator runs is not a fault of the action."""
+    paths = _paths(tmp_path)
+    _provision(paths)
+    itil = ITILManager(tmp_path / "itil")
+    ledger = _ledger(tmp_path)
+    state = safety.ExecutionState(tmp_path / "state", cooldown_seconds=0)
+    chg = itil.propose_change(
+        title="fix widget-1",
+        change_type="normal",
+        risk="low",
+        rollback_plan="revert",
+        created_by="atlas",
+        tags=["operator"],
+    )
+    itil.submit_cab_vote(
+        chg.id,
+        agent="capauth:approver@scratch",
+        decision="approved",
+        subject="capauth:approver@scratch",
+        subject_role="approver",
+    )
+    intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
+
+    def freeze_then_refuse(prop, classification):
+        store.set_frozen(paths, True, writer=_human_writer(), reason="lands inside the actuator")
+        raise RuntimeError("fleet is frozen: the operator does not actuate")
+
+    outcome = dispatch.dispatch_intent(
+        paths,
+        ledger,
+        itil,
+        intent_id,
+        adapters={"widget": _FakeObserver("Ready", "widget-1")},
+        problem_types={"Ready"},
+        apply_fn=freeze_then_refuse,
+        execution_state=state,
+        now_iso=_NOW,
+    )
+
+    assert outcome.outcome.startswith("failed:")
+    assert state._load()["actions"] == {}
