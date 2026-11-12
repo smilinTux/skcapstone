@@ -490,6 +490,32 @@ def resolve_decision(
             "the proposal must be re-parked with a bound change before it can "
             "be approved"
         )
+    # The change must be bound to THIS decision's proposal (app, action, target): a decision
+    # whose option points at a change drafted for something else would put a human vote on
+    # the wrong change. Checked before any write.
+    option = options[index]
+    try:
+        expected = change_binding_tag(
+            str(option.get("app") or "unknown"),
+            str(option.get("action") or "unknown"),
+            str(option.get("object") or "unknown"),
+        )
+    except ValueError as exc:
+        raise UnauthorizedDecisionError(
+            f"decision {decision_id!r} cannot be bound to a change: {exc}"
+        ) from exc
+    try:
+        change = _read_change(itil, change_id)
+    except Exception:  # noqa: BLE001 - an unreadable change authorizes nothing
+        change = None
+    bound_tags = [
+        t for t in (getattr(change, "tags", None) or []) if str(t).startswith(BINDING_TAG_PREFIX)
+    ]
+    if change is None or bound_tags != [expected]:
+        raise UnauthorizedDecisionError(
+            f"decision {decision_id!r}: change {change_id!r} is not bound to this decision's "
+            "app, action and target; approving it would put a vote on the wrong change"
+        )
     itil.submit_cab_vote(
         change_id,
         agent=subject,

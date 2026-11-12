@@ -9,6 +9,7 @@ file-backed record I/O; it is not a guardrail.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,21 @@ def _load(path: Path) -> dict[str, Any]:
 def _dump(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+
+_LOG = logging.getLogger(__name__)
+
+#: The fields that make two options the SAME proposal.
+_IDENTITY_FIELDS = ("app", "condition", "object", "action")
+
+
+def _same_proposals(old: list[dict[str, Any]], new: list[dict[str, Any]]) -> bool:
+    """Whether ``new`` is the same proposal(s) as ``old``: same count and, pairwise, the same
+    app, condition, object and action. An upgrade may only ADD the binding to what a human was
+    already shown, never swap in a different proposal."""
+    return len(old) == len(new) and all(
+        all(o.get(k) == n.get(k) for k in _IDENTITY_FIELDS) for o, n in zip(old, new, strict=True)
+    )
 
 
 def _has_bound_option(options: list[dict[str, Any]]) -> bool:
@@ -79,8 +95,15 @@ def park(
             and not _has_bound_option(existing.get("options", []))
             and _has_bound_option(options)
         ):
-            existing["options"] = list(options)
-            _dump(path, existing)
+            if _same_proposals(existing.get("options", []), options):
+                existing["options"] = list(options)
+                _dump(path, existing)
+            else:
+                _LOG.warning(
+                    "refusing to upgrade decision %s: the bound option is not for the same "
+                    "app, condition, object and action (or option count) as the pending one",
+                    decision_id,
+                )
         return existing
     record = {
         "id": decision_id,

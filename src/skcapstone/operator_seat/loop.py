@@ -626,6 +626,12 @@ def _run_once(
                     prop,
                     str(prop.get("catalog_generation") or catalog_generation),
                 )
+                if reuse_id is not None:
+                    # No new change is drafted, but the decision parked below must still
+                    # carry the REUSED intent's change: the decisions store is replicated,
+                    # and if a non-actuator's unbound copy won the race, this bound option
+                    # is what upgrades it (otherwise approving it raises forever).
+                    prop["itil_change_id"] = lifecycle_ledger.read_intent(reuse_id).itil_change_id
         if itil is not None and lifecycle_ledger is not None and reuse_id is None:
             # Draft the ITIL change BEFORE the ledger intent exists, so its
             # frozen itil_change_id field (action_ledger.py, ``identity()``)
