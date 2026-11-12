@@ -195,6 +195,8 @@ skoperator unfreeze                # human-only
 ```
 
 `run` is report-only unless `--execute` is passed AND an apply function is wired.
+`run --max-evidence-age <seconds>` (default 600) is the oldest observation an
+action may rest on; see `docs/ATLAS_EXECUTION_SAFETY.md`.
 `freeze`/`unfreeze` and every plane-file write are human-only: the autonomous
 seat carries `agent_seat=True` and is refused.
 
