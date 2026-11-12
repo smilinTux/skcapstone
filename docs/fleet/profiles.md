@@ -195,7 +195,8 @@ source checkout.
 NOT say what those folders must ignore, and the Profile kind is the wrong
 place to put that.
 
-`~/.skcapstone/.stignore` opens with `*.key`, `*.pem` and `**/private.*`.
+`~/.skcapstone/.stignore-shared` (included by every node's `.stignore` shim) opens with
+`*.key`, `*.pem` and `**/private.*`.
 Those three lines are the only reason the control node can hold eleven
 `agents/*/capauth/identity/private.asc` files while a peer in the same
 `sendreceive` folder holds zero: Syncthing never scans or announces an
@@ -221,6 +222,11 @@ To check a node:
 $ skfleet node stignore            # report only, writes nothing
 $ skfleet node stignore --strict   # exit 1 on an error-grade finding
 ```
+
+The check reads the include-expanded rules, so a node whose `.stignore` is the shim plus
+`.stignore-shared` is judged on the rules Syncthing would load, not on the three shim lines.
+(`skcapstone doctor` runs the layout checks as well; see
+[SOVEREIGN_SINGULARITY](../SOVEREIGN_SINGULARITY.md#ignore-rules-one-shared-file-a-shim-per-node).)
 
 A missing required rule, or a folder with no `.stignore` at all, grades
 `error`. A missing narrower credential rule grades `warn`, because it covers

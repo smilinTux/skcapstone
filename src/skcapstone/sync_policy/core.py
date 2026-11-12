@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 
 from ..skills.syncthing_setup import _merge_stignore
+from ..stignore_layout import read_effective_text
 from .discovery import DiscoveredFolder, discover_folders
 from .model import MATERIAL_CLASSES, Finding, FolderReport, MaterialClass, SyncPolicyReport
 from .stignore import CompiledPattern, Coverage, compile_pattern, evaluate, load_ruleset
@@ -152,8 +153,19 @@ def audit_folder(folder: DiscoveredFolder) -> tuple[FolderReport, list[Path]]:
     findings: list[Finding] = []
     stignore_path = root / ".stignore"
     try:
-        rules = load_ruleset(stignore_path.read_text(encoding="utf-8"))
+        effective, missing_includes = read_effective_text(root)
+        rules = load_ruleset(effective)
         stignore_present = True
+        for target in missing_includes:
+            findings.append(
+                Finding(
+                    severity="error",
+                    category="stignore_include_missing",
+                    path=target,
+                    detail="an #include in .stignore cannot be read; Syncthing errors the "
+                    "folder and the rules it would have added are not counted",
+                )
+            )
     except OSError:
         rules = []
         stignore_present = False
