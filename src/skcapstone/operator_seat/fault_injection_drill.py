@@ -29,11 +29,18 @@ Each scenario records what actually happened. A scenario "passes" when the
 mechanism behaved as documented (including when the documented behavior is a
 refusal). A scenario that finds a real gap records ``passed=True`` for "the
 drill correctly demonstrated the gap" only when the task explicitly asked the
-drill to surface gaps (duplicate observations / stale evidence / auth expiry /
-mid-run freeze race / scheduler overlap); those scenarios carry a ``finding``
-string that must be read, not hidden. Nothing in this module is permitted to
-change ``act_dispatch.py``, ``safety.py``, ``loop.py`` or ``action_ledger.py``
-to make its own assertions pass.
+drill to surface gaps; those scenarios carry a ``finding`` string that must be
+read, not hidden. Nothing in this module is permitted to change
+``act_dispatch.py``, ``safety.py``, ``loop.py`` or ``action_ledger.py`` merely to
+make its own assertions pass.
+
+Gate 5 closed three gaps this drill had documented, and they are now PASS
+criteria rather than findings: scenario 1 (the outcome word is ``verified`` only
+after verification ran), scenario 9 (stale, missing or unparseable evidence is
+refused before anything runs) and scenario 12 (a mid-pass freeze is reported at
+the decision point and never feeds the circuit breaker). Scenario 22 pins the
+``performed, unverified`` word for an action nothing re-observed. If any of
+those regress, the scenario FAILS; it no longer "passes by documenting a gap".
 """
 
 from __future__ import annotations
@@ -62,6 +69,14 @@ _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime(_TS_FMT)
+
+
+def fresh_evidence(observed_at: str | None = None) -> dict:
+    """Structured evidence for a drill proposal (fresh unless a time is given)."""
+    return {
+        "source": "observation:skchat/BridgeAlive/telegram-bridge",
+        "observed_at": observed_at or _now_iso(),
+    }
 
 
 class DrillHarnessError(RuntimeError):
@@ -267,6 +282,9 @@ class DrillContext:
             "change_class": "normal",
             "rationale": "bridge poll heartbeat stale while the daemon is up (silent wedge)",
             "ts": _now_iso(),
+            # Structured, fresh evidence (operator_seat.evidence): without it the
+            # loop refuses to actuate, which is exactly what scenario 9 proves.
+            "evidence": fresh_evidence(),
         }
         if with_rollback:
             proposal["rollback"] = {"action": "restart-daemon", "object": "skchat-daemon"}
@@ -470,14 +488,12 @@ def scenario_baseline_self_heal(ctx: DrillContext) -> ScenarioResult:
     outcome = res["outcomes"][0] if res["outcomes"] else {}
     intent_id = outcome.get("intent_id")
     state = ctx.ledger.current_state(intent_id) if intent_id else None
-    # NOTE: loop.py's outcome STRING says "verified" only when
-    # require_verified_actions=True was also passed; this drill deliberately
-    # doesn't (see module docstring on scope). Attaching lifecycle_ledger alone
-    # already forces performed=True proof AND _verify_postcondition to run
-    # (loop.py:372-379), so the real safety property holds regardless of the
-    # label -- checked here via the LEDGER's own folded state, not the string.
+    # Attaching lifecycle_ledger alone forces performed=True proof AND the
+    # post-action re-observation, so the outcome word must be "verified" and must
+    # agree with the LEDGER's own folded state (gate 5 weak spot 3: it used to
+    # say "applied" here, which a reader could not tell from "not verified").
     passed = (
-        outcome.get("outcome") == "applied"
+        outcome.get("outcome") == "verified"
         and state == action_ledger.ActionState.VERIFIED
         and len(ctx.calls) == calls_before + 1
         and ctx.bridge_alive() is True
@@ -491,13 +507,9 @@ def scenario_baseline_self_heal(ctx: DrillContext) -> ScenarioResult:
             "systemctl_calls": ctx.calls[calls_before:],
             "bridge_alive_after": ctx.bridge_alive(),
         },
-        note="wedge injected, restarted, postcondition re-observed clear, ledger reached VERIFIED "
+        note="wedge injected, restarted, postcondition re-observed clear, outcome word "
+        "'verified' agrees with the ledger's VERIFIED state "
         "(canonical atlas/action-ledger/ + atlas/state/execution-state.json)",
-        finding="loop.py's outcome STRING reports 'applied' rather than 'verified' unless "
-        "require_verified_actions=True is ALSO passed, even though attaching lifecycle_ledger "
-        "alone already makes performed=True proof and post-action verification mandatory "
-        "(loop.py:372-379). An operator reading the tick's human-readable report cannot tell "
-        "from the word 'applied' alone whether post-action verification actually ran.",
     )
 
 
@@ -1358,44 +1370,92 @@ def scenario_duplicate_observations(ctx: DrillContext) -> ScenarioResult:
 
 
 def scenario_stale_evidence(ctx: DrillContext) -> ScenarioResult:
-    """A proposal citing evidence from years ago is accepted with no freshness
-    check anywhere in the ledger or safety layer. This is a documented gap."""
+    """Stale, missing, unparseable, naive or future-dated evidence is refused
+    BEFORE anything is written or run; fresh evidence still actuates.
+
+    Gate 5 weak spot 1: this used to be a documented gap (a fabricated 2019
+    ``evidence_ref`` was accepted verbatim). Each bad case runs through the real
+    loop with a runner that would blow up on any physical call, and must leave no
+    ledger intent and no execution-state entry behind.
+    """
     slug = "s13-stale-evidence"
     ctx.inject_wedge()
-    ancient_ref = "obs:2019-01-01T00:00:00Z:bridge-wedge-fabricated"
-    proposal = ctx.wedge_proposal(evidence_ref=ancient_ref)
-    apply_fn = act_dispatch.build_apply_fn(
-        ctx.paths, _now_iso(), runner=ctx.runner_success_and_heal(), itil=None
-    )
-    ledger = ctx.scenario_ledger(slug)
-    res = _run_pass(
-        ctx,
-        propose=lambda b, r: [proposal],
-        apply_fn=apply_fn,
-        execution_state=ctx.scenario_state(slug),
-        ledger=ledger,
-        decisions_dir=ctx.decisions_dir / slug,
-    )
-    outcome = res["outcomes"][0] if res["outcomes"] else {}
-    intent_id = outcome.get("intent_id")
-    events = ledger.events(intent_id) if intent_id else []
-    observed_event = events[0] if events else None
-    accepted_stale_ref = bool(observed_event and observed_event.evidence_ref == ancient_ref)
-    return ScenarioResult(
-        name="9. stale evidence is not rejected [GAP]",
-        passed=accepted_stale_ref,  # "pass" = the drill correctly demonstrates the gap
-        evidence={
-            "evidence_ref_supplied": ancient_ref,
-            "evidence_ref_on_ledger_OBSERVED_event": (
-                observed_event.evidence_ref if observed_event else None
-            ),
-            "outcome": outcome,
+    bad_cases: dict[str, dict[str, Any]] = {
+        "seven_year_old_fabricated": {
+            "evidence": {"source": "obs:fabricated", "observed_at": "2019-01-01T00:00:00Z"}
         },
-        note="a 7-year-old, fabricated evidence_ref is accepted verbatim onto the ledger",
-        finding="action_ledger.ActionEvent.evidence_ref is a free-text string (max_length=1024) "
-        "with NO timestamp parsing or freshness check anywhere in action_ledger.py, safety.py, "
-        "or loop.py. Any string is accepted as 'evidence' regardless of age, and nothing "
-        "cross-checks it against the observation that actually triggered the proposal.",
+        "free_text_only": {"evidence": None, "evidence_ref": f"obs:{_now_iso()}:free-text"},
+        "unparseable": {"evidence": fresh_evidence("last tuesday")},
+        "naive_no_timezone": {"evidence": fresh_evidence("2026-11-12T12:00:00")},
+        "future_dated": {"evidence": fresh_evidence("2999-01-01T00:00:00Z")},
+    }
+    refused: dict[str, Any] = {}
+    all_refused = True
+    for label, extra in bad_cases.items():
+        case_slug = f"{slug}-{label.replace('_', '-')}"
+        proposal = ctx.wedge_proposal(**extra)
+        if extra.get("evidence") is None:
+            proposal.pop("evidence", None)
+        ledger = ctx.scenario_ledger(case_slug)
+        state = ctx.scenario_state(case_slug)
+        calls_before = len(ctx.calls)
+        res = _run_pass(
+            ctx,
+            propose=lambda b, r, p=proposal: [p],
+            apply_fn=act_dispatch.build_apply_fn(
+                ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=None
+            ),
+            execution_state=state,
+            ledger=ledger,
+            decisions_dir=ctx.decisions_dir / case_slug,
+        )
+        outcome = res["outcomes"][0] if res["outcomes"] else {}
+        this_refused = (
+            str(outcome.get("outcome", "")).startswith("refused: ")
+            and outcome.get("intent_id") is None
+            and ledger.list_intents() == []
+            and len(ctx.calls) == calls_before
+            and not (state.path.exists() and json.loads(state.path.read_text())["actions"])
+        )
+        all_refused = all_refused and this_refused
+        refused[label] = {"outcome": outcome.get("outcome"), "refused_cleanly": this_refused}
+
+    control_slug = f"{slug}-fresh-control"
+    control_stamp = fresh_evidence()
+    control = ctx.wedge_proposal(evidence=control_stamp)
+    control_ledger = ctx.scenario_ledger(control_slug)
+    control_res = _run_pass(
+        ctx,
+        propose=lambda b, r: [control],
+        apply_fn=act_dispatch.build_apply_fn(
+            ctx.paths, _now_iso(), runner=ctx.runner_success_and_heal(), itil=None
+        ),
+        execution_state=ctx.scenario_state(control_slug),
+        ledger=control_ledger,
+        decisions_dir=ctx.decisions_dir / control_slug,
+    )
+    control_outcome = control_res["outcomes"][0] if control_res["outcomes"] else {}
+    control_intent = control_outcome.get("intent_id")
+    control_events = control_ledger.events(control_intent) if control_intent else []
+    ledger_ref = control_events[0].evidence_ref if control_events else None
+    control_ok = (
+        control_outcome.get("outcome") == "verified"
+        and ledger_ref is not None
+        and ledger_ref.endswith("@" + control_stamp["observed_at"])
+    )
+    ctx.heal_wedge()
+    return ScenarioResult(
+        name="9. stale, missing or unparseable evidence is refused",
+        passed=all_refused and control_ok,
+        evidence={
+            "refused_cases": refused,
+            "fresh_control_outcome": control_outcome,
+            "fresh_control_ledger_evidence_ref": ledger_ref,
+        },
+        note="five bad evidence shapes (7-year-old, free text only, unparseable, naive, "
+        "future) each refused before any ledger intent, ITIL change, execution-state entry "
+        "or physical call; the fresh control still actuates and the ledger records its "
+        "timestamp (gate 5 weak spot 1, was a documented gap)",
     )
 
 
@@ -1511,7 +1571,7 @@ def scenario_ledger_terminal_dead_end(ctx: DrillContext) -> ScenarioResult:
 
     no_dead_end = "invalid action transition" not in second_outcome.get("outcome", "")
     distinct_intent = second_intent_id is not None and second_intent_id != intent_id
-    second_actuated = second_outcome.get("outcome") == "applied"
+    second_actuated = second_outcome.get("outcome") == "verified"
     both_verified = first_state is action_ledger.ActionState.VERIFIED and (
         second_state is action_ledger.ActionState.VERIFIED
     )
@@ -1685,9 +1745,13 @@ def scenario_retry_budget_reachable_with_ledger(ctx: DrillContext) -> ScenarioRe
 
 def scenario_mid_run_freeze_race(ctx: DrillContext) -> ScenarioResult:
     """Freeze lands AFTER the loop's top-of-pass check but BEFORE actuation.
-    Physical actuation is still refused (per-verb fresh checks), but the pass's
-    own `frozen` flag and the recorded failure reason don't distinguish this
-    from a genuine actuator fault."""
+
+    Gate 5 weak spot 2: the refusal was always correct, but the pass result
+    still said frozen=False and the refusal burned retry budget like a real
+    fault. Now the loop re-reads the freeze at each decision point, so the pass
+    reports the freeze, refuses without calling the actuator, and leaves the
+    circuit breaker alone.
+    """
     slug = "s16-freeze-race"
     ctx.inject_wedge()
     proposal = ctx.wedge_proposal()
@@ -1721,42 +1785,76 @@ def scenario_mid_run_freeze_race(ctx: DrillContext) -> ScenarioResult:
         _unfreeze(ctx.paths)  # drill root only; never touches production
 
     outcome = res["outcomes"][0] if res["outcomes"] else {}
-    reported_frozen = res.get("frozen")
-    actuation_refused_by_freeze = "fleet is frozen" in outcome.get("outcome", "")
-    no_physical_call = True  # runner_boom would have raised DrillHarnessError, propagated up
-    state_after = json.loads(state.path.read_text())["actions"].get(fingerprint, {})
+    state_after = (
+        json.loads(state.path.read_text())["actions"].get(fingerprint, {})
+        if state.path.exists()
+        else {}
+    )
     consumed_retry_budget = int(state_after.get("consecutive_failures", 0)) > int(
         state_before.get("consecutive_failures", 0)
     )
-    # Safety property holds (no physical actuation); the observability property
-    # does not (misleadingly counts as a generic actuation failure).
-    passed = actuation_refused_by_freeze and no_physical_call
+    reports_freeze = (
+        res.get("frozen") is True
+        and res.get("frozen_mid_pass") is True
+        and res.get("freeze_state") == "frozen"
+        and outcome.get("freeze_state") == "frozen"
+    )
+    # runner_boom would have raised (and the loop recorded "failed: ...") had the
+    # actuator been reached, so a "refused: ..." outcome proves it never was.
+    refused_at_decision = str(outcome.get("outcome", "")).startswith("refused: ") and (
+        "frozen" in str(outcome.get("outcome", ""))
+    )
     return ScenarioResult(
         name="12. mid-run freeze race",
-        passed=passed,
+        passed=reports_freeze and refused_at_decision and not consumed_retry_budget,
         evidence={
-            "pass_reported_frozen": reported_frozen,
+            "pass_reported_frozen": res.get("frozen"),
+            "pass_reported_frozen_mid_pass": res.get("frozen_mid_pass"),
+            "pass_freeze_state": res.get("freeze_state"),
+            "outcome_freeze_state": outcome.get("freeze_state"),
             "actuation_outcome": outcome,
+            "retry_budget_consumed": consumed_retry_budget,
             "execution_state_before": state_before,
             "execution_state_after": state_after,
         },
-        note="freeze is set inside propose(), i.e. AFTER the loop's own pre-observe freeze "
-        "check already passed. actuator.honor()'s fresh, independent frozen check still "
-        "refuses the physical restart",
-        finding=(
-            "the pass-level result still reports frozen=False (freeze only gates the very "
-            "start of _run_once, it is never re-checked at the pass level), and the refusal "
-            "is recorded as a generic actuation failure ('fleet is frozen: the operator does "
-            "not actuate') that consumes one unit of the SAME retry budget a real fault "
-            "would. A human-triggered freeze landing mid-pass on a persistently-firing "
-            "condition can therefore contribute toward opening that condition's circuit "
-            "breaker, indistinguishably from real failures, unless a reader inspects the "
-            "reason string."
-            if consumed_retry_budget
-            else "the pass-level result still reports frozen=False even though a freeze "
-            "landed and was honored mid-pass; only the per-verb refusal (not the pass "
-            "result) reflects it."
-        ),
+        note="freeze is set inside propose(), i.e. AFTER the loop's own top-of-pass check "
+        "already passed. The loop re-reads the freeze at the decision point, refuses before "
+        "the actuator is called, reports frozen/frozen_mid_pass/freeze_state on the pass and "
+        "the outcome, and does not count the refusal against the retry budget (gate 5 weak "
+        "spot 2, was a documented gap)",
+    )
+
+
+def scenario_unverified_outcome_is_not_applied(ctx: DrillContext) -> ScenarioResult:
+    """An action nothing re-observed reads "performed, unverified", never "applied".
+
+    Gate 5 weak spot 3, the other half: with NO lifecycle ledger and no
+    ``require_verified_actions`` the loop does not run the post-action
+    verification at all, so the outcome must not claim more than "performed".
+    """
+    slug = "s22-unverified-outcome"
+    ctx.inject_wedge()
+    proposal = ctx.wedge_proposal()
+    apply_fn = act_dispatch.build_apply_fn(
+        ctx.paths, _now_iso(), runner=ctx.runner_success_and_heal(), itil=None
+    )
+    res = _run_pass(
+        ctx,
+        propose=lambda b, r: [proposal],
+        apply_fn=apply_fn,
+        execution_state=ctx.scenario_state(slug),
+        ledger=None,
+        decisions_dir=ctx.decisions_dir / slug,
+    )
+    outcome = res["outcomes"][0] if res["outcomes"] else {}
+    ctx.heal_wedge()
+    word = str(outcome.get("outcome", ""))
+    return ScenarioResult(
+        name="22. unverified outcome is never reported as applied",
+        passed=word == "performed, unverified",
+        evidence={"outcome": outcome},
+        note="no ledger and no require_verified_actions: the post-action re-observation never "
+        "ran, so the outcome word is 'performed, unverified' (gate 5 weak spot 3)",
     )
 
 
@@ -1870,6 +1968,7 @@ SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_dispatcher_unapproved_never_actuates,
     scenario_dispatcher_unlinked_decision_never_actuates,
     scenario_dispatcher_stale_catalog_generation_escalates,
+    scenario_unverified_outcome_is_not_applied,
 ]
 
 
