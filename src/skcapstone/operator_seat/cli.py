@@ -33,6 +33,7 @@ from . import (
     decisions,
     discovery,
     dispatch,
+    evidence,
     fleet_adapter,
     kedb_seeds,
     loop,
@@ -120,6 +121,15 @@ def operator() -> None:
     default=False,
     help="Skip the startup bootstrap (register app adapters + seed the KEDB) this tick.",
 )
+@click.option(
+    "--max-evidence-age",
+    "max_evidence_age",
+    type=click.FloatRange(min=0, min_open=True),
+    default=evidence.DEFAULT_MAX_AGE_SECONDS,
+    show_default=True,
+    help="Oldest evidence (seconds) an action may rest on. Stale or missing evidence "
+    "is refused, never acted on.",
+)
 def run_cmd(
     execute: bool,
     honor_flag: bool,
@@ -127,6 +137,7 @@ def run_cmd(
     publish_dir: str | None,
     no_publish: bool,
     no_bootstrap: bool,
+    max_evidence_age: float,
 ) -> None:
     """One operator pass: observe, reason, report. Report-only by default."""
     paths = default_paths()
@@ -232,6 +243,7 @@ def run_cmd(
         require_signed_catalog=honor,
         lifecycle_ledger=ledger,
         itil=itil_manager,
+        max_evidence_age_s=max_evidence_age,
     )
     if honor:
         click.echo("honor: ON (CR-9.1 step-1 physical actuation: fleet + skchat)")

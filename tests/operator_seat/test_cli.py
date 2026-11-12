@@ -324,3 +324,40 @@ def test_seat_writer_identity_degrades_to_unattributed_never_raises(tmp_path, mo
 
     monkeypatch.setattr("capauth.resolve_agent_identity", _boom)
     assert cli._seat_writer().identity == "unattributed"
+
+
+def test_run_passes_max_evidence_age_through_to_the_loop(tmp_path, monkeypatch):
+    _enroll(tmp_path, monkeypatch)
+    seen = {}
+
+    def _capture(*_a, **kwargs):
+        seen.update(kwargs)
+        return {
+            "frozen": False,
+            "brief": {"firing": [], "stale": [], "quiet": True, "counts": {}},
+            "route": "quiet",
+            "proposals": [],
+            "outcomes": [],
+            "report": "all quiet",
+        }
+
+    monkeypatch.setattr(cli.loop, "run_once", _capture)
+    out = CliRunner().invoke(
+        cli.operator, ["run", "--no-publish", "--no-bootstrap", "--max-evidence-age", "90"]
+    )
+    assert out.exit_code == 0, out.output
+    assert seen["max_evidence_age_s"] == 90.0
+
+
+def test_run_defaults_max_evidence_age_to_the_module_default(tmp_path, monkeypatch):
+    _enroll(tmp_path, monkeypatch)
+    seen = {}
+    monkeypatch.setattr(
+        cli.loop,
+        "run_once",
+        lambda *_a, **k: seen.update(k)
+        or {"brief": {"counts": {}}, "outcomes": [], "report": "", "frozen": False},
+    )
+    out = CliRunner().invoke(cli.operator, ["run", "--no-publish", "--no-bootstrap"])
+    assert out.exit_code == 0, out.output
+    assert seen["max_evidence_age_s"] == cli.evidence.DEFAULT_MAX_AGE_SECONDS

@@ -76,3 +76,23 @@ def test_firing_entry_carries_object_identity():
     obs = {"fleet": [{"type": "MissedRun", "status": "True", "object": "nightly"}]}
     b = briefmod.build_brief(obs, {"MissedRun"})
     assert b["firing"][0]["object"] == "nightly"
+
+
+def test_firing_entry_carries_the_observation_time_for_evidence_stamping():
+    obs = {
+        "skchat": [
+            {
+                "type": "BridgeAlive",
+                "status": "False",
+                "object": "bridge",
+                "observed_at": "2026-08-20T00:00:00Z",
+            }
+        ]
+    }
+    out = build_brief(obs, set())
+    assert out["firing"][0]["observed_at"] == "2026-08-20T00:00:00Z"
+
+
+def test_entry_without_an_observation_time_gets_none_invented():
+    out = build_brief({"fleet": [{"type": "Ready", "status": "False"}]}, set())
+    assert "observed_at" not in out["firing"][0]
