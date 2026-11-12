@@ -52,7 +52,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -60,7 +60,16 @@ from ..fleet import drill as fleet_drill
 from ..fleet import store
 from ..fleet.paths import FleetPaths
 from ..itil import ITILManager
-from . import act_dispatch, action_ledger, decisions, dispatch, loop, safety, skchat_adapter
+from . import (
+    act_dispatch,
+    action_ledger,
+    decisions,
+    dispatch,
+    loop,
+    proposer,
+    safety,
+    skchat_adapter,
+)
 
 SCHEMA_NOTE = "ATLAS P3.2 fault-injection drill (card b993eaaa, epic fb3cc09d)"
 
@@ -1944,6 +1953,211 @@ def _redact_event(event: action_ledger.ActionEvent) -> dict:
     return payload
 
 
+def scenario_evidence_age_uses_source_time_on_the_real_clock(ctx: DrillContext) -> ScenarioResult:
+    """Review round 2, finding 1: freshness is the SOURCE data's age on the REAL clock.
+
+    Round 1 stamped evidence from the pass clock and compared it with that same pass
+    clock, so its age was always zero. This scenario drives the whole chain (real
+    adapter, envelope, brief, proposer, loop) three ways: a real probe with a LYING
+    pass clock still acts (the probe really is fresh); the same adapter with its
+    source time stripped and the same lying pass clock is refused (no evidence); and
+    a decision taken long after the observation is refused as stale.
+    """
+    slug = "s23-source-time"
+    explain = act_dispatch.merged_explain()
+    reply = json.dumps(
+        [
+            {
+                "app": "skchat",
+                "condition": "BridgeAlive",
+                "action": "restart-telegram-bridge",
+                "object": "telegram-bridge",
+                "change_class": "normal",
+                "rationale": "bridge poll heartbeat stale while the daemon is up",
+            }
+        ]
+    )
+
+    def unstamped(paths=None, now_iso=None):
+        payload = skchat_adapter.skchat_observe()
+        payload.pop("source_observed_at", None)
+        return payload
+
+    def chain(observe, runner, *, now_iso, case, clock=None):
+        case_slug = f"{slug}-{case}"
+        saved = loop.ADAPTERS
+        loop.ADAPTERS = {"skchat": observe}
+        try:
+            return loop.run_once(
+                ctx.paths,
+                now_iso=now_iso,
+                propose=lambda b, r: proposer.propose(b, explain, chat=lambda _p: reply),
+                explain=explain,
+                decisions_dir=str(ctx.decisions_dir / case_slug),
+                apply_fn=act_dispatch.build_apply_fn(
+                    ctx.paths, _now_iso(), runner=runner, itil=None
+                ),
+                execute=True,
+                emit=lambda _m: None,
+                execution_state=ctx.scenario_state(case_slug),
+                lifecycle_ledger=ctx.scenario_ledger(case_slug),
+                ledger_actor="atlas-p32-drill",
+                clock=clock,
+            )
+        finally:
+            loop.ADAPTERS = saved
+
+    liar = "2019-01-01T00:00:00Z"
+    ctx.inject_wedge()
+    real = chain(skchat_adapter.observe, ctx.runner_success_and_heal(), now_iso=liar, case="real")
+    real_out = real["outcomes"][0] if real["outcomes"] else {}
+    real_ok = real_out.get("outcome") == "verified"
+
+    ctx.inject_wedge()
+    calls_before = len(ctx.calls)
+    blind = chain(unstamped, ctx.runner_boom(), now_iso=liar, case="unstamped")
+    blind_out = blind["outcomes"][0] if blind["outcomes"] else {}
+    blind_ok = str(blind_out.get("outcome", "")).startswith("refused: evidence missing") and (
+        len(ctx.calls) == calls_before
+    )
+
+    late = datetime.now(timezone.utc) + timedelta(seconds=safety_age_probe_seconds())
+    slow = chain(
+        skchat_adapter.observe,
+        ctx.runner_boom(),
+        now_iso=_now_iso(),
+        case="slow",
+        clock=lambda: late,
+    )
+    slow_out = slow["outcomes"][0] if slow["outcomes"] else {}
+    slow_ok = "evidence stale" in str(slow_out.get("outcome", ""))
+    ctx.heal_wedge()
+    return ScenarioResult(
+        name="23. evidence age is the source's age on the real clock",
+        passed=real_ok and blind_ok and slow_ok,
+        evidence={
+            "real_probe_with_a_lying_pass_clock": real_out.get("outcome"),
+            "source_time_stripped_with_a_lying_pass_clock": blind_out.get("outcome"),
+            "decision_taken_an_hour_after_the_probe": slow_out.get("outcome"),
+        },
+        note="the pass clock can no longer launder evidence: a real probe is fresh whatever "
+        "the pass clock says, an observation with no source time is refused, and age is "
+        "measured at the decision point on the real clock (review round 2, finding 1)",
+    )
+
+
+def safety_age_probe_seconds() -> float:
+    """A decision this long after the probe is well past any allowed evidence age."""
+    from . import evidence
+
+    return evidence.MAX_ALLOWED_AGE_SECONDS + 600.0
+
+
+def scenario_leftover_intent_is_not_actuated_later(ctx: DrillContext) -> ScenarioResult:
+    """Review round 2, finding 2: a PROPOSED intent cannot be actuated later, unattended.
+
+    Two intents are left PROPOSED the way the loop used to leave them: an
+    auto-approved STANDARD change whose stored evidence is a day old, and one whose
+    evidence is fresh but whose condition has since cleared. ``run_dispatch_pass``
+    (what ``skoperator honor-pending`` runs) must refuse both without calling the
+    actuator, and void them so they cannot return. A human-approved intent for a
+    condition that is still firing still actuates, because the dispatcher re-observes
+    rather than distrusting the human.
+    """
+    slug = "s24-leftover-intent"
+    itil = ITILManager(ctx.itil_home)
+    ledger = ctx.scenario_ledger(slug)
+    state = ctx.scenario_state(slug)
+    created = datetime.now(timezone.utc)
+
+    def standard_change():
+        return itil.propose_change(
+            title="restart telegram bridge",
+            change_type="standard",
+            risk="low",
+            rollback_plan="restart again",
+            created_by="atlas-p32-drill",
+            tags=["operator"],
+        )
+
+    def leftover(change_id, target, evidence_stamp):
+        intent = action_ledger.ActionIntent(
+            condition_fingerprint=f"fp-{slug}-{target}",
+            application="skchat",
+            target_kind="CI",
+            target_id=target,
+            action="restart-telegram-bridge",
+            catalog_generation="drill",
+            created_at=created,
+            itil_change_id=change_id,
+            condition_type="BridgeAlive",
+        )
+        ledger.create(intent, actor="atlas-p32-drill")
+        for nxt, detail in (
+            (action_ledger.ActionState.DIAGNOSED, {}),
+            (action_ledger.ActionState.PROPOSED, {"evidence": evidence_stamp}),
+        ):
+            ledger.append(
+                intent.intent_id, nxt, occurred_at=created, actor="atlas-p32-drill", detail=detail
+            )
+        return intent.intent_id
+
+    day_old = fresh_evidence((created - timedelta(days=1)).strftime(_TS_FMT))
+    ctx.inject_wedge()
+    stale_id = leftover(standard_change().id, "telegram-bridge", day_old)
+    calls_before = len(ctx.calls)
+
+    def sweep():
+        return dispatch.run_dispatch_pass(
+            ctx.paths,
+            ledger,
+            itil,
+            adapters={"skchat": skchat_adapter.observe},
+            problem_types=loop.PROBLEM_WHEN_TRUE,
+            apply_fn=act_dispatch.build_apply_fn(
+                ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
+            ),
+            execution_state=state,
+            now_iso=_now_iso(),
+            actor="atlas-p32-drill",
+            emit=lambda _m: None,
+        )
+
+    first = sweep()
+    stale_refused = (
+        bool(first)
+        and first[0].outcome.startswith("refused: evidence stale")
+        and ledger.current_state(stale_id) is action_ledger.ActionState.ESCALATED
+    )
+
+    ctx.heal_wedge()  # the condition cleared while the intent waited
+    cleared_id = leftover(standard_change().id, "telegram-bridge-2", fresh_evidence())
+    second = sweep()
+    cleared_refused = (
+        bool(second)
+        and "no longer firing" in second[0].outcome
+        and ledger.current_state(cleared_id) is action_ledger.ActionState.ESCALATED
+    )
+    third = sweep()  # nothing is left to dispatch, so nothing can act on a later pass
+    nothing_left = third == []
+    return ScenarioResult(
+        name="24. a leftover PROPOSED intent is not actuated later",
+        passed=stale_refused
+        and cleared_refused
+        and nothing_left
+        and len(ctx.calls) == calls_before,
+        evidence={
+            "day_old_standard_intent": first[0].outcome if first else None,
+            "cleared_condition_standard_intent": second[0].outcome if second else None,
+            "third_sweep_outcomes": [o.outcome for o in third],
+            "physical_calls": len(ctx.calls) - calls_before,
+        },
+        note="the dispatcher demands fresh stored evidence for an auto-approved change and "
+        "re-observes the condition before acting; what it refuses is voided so it cannot "
+        "return on a later pass (review round 2, finding 2)",
+    )
+
+
 SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_baseline_self_heal,
     scenario_performed_false_actdispatch_gate,
@@ -1969,6 +2183,8 @@ SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_dispatcher_unlinked_decision_never_actuates,
     scenario_dispatcher_stale_catalog_generation_escalates,
     scenario_unverified_outcome_is_not_applied,
+    scenario_evidence_age_uses_source_time_on_the_real_clock,
+    scenario_leftover_intent_is_not_actuated_later,
 ]
 
 
