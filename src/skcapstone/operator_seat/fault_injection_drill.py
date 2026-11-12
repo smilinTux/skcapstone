@@ -2061,7 +2061,7 @@ def safety_age_probe_seconds() -> float:
     return evidence.MAX_ALLOWED_AGE_SECONDS + 600.0
 
 
-def scenario_leftover_intent_is_not_actuated_later(ctx: DrillContext) -> ScenarioResult:
+def _leftover_intent_scenario(ctx: DrillContext) -> ScenarioResult:
     """Review round 2, finding 2: a PROPOSED intent cannot be actuated later, unattended.
 
     Two intents are left PROPOSED the way the loop used to leave them: an
@@ -2167,6 +2167,18 @@ def scenario_leftover_intent_is_not_actuated_later(ctx: DrillContext) -> Scenari
         "re-observes the condition before acting; what it refuses is voided so it cannot "
         "return on a later pass (review round 2, finding 2)",
     )
+
+
+def scenario_leftover_intent_is_not_actuated_later(ctx: DrillContext) -> ScenarioResult:
+    """Run the leftover-intent scenario with the bridge restart ratified as a standard
+    action, so the intents are the auto-approved kind this scenario is about (without
+    it the dispatcher would stop at "classification hardened" before the checks)."""
+    saved_catalog = policy.RATIFIED_STANDARD_CATALOG
+    policy.RATIFIED_STANDARD_CATALOG = saved_catalog | {"restart-telegram-bridge"}
+    try:
+        return _leftover_intent_scenario(ctx)
+    finally:
+        policy.RATIFIED_STANDARD_CATALOG = saved_catalog
 
 
 def scenario_escalated_proposal_needs_a_human_and_keeps_its_decision(
