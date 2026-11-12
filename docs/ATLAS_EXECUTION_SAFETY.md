@@ -42,34 +42,61 @@ the formatter.
 
 ## Evidence freshness, freeze at the decision point, outcome words
 
-Three weak spots the gate 5 fault-injection drill documented are now enforced and
-are PASS criteria of the drill (`scripts/atlas_p32_fault_injection_drill.py`).
+Weak spots the gate 5 fault-injection drill documented, and what the independent
+review of the first fix then found, are enforced and are PASS criteria of the drill
+(`scripts/atlas_p32_fault_injection_drill.py`, scenarios 1, 9, 12, 22, 23, 24).
 
-**Evidence is structured and must be fresh.** A proposal that wants to actuate
-carries `evidence: {source, observed_at}`, where `observed_at` is an ISO 8601
-timestamp with a timezone (`operator_seat/evidence.py`). The proposer stamps it
-from the observation that put the condition in the brief, never from the model's
-reply. Missing, malformed, naive (no timezone), future-dated (beyond 60 seconds
-of skew) or older than `--max-evidence-age` (default 600 seconds) is refused with
-`refused: evidence ...`. A non-positive or non-numeric maximum age also refuses;
-there is no switch that turns the check off. The legacy free-text `evidence_ref`
-is still recorded on the ledger for audit, but is never freshness evidence. The
-human-approval lane (`skoperator honor-pending`) is not subject to this age
-limit, because an approval legitimately arrives long after the observation; it
-re-observes the condition after the action instead.
+**Evidence is structured, comes from the source, and is aged on the real clock.** A
+proposal that wants to actuate carries `evidence: {source, observed_at}`
+(`operator_seat/evidence.py`), where `observed_at` is the time the SOURCE data was
+true, as an ISO 8601 timestamp with a timezone. It is never the pass clock: adapters
+report `source_observed_at` (a live probe reports the real clock when it probed, the
+cmdb adapter the reconcile artifact's end time, the skos backlog the digest's own
+window end, the fleet adapter the instant its derived conditions were evaluated),
+the envelope keeps it only if it is valid and never invents one, and the brief and
+the proposer carry it through. An observation with no source time carries no
+evidence and cannot actuate. The proposer stamps evidence from the observation,
+never from the model's reply.
 
-**The freeze is reported where the decision is made.** The freeze is re-read for
-every proposal, not only at the top of the pass. A pass result carries `frozen`
-(true when the fleet was frozen at any decision point or at the end),
-`frozen_mid_pass` (the freeze landed after the pass began), `freeze_state` (the
-worst state seen) and, on each outcome, the `freeze_state` at that decision. A
-freeze refusal is not a fault of the action, so it never counts against the retry
-budget or opens the circuit.
+Age is measured against the REAL wall clock read at each decision point, not against
+the pass's own timestamp, so a wrong pass clock or a slow model call cannot make old
+evidence look fresh. Missing, malformed, naive (no timezone), future-dated (beyond 60
+seconds of skew) or older than `skoperator run --max-evidence-age` (default 600
+seconds, at most 3600) is refused with `refused: evidence ...`. A maximum age that is
+non-numeric, non-positive, non-finite or above the ceiling also refuses, so the check
+cannot be switched off by passing a huge number; the ceiling is an hour because a pass
+has a five minute runtime budget. The legacy free-text `evidence_ref` is still
+recorded on the ledger after the structured stamp, but is never freshness evidence.
 
-**"verified" means verified.** An auto action that ran reads `verified` only when
-the post-action re-observation ran and passed (a lifecycle ledger or
+**Refuse before writing, settle what was written, and make the dispatcher check
+again.** Any closed actuation gate (frozen or unprovisioned) refuses an auto action
+before an ITIL change or a ledger intent is written. If an intent was written and is
+not actuated in the same pass (a gate closed after the write, the deadline fired, the
+dispatcher refused, a cooldown suppressed it) it is voided: the ledger gains a
+`PROPOSED -> ESCALATED` edge for this, with `voided` on the event, because the
+dispatcher enumerates PROPOSED intents and a leftover one used to be acted on later,
+unattended. The dispatcher itself, for any intent however it was left, re-observes the
+owning app and requires the bound condition to be firing now; an auto-approved
+`standard` change must additionally carry fresh evidence stored on the intent's
+PROPOSED event, and is voided if that fails (stored evidence only ages). A
+human-approved change skips the age limit, because approval legitimately arrives long
+after the observation, but never the re-observation.
+
+**The freeze is reported where, and as, it happened.** The gate is re-read for every
+proposal and again after every attempt. A pass result carries `frozen`,
+`frozen_mid_pass`, `freeze_state` (the worst state seen), `freeze_summary` (actions
+taken before the freeze, actions it refused, conditions still firing) and, on each
+outcome, `freeze_state` at its decision point and `freeze_after`. The report and the
+published brief say what ran before a mid-pass freeze, not that Atlas "stood down";
+a pass that STARTS frozen still says so. The brief carries a stable
+`state: frozen=... mid_pass=... firing=... stale=... acted_before_freeze=...` line for
+downstream readers. A freeze REFUSAL is not a fault of the action and never counts
+against the retry budget; a real failure that merely coincides with a freeze still does.
+
+**"verified" means verified.** An auto action that ran reads `verified` only when the
+post-action re-observation ran and passed (a lifecycle ledger or
 `require_verified_actions` makes it mandatory). When nothing re-observed the
-condition the outcome is `performed, unverified`. The word `applied` is no
-longer produced. Nothing in the ledger, the ITIL correlation, the dispatcher or
-`skcapstone doctor` branches on the outcome string; the brief artifact and the
-tick report print it verbatim.
+condition the outcome is `performed, unverified`. The word `applied` is no longer
+produced. Nothing in the ledger, the ITIL correlation, the dispatcher or
+`skcapstone doctor` branches on the outcome string; the brief artifact and the tick
+report print it verbatim.
