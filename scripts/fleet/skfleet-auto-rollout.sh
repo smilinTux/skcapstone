@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+# skfleet-auto-rollout: deploy merged main to the fleet without a human or a
+# chat session holding a loop open.
+#
+# Why this exists (2026-10-08): rollout ran from a polling loop inside an
+# operator chat session. When that loop ended or the session paused, merged
+# fixes sat undeployed for hours (#970 waited about nine hours while the fleet
+# dispatched nothing), and two overlapping loops once raced each other.
+#
+# One run: take a lock, fetch origin, and if the deploy checkout is behind
+# origin/main, fast-forward it and roll each host in order with
+# `skcapstone fleet rollout --apply`. A host whose gate does not pass is
+# retried after a readiness refresh; if it still fails the run stops there
+# (later hosts keep the previous main) and exits nonzero so the unit's
+# OnFailure alert fires. Up-to-date runs are a quiet no-op.
+#
+# Hand-installed on exactly ONE authority host (see
+# the auto-rollout unit files in scripts/fleet/systemd/). Do not enable it on
+# more than one host: two deployers race.
+set -uo pipefail
+
+REPO="${SKFLEET_AUTO_ROLLOUT_REPO:-$HOME/deploy/skcapstone}"
+HOSTS="${SKFLEET_AUTO_ROLLOUT_HOSTS:-chiap08 chiap03 chiap01 chiap02 chiap04 chiap10 ziowk01}"
+SKCAPSTONE="${SKCAPSTONE_BIN:-skcapstone}"
+SSH="${SSH_BIN:-ssh}"
+SKMAIL="${SKMAIL_BIN:-skmail}"
+NOTIFY="${SKFLEET_AUTO_ROLLOUT_NOTIFY:-jarvis lumina-nor}"
+LOCK="${SKFLEET_AUTO_ROLLOUT_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/skfleet-auto-rollout.lock}"
+ATTEMPTS="${SKFLEET_AUTO_ROLLOUT_ATTEMPTS:-3}"
+READY_WAIT="${SKFLEET_AUTO_ROLLOUT_READY_WAIT:-150}"
+SYSTEMCTL="${SYSTEMCTL_BIN:-systemctl}"
+# Units on this host that a deploy must not land in the middle of. Empty by
+# default: the paused dispatcher seats were retired, and the Link and Mero
+# cycles are short bounded oneshots a deploy may safely follow.
+QUIET_UNITS="${SKFLEET_AUTO_ROLLOUT_QUIET_UNITS:-}"
+QUIET_WAIT="${SKFLEET_AUTO_ROLLOUT_QUIET_WAIT:-600}"
+# Last main rolled to every host; absent until the first full rollout.
+ROLLED_STATE="${SKFLEET_AUTO_ROLLOUT_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/skfleet-auto-rollout/rolled-main}"
+# Consecutive HALTed runs, kept next to ROLLED_STATE. A halted main is retried
+# every tick, and each failure only reached the journal (sk-alert is not
+# installed on chi) plus a skmail per tick that reads as noise: the chiap01
+# readiness halt sat from 2026-10-25 to 10-27 while chiap02/04 kept an old
+# main. After HALT_ESCALATE halts in a row, capture ONE GTD item per stuck
+# episode (deduped by source-ref) and send an ESCALATE skmail.
+HALT_STREAK="$(dirname "$ROLLED_STATE")/halt-streak"
+HALT_ESCALATE="${SKFLEET_AUTO_ROLLOUT_HALT_ESCALATE:-5}"
+# Reachability pre-filter: an unreachable host is skipped (and alerted once per
+# host per ALERT_EVERY seconds) instead of failing the whole ring. Per-host
+# rolled shas let a skipped host catch up on a later tick without re-rolling
+# the hosts that already passed.
+PROBE_TIMEOUT="${SKFLEET_AUTO_ROLLOUT_PROBE_TIMEOUT:-5}"
+ALERT_EVERY="${SKFLEET_AUTO_ROLLOUT_ALERT_EVERY:-3600}"
+SK_ALERT="${SK_ALERT_BIN:-sk-alert}"
+HOST_STATE="$(dirname "$ROLLED_STATE")/host-rolled"
+ALERT_STATE="$(dirname "$ROLLED_STATE")/unreachable-alert"
+# Never restart services on a host while an agent is in a live call.
+CALL_UNITS="${SKFLEET_AUTO_ROLLOUT_CALL_UNITS:-skcall-join@*}"
+
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
+
+notify() {
+  local subject="$1" body="$2" to
+  command -v "$SKMAIL" >/dev/null 2>&1 || return 0
+  for to in $NOTIFY; do
+    "$SKMAIL" send skfleet-auto-rollout "$to" normal "$subject" "$body" >/dev/null 2>&1 || true
+  done
+}
+
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  log "another auto-rollout holds $LOCK; skipping"
+  exit 0
+fi
+
+if ! git -C "$REPO" fetch -q origin main; then
+  log "fetch failed; will retry next tick"
+  exit 0
+fi
+# A deploy that lands while the local dispatch cycle runs crashes that cycle
+# (exit 70/1), and the drift gate then halts on the failed unit: seen
+# 2026-10-09 at 02:32Z and 04:37Z. Wait for the cycle to finish; if it is
+# still busy after QUIET_WAIT, skip this tick and let the next one try.
+busy_units() {
+  local u busy=""
+  for u in $QUIET_UNITS; do
+    case "$("$SYSTEMCTL" --user is-active "$u" 2>/dev/null)" in
+      active|activating|reloading) busy="$busy $u" ;;
+    esac
+  done
+  printf '%s' "${busy# }"
+}
+head=$(git -C "$REPO" rev-parse HEAD)
+target=$(git -C "$REPO" rev-parse origin/main)
+# Decide on the last commit rolled to EVERY host, not the checkout HEAD. The
+# chiap08 step deploys into this same checkout, so a run superseded after
+# chiap08 left HEAD == origin/main and every later tick exited here while
+# chiap01-04 stayed on the old main (2026-10-09 19:02Z: 6dcd5c04 on the
+# builders, 657a839d on chiap08, nothing rolled until a manual run).
+rolled_sha=$(cat "$ROLLED_STATE" 2>/dev/null || true)
+if [ "$rolled_sha" = "$target" ]; then
+  exit 0
+fi
+if [ -z "$rolled_sha" ] && [ "$head" = "$target" ] && [ ! -d "$HOST_STATE" ]; then
+  # First run with state tracking: trust the checkout once, then record it.
+  mkdir -p "$(dirname "$ROLLED_STATE")" && printf '%s\n' "$target" > "$ROLLED_STATE"
+  exit 0
+fi
+if ! git -C "$REPO" merge-base --is-ancestor "$head" "$target"; then
+  log "deploy checkout $head is not an ancestor of origin/main $target; refusing (fix the checkout by hand)"
+  notify "auto-rollout refused: diverged checkout" "deploy checkout $head is not an ancestor of origin/main $target on $(hostname)"
+  exit 1
+fi
+# Do NOT stop a scheduler timer to hold a cycle off during the run: the chiap08
+# drift gate requires required timers active and halts on enablement_mismatch
+# (2026-10-09 07:00Z, dbfcc588). The idle gap below is
+# enough because chiap08, the only host whose deploy touches the local cycle,
+# is rolled first and deploys in under 10s, inside the 15s re-arm gap.
+waited=0
+while [ -n "$(busy_units)" ]; do
+  if [ "$waited" -ge "$QUIET_WAIT" ]; then
+    log "dispatch cycle still busy ($(busy_units)) after ${QUIET_WAIT}s; deferring main ${target:0:8} to the next tick"
+    exit 0
+  fi
+  sleep 10; waited=$((waited + 10))
+done
+if [ "$head" != "$target" ]; then
+  git -C "$REPO" merge -q --ff-only "$target" || { log "fast-forward failed"; exit 1; }
+fi
+subject=$(git -C "$REPO" log -1 --format=%s "$target")
+log "rolling main ${target:0:8} ($subject) from ${head:0:8} to: $HOSTS"
+
+record_halt() {
+  local host="$1" count=0 since now
+  now=$(date -u +%FT%TZ)
+  since="$now"
+  if [ -r "$HALT_STREAK" ]; then
+    read -r count since _ < "$HALT_STREAK" || true
+  fi
+  count=$(( ${count:-0} + 1 ))
+  mkdir -p "$(dirname "$HALT_STREAK")" && printf '%s %s %s\n' "$count" "${since:-$now}" "$host" > "$HALT_STREAK"
+  if [ "$count" -ge "$HALT_ESCALATE" ]; then
+    local text="chi auto-rollout HALTED $count runs in a row since ${since:-$now} (latest at $host, main ${target:0:8}); hosts after $host keep an old main. Read: journalctl --user -u skfleet-auto-rollout on $(hostname -s), and $host readiness verdict. See reference_chi_auto_rollout_timer."
+    log "ESCALATE: $text"
+    # source-ref is per episode, so this creates one item and later ticks dedupe.
+    "$SKCAPSTONE" gtd capture "$text" --source manual --context @computer \
+      --source-ref "skfleet-auto-rollout-halt:$(hostname -s):${since:-$now}" >/dev/null 2>&1 \
+      || log "gtd capture of the halt escalation failed"
+    if [ "$count" -eq "$HALT_ESCALATE" ]; then
+      notify "ESCALATE auto-rollout stuck at $host" "$text"
+      command -v sk-alert >/dev/null 2>&1 && sk-alert send "$text" >/dev/null 2>&1
+    fi
+  fi
+}
+
+reachable() {
+  "$SSH" -o BatchMode=yes -o ConnectTimeout="$PROBE_TIMEOUT" "$1" true >/dev/null 2>&1
+}
+
+alert_unreachable() {
+  local host="$1" stamp="$ALERT_STATE/$1" now last=0
+  now=$(date +%s)
+  [ -r "$stamp" ] && read -r last < "$stamp"
+  if [ $(( now - ${last:-0} )) -ge "$ALERT_EVERY" ]; then
+    mkdir -p "$ALERT_STATE" && printf '%s\n' "$now" > "$stamp"
+    command -v "$SK_ALERT" >/dev/null 2>&1 \
+      && "$SK_ALERT" send "auto-rollout: $host unreachable over ssh, skipped main ${target:0:8}; it keeps the old main until it answers" >/dev/null 2>&1
+    return 0
+  fi
+}
+
+call_active() {
+  # Captured, not piped into grep -q: under pipefail an early grep exit can
+  # SIGPIPE ssh and turn a live call into "no call".
+  local out
+  out=$("$SSH" -o BatchMode=yes "$1" "systemctl --user list-units '$CALL_UNITS' --state=active,activating,deactivating --no-legend --plain" 2>/dev/null)
+  [ -n "${out//[[:space:]]/}" ]
+}
+
+# A host can declare work a deploy must not land in the middle of: one lock
+# path or glob per line (absolute, no ~) in ~/.config/skfleet/rollout-busy-locks
+# on that host. A lock held by any process (flock -n fails) means busy: the
+# host is skipped this tick and retried on the next, exactly like an
+# unreachable host, and later hosts still roll. ziowk01 lists its release-gate
+# lane locks, because a gate run uses ~/.skenv and a pip install mid-gate can
+# break it. Prints the first held lock; prints nothing when idle or undeclared.
+held_busy_lock() {
+  "$SSH" -o BatchMode=yes "$1" 'f="$HOME/.config/skfleet/rollout-busy-locks"
+    [ -r "$f" ] || exit 0
+    while read -r g; do
+      case "$g" in ""|"#"*) continue ;; esac
+      for l in $g; do
+        [ -e "$l" ] || continue
+        flock -n "$l" true 2>/dev/null || { printf "%s\n" "$l"; exit 0; }
+      done
+    done < "$f"' 2>/dev/null
+}
+
+rolled=()
+skipped=()
+for host in $HOSTS; do
+  ok=0
+  if [ "$(cat "$HOST_STATE/$host" 2>/dev/null)" = "$target" ]; then
+    rolled+=("$host")
+    continue
+  fi
+  if ! reachable "$host"; then
+    log "$host unreachable (ssh probe, ${PROBE_TIMEOUT}s); skipping, ring continues"
+    alert_unreachable "$host"
+    skipped+=("$host")
+    continue
+  fi
+  if busy=$(held_busy_lock "$host") && [ -n "$busy" ]; then
+    log "$host is busy ($busy held); skipping main ${target:0:8} there this tick, ring continues"
+    skipped+=("$host")
+    continue
+  fi
+  if [ -n "$CALL_UNITS" ] && call_active "$host"; then
+    log "$host has an active call ($CALL_UNITS); deferring main ${target:0:8} there and after to the next tick"
+    exit 0
+  fi
+  for attempt in $(seq 1 "$ATTEMPTS"); do
+    out=$("$SKCAPSTONE" fleet rollout --node "$host" --repo-root "$REPO" --remote-repo-root "~/deploy/skcapstone" --apply 2>&1 | tail -1)
+    log "$host try$attempt: $out"
+    if printf '%s' "$out" | grep -q "gate passed"; then ok=1; break; fi
+    # A merge during the run makes the host pull a newer main than the
+    # manifest this run built, so its gate reports git_sha drift. That is not
+    # a fault: stand down quietly and let the next tick roll the newer main.
+    if git -C "$REPO" fetch -q origin main && [ "$(git -C "$REPO" rev-parse origin/main)" != "$target" ]; then
+      log "main moved to $(git -C "$REPO" rev-parse --short=8 origin/main) during this run; superseded at $host, next tick rolls it"
+      exit 0
+    fi
+    # The gate reads a synced readiness verdict; refresh it and give syncthing a scan.
+    "$SSH" -o BatchMode=yes "$host" 'systemctl --user start skfleet-readiness.service; k=$(grep -o "<apikey>[^<]*" ~/.config/syncthing/config.xml ~/.local/state/syncthing/config.xml 2>/dev/null | head -1 | cut -d">" -f2); curl -s -o /dev/null -X POST -H "X-API-Key: $k" "http://127.0.0.1:8384/rest/db/scan?folder=skcapstone&sub=fleet/status/node-$(hostname)/readiness"' >/dev/null 2>&1 || true
+    sleep $(( READY_WAIT / ATTEMPTS ))
+  done
+  if [ "$ok" != 1 ]; then
+    log "HALT: $host did not pass its gate after $ATTEMPTS tries; later hosts keep the previous main"
+    notify "auto-rollout HALTED at $host" "main ${target:0:8} ($subject) rolled to: ${rolled[*]:-none}; $host failed its gate. Later hosts not touched."
+    record_halt "$host"
+    exit 1
+  fi
+  "$SSH" -o BatchMode=yes "$host" 'systemctl --user daemon-reload; systemctl --user restart sknoded.service' >/dev/null 2>&1 || log "$host: sknoded restart reported an error"
+  mkdir -p "$HOST_STATE" && printf '%s\n' "$target" > "$HOST_STATE/$host"
+  rolled+=("$host")
+done
+
+if [ "${#skipped[@]}" -gt 0 ]; then
+  # Do not record the main as rolled: skipped hosts must catch up next tick.
+  log "PARTIAL main ${target:0:8}: rolled ${rolled[*]:-none}; unreachable or busy, retried next tick: ${skipped[*]}"
+  exit 0
+fi
+
+mkdir -p "$(dirname "$ROLLED_STATE")" && printf '%s\n' "$target" > "$ROLLED_STATE"
+rm -f "$HALT_STREAK"
+rm -rf "$HOST_STATE"
+log "ROLLED main ${target:0:8} to: ${rolled[*]}"
+notify "ROLLED main ${target:0:8}" "$subject -> ${rolled[*]} (gates passed)"
+exit 0

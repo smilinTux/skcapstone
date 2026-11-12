@@ -103,12 +103,17 @@ def test_skcoord_pins_agree_between_pyproject_and_ci():
     assert below not in skcoord.specifier
     assert declared in skcoord.specifier
 
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "pytest.yml").read_text(encoding="utf-8")
-    assert f'"skcoord=={declared}"' in workflow, (
+    # CI installs from deploy/fleet-constraints.txt (the production pin set), so
+    # that file, not a literal in the workflow, is the registry pin CI tests.
+    constraints = (PROJECT_ROOT / "deploy" / "fleet-constraints.txt").read_text(encoding="utf-8")
+    assert f"skcoord=={declared}" in constraints.split(), (
         f"CI registry pin must equal the pyproject floor {declared}; "
         "a stale pin makes the two test runs assert different contracts"
     )
-    assert f'Version(version("skcoord")) == Version("{declared}")' in workflow
+    workflow = (PROJECT_ROOT / ".github" / "actions" / "test-env" / "action.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "deploy/fleet-constraints.txt" in workflow
 
 
 @pytest.mark.parametrize("mode", [None, "1", "dual", "0", "off", "false", "no"])
@@ -314,11 +319,49 @@ def test_amend_criteria_replaces_the_folded_list(tmp_path, monkeypatch):
     assert _core_text(tmp_path, "ac000001") == before
 
 
+def test_amend_criteria_fails_loudly_when_append_does_not_reach_independent_fold(
+    tmp_path, monkeypatch
+):
+    _seed(tmp_path, "acnooped", criteria=["original"])
+    monkeypatch.setattr(CardStore, "append_event", lambda *args, **kwargs: {})
+
+    result = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "amend-criteria",
+            "acnooped",
+            "--home",
+            str(tmp_path),
+            "--criteria",
+            "claimed replacement",
+            "--agent",
+            "lumina",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "did not persist" in result.output
+    assert "Amended criteria" not in result.output
+    # Different read path from append_event: the board projection folds the
+    # store and must retain the old value when the writer silently does nothing.
+    view = next(view for view in Board(tmp_path).get_task_views() if view.task.id == "acnooped")
+    assert view.task.acceptance_criteria == ["original"]
+
+
 def test_amend_criteria_is_reversible_by_reapplying(tmp_path):
     _seed(tmp_path, "ac000002", criteria=["original"])
     runner = CliRunner()
     for criteria in (["amended"], ["original"]):
-        args = ["coord", "amend-criteria", "ac000002", "--home", str(tmp_path), "--agent", "x"]
+        args = [
+            "coord",
+            "amend-criteria",
+            "ac000002",
+            "--home",
+            str(tmp_path),
+            "--agent",
+            "test-x",
+        ]
         for c in criteria:
             args += ["--criteria", c]
         assert runner.invoke(_main(), args).exit_code == 0
@@ -332,6 +375,25 @@ def test_amend_criteria_requires_at_least_one_criterion(tmp_path):
     )
     assert result.exit_code != 0
     assert current_acceptance_criteria(tmp_path, "ac000003") == []
+
+
+def test_amend_criteria_rejects_unknown_card_without_creating_event_log(tmp_path):
+    result = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "amend-criteria",
+            "unknown1",
+            "--home",
+            str(tmp_path),
+            "--criteria",
+            "replacement",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "no foldable core" in result.output
+    assert not (CardStore(tmp_path).cards_dir / "unknown1").exists()
 
 
 def test_amend_criteria_event_is_writer_attributed(tmp_path):
@@ -401,6 +463,21 @@ async def test_mcp_amend_criteria(tmp_path, monkeypatch):
     assert current_acceptance_criteria(tmp_path, "ac0000mcp") == ["a", "b"]
     _assert_authoritative_criteria(tmp_path, "ac0000mcp", ["a", "b"])
     assert _core_text(tmp_path, "ac0000mcp") == before
+
+
+@pytest.mark.asyncio
+async def test_mcp_amend_criteria_reports_silent_append_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(coord_card_tools, "_shared_root", lambda: tmp_path)
+    _seed(tmp_path, "acnoopmcp", criteria=["original"])
+    monkeypatch.setattr(CardStore, "append_event", lambda *args, **kwargs: {})
+
+    result = await coord_card_tools._handle_coord_amend_criteria(
+        {"task_id": "acnoopmcp", "criteria": ["claimed replacement"]}
+    )
+
+    assert "did not persist" in _parse(result)["error"]
+    view = next(view for view in Board(tmp_path).get_task_views() if view.task.id == "acnoopmcp")
+    assert view.task.acceptance_criteria == ["original"]
 
 
 @pytest.mark.asyncio

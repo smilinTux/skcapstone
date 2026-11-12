@@ -217,23 +217,19 @@ def register_daemon_commands(main: click.Group) -> None:
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def daemon_stop(agent: str | None, home: str):
         """Stop the running daemon."""
-        from ..daemon import read_pid
+        from ..daemon_pid import stop_daemon
 
         home_path = _resolve_agent_home(agent, home)
-        pid = read_pid(home_path)
+        try:
+            pid = stop_daemon(home_path)
+        except (OSError, RuntimeError) as exc:
+            raise click.ClickException(str(exc)) from None
 
         if pid is None:
             console.print("[yellow]Daemon is not running.[/]")
             return
 
-        import signal as sig
-
-        try:
-            os.kill(pid, sig.SIGTERM)
-            console.print(f"\n  [green]Sent SIGTERM to daemon (PID {pid})[/]\n")
-        except ProcessLookupError:
-            console.print("[yellow]Daemon process not found - cleaning up PID file.[/]")
-            (home_path / "daemon.pid").unlink(missing_ok=True)
+        console.print(f"\n  [green]Sent SIGTERM to daemon (PID {pid})[/]\n")
 
     @daemon.command("status")
     @click.option("--agent", default=None, help="Named agent to query.")

@@ -4,6 +4,8 @@ the repetition guard (keyword overlap + dedup gate), and the OpenAI-compatible
 
 import json
 
+import pytest
+
 from skcapstone.dreaming import (
     DreamingConfig,
     DreamingEngine,
@@ -146,3 +148,179 @@ class TestCallOllama:
 
         monkeypatch.setattr(d.http.client, "HTTPConnection", Bad)
         assert _bare_engine(DreamingConfig())._call_ollama("x") is None
+
+
+# --------------------------------------------------------------------------- #
+# Provider outage accounting - 2026-09-13
+#
+# An unreachable provider used to call _save_state(), which bumped dream_count
+# and stamped last_dream_at. That armed the 2h cooldown off a dream that never
+# happened and wrote no dream-log entry, so a 19-day outage looked like an idle
+# stretch instead of a failure.
+# --------------------------------------------------------------------------- #
+class TestProviderOutageIsNotADream:
+    @staticmethod
+    def _engine(tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "testagent")
+        memory = tmp_path / "agents" / "testagent" / "memory"
+        memory.mkdir(parents=True)
+        config = DreamingConfig()
+        config.enabled = True
+        engine = DreamingEngine(home=tmp_path, config=config, consciousness_loop=None)
+        monkeypatch.setattr(engine, "is_idle", lambda: True)
+        monkeypatch.setattr(engine, "cooldown_remaining", lambda: 0.0)
+        monkeypatch.setattr(engine, "_should_force_diversity", lambda: False)
+        monkeypatch.setattr(engine, "_gather_memories", lambda: ([{"content": "a"}], []))
+        monkeypatch.setattr(engine, "_call_llm", lambda prompt: None)
+        monkeypatch.setattr(engine, "_build_prompt", lambda *a, **k: "prompt")
+        return engine
+
+    def test_outage_reports_skipped_reason(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+
+        result = engine.dream()
+
+        assert result.skipped_reason == "all LLM providers unreachable"
+
+    def test_outage_does_not_advance_dream_state(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+        engine._state_path.write_text(
+            json.dumps({"dream_count": 568, "last_dream_at": "2026-08-25T07:11:51+00:00"})
+        )
+
+        engine.dream()
+
+        state = json.loads(engine._state_path.read_text())
+        assert state["dream_count"] == 568
+        assert state["last_dream_at"] == "2026-08-25T07:11:51+00:00"
+
+    def test_outage_does_not_arm_the_cooldown(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+
+        engine.dream()
+
+        assert not engine._state_path.exists()
+
+    def test_outage_is_recorded_in_the_dream_log(self, tmp_path, monkeypatch):
+        engine = self._engine(tmp_path, monkeypatch)
+
+        engine.dream()
+
+        log = json.loads(engine._log_path.read_text())
+        assert log[-1]["skipped_reason"] == "all LLM providers unreachable"
+        assert log[-1]["insights"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Anchor-seed enrichment must never stall the dream cycle
+#
+# Regression: dreams stopped for ~19 days (2026-08-25 -> 2026-09-13). The
+# daemon resolved an empty agent name, and `_build_anchor_seeds_context`
+# forwarded that "" straight into skmemory's `get_agent_paths`, which rejects
+# an empty profile id with "No valid registered memory profile is available".
+# The exception escaped _build_prompt() and killed every single dream run.
+# Anchor seeds are optional inspiration - they must degrade to "".
+# --------------------------------------------------------------------------- #
+class TestAnchorSeedsNeverStallDreaming:
+    def _engine(self, tmp_path, monkeypatch, agent_env):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", agent_env)
+        # Construction now refuses an unresolvable agent; tests that need the
+        # blank-agent state set engine._agent_name after construction.
+        return DreamingEngine(home=tmp_path, config=DreamingConfig(), agent_name="lumina")
+
+    def test_blank_agent_env_does_not_forward_empty_agent_id(self, tmp_path, monkeypatch):
+        """An unresolved agent name must become None, never ""."""
+        seen = {}
+
+        def fake_match_blooms(feb, agent=None, top_k=3):
+            seen["agent"] = agent
+            return []
+
+        def fake_match_entanglements(feb, agent=None, top_k=2):
+            return []
+
+        import skmemory.entanglements as ent
+        import skmemory.peaks as peaks
+
+        monkeypatch.setattr(peaks, "match_blooms_for_feb", fake_match_blooms)
+        monkeypatch.setattr(ent, "match_entanglements_for_feb", fake_match_entanglements)
+
+        engine = self._engine(tmp_path, monkeypatch, "")
+        engine._agent_name = ""  # the exact daemon state that caused the outage
+
+        assert engine._build_anchor_seeds_context(tmp_path) == ""
+        # "" is not a valid profile id; None means "resolve the active agent".
+        assert seen["agent"] is None
+
+    def test_anchor_seed_failure_degrades_instead_of_raising(self, tmp_path, monkeypatch):
+        """Any skmemory failure is optional-enrichment loss, not a dead dream."""
+
+        def boom(*args, **kwargs):
+            raise ValueError("No valid registered memory profile is available")
+
+        import skmemory.entanglements as ent
+        import skmemory.peaks as peaks
+
+        monkeypatch.setattr(peaks, "match_blooms_for_feb", boom)
+        monkeypatch.setattr(ent, "match_entanglements_for_feb", boom)
+
+        engine = self._engine(tmp_path, monkeypatch, "lumina")
+        assert engine._build_anchor_seeds_context(tmp_path) == ""
+
+
+# Agent-name resolution guard
+# --------------------------------------------------------------------------- #
+class TestAgentNameGuard:
+    """An unresolvable agent name must fail fast, not silently use ``agents/``.
+
+    Regression: when SKCAPSTONE_AGENT was empty and no agent could be detected,
+    ``_agent_name`` fell back to ``""``. Every path then collapsed one level -
+    ``home/agents//memory/dream-log.json`` became ``home/agents/memory/...`` -
+    so ``cooldown_remaining()`` and ``_dreams_today()`` read a phantom file that
+    never existed, reported "no cooldown, no dreams today", and let the engine
+    run the full LLM cycle on *every* 15-minute scheduler tick. Each of those
+    ticks then died deep inside skmemory with the opaque
+    "No valid registered memory profile is available", because ``agent=""`` is
+    not a registered profile. 1864 consecutive failures were logged this way.
+    """
+
+    def test_empty_agent_name_raises(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "")
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: None)
+        try:
+            DreamingEngine(home=tmp_path)
+        except ValueError as exc:
+            assert "agent" in str(exc).lower()
+        else:
+            raise AssertionError("expected ValueError for unresolvable agent name")
+
+    def test_explicit_agent_name_is_used(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "lumina")
+        engine = DreamingEngine(home=tmp_path)
+        assert engine._agent_name == "lumina"
+        # The agent segment must be present - never collapsed away.
+        assert engine._log_path == tmp_path / "agents" / "lumina" / "memory" / "dream-log.json"
+
+    def test_falls_back_to_detected_agent(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: "jarvis")
+        engine = DreamingEngine(home=tmp_path)
+        assert engine._agent_name == "jarvis"
+
+    def test_whitespace_only_names_are_unresolved(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "   ")
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: None)
+        with pytest.raises(ValueError, match="owning agent"):
+            DreamingEngine(home=tmp_path, agent_name="  ")
+
+    def test_explicit_agent_name_wins_over_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "lumina")
+        engine = DreamingEngine(home=tmp_path, agent_name="jarvis")
+        assert engine._agent_name == "jarvis"
+
+    def test_no_phantom_agents_memory_path_when_unresolved(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCAPSTONE_AGENT", "")
+        monkeypatch.setattr("skcapstone.active_agent_name", lambda: None)
+        with pytest.raises(ValueError):
+            DreamingEngine(home=tmp_path)
+        assert not (tmp_path / "agents").exists()

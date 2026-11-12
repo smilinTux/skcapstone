@@ -9,6 +9,8 @@ every other mutation is refused by the seat boundary.
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
@@ -42,6 +44,9 @@ from ._types import CensusFindingType, RiskClass
 
 __all__ = ["MeroBlockerCensus"]
 
+#: Schema tag of the census-local pagination checkpoint (card eacedb1a).
+PAGINATION_SCHEMA = "skfleet.mero-census-pagination/v1"
+
 
 class MeroBlockerCensus(CensusReadsMixin, CensusDetectorsMixin):
     """One bounded read-only pass over the board, plus its typed emissions.
@@ -54,6 +59,14 @@ class MeroBlockerCensus(CensusReadsMixin, CensusDetectorsMixin):
     Worker, identity, and SKMail joins are injected as callables so the census
     never touches process state or mailboxes implicitly. Defaults observe
     nothing, which yields no worker-dependent findings.
+
+    PAGINATION (card eacedb1a). One run examines at most ``max_cards`` cards:
+    a durable, census-local checkpoint at ``<home>/mero_census/
+    pagination.json`` records the window position, so successive bounded runs
+    sweep the whole sorted card id list and the tail beyond the cap is never
+    permanently starved. The checkpoint is the run's only write; it touches
+    no card event, lifecycle field, or mailbox, and it is committed
+    atomically after the pass so a crash re-examines the same window.
     """
 
     def __init__(
@@ -194,18 +207,86 @@ class MeroBlockerCensus(CensusReadsMixin, CensusDetectorsMixin):
             unchanged += 1
         return due, unchanged
 
+    # -- durable pagination (card eacedb1a) -------------------------------------
+
+    def _pagination_path(self) -> Path:
+        """The census-local checkpoint path. No card or lifecycle state lives here."""
+        return self.home / "mero_census" / "pagination.json"
+
+    def _load_pagination(self) -> dict:
+        """Read the checkpoint, tolerating absence or corruption.
+
+        A missing, unreadable, or malformed checkpoint restarts the sweep at
+        position zero; a partial pass is never trusted from damaged state.
+        """
+        fresh = {"position": 0, "cycle": 0, "covered_in_pass": 0}
+        try:
+            raw = json.loads(self._pagination_path().read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - absent or corrupt state means start over
+            return dict(fresh)
+        if not isinstance(raw, dict) or raw.get("schema") != PAGINATION_SCHEMA:
+            return dict(fresh)
+        state = dict(fresh)
+        for key in state:
+            try:
+                state[key] = max(0, int(raw.get(key, state[key])))
+            except (TypeError, ValueError):
+                state[key] = 0
+        return state
+
+    def _save_pagination(self, state: dict) -> None:
+        """Commit the checkpoint atomically so a crash never skips a window."""
+        path = self._pagination_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+        tmp.write_text(
+            json.dumps(
+                {"schema": PAGINATION_SCHEMA, **state},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
+        os.replace(tmp, path)
+
     # -- the run -------------------------------------------------------------
 
     def run(self) -> CensusReport:
-        """One bounded census pass. Reads everything, writes nothing."""
+        """One bounded census pass over the next pagination window.
+
+        The board itself is read without writes. The run's only durable
+        effect is the census-local pagination checkpoint, committed
+        atomically after the pass: a crash before the commit re-examines the
+        same window on the next run.
+        """
         started = self._now()
         store = CardStore(self.home)
         all_ids = store.list_card_ids()
-        bounded_ids = all_ids[: self.max_cards]
+        total = len(all_ids)
+        state = self._load_pagination()
+        position = min(state["position"], total)
+        window = all_ids[position : position + self.max_cards]
+        next_position = position + len(window)
+        pass_complete = total > 0 and next_position >= total
+        committed = {
+            "position": 0 if pass_complete else next_position,
+            "cycle": state["cycle"] + (1 if pass_complete else 0),
+            "covered_in_pass": 0 if pass_complete else state["covered_in_pass"] + len(window),
+        }
+        coverage = {
+            "schema": PAGINATION_SCHEMA,
+            "window_start": position,
+            "window_end": next_position,
+            "position": committed["position"],
+            "cycle": committed["cycle"],
+            "covered_in_pass": committed["covered_in_pass"],
+            "cards_total": total,
+            "pass_complete": pass_complete,
+        }
         done_ids: set[str] = set()
         void_ids: set[str] = set()
         cards: list[Card] = []
-        for cid in bounded_ids:
+        for cid in window:
             try:
                 card = store.fold(cid)
             except Exception:  # noqa: BLE001 - unreadable cards are skipped, not faked
@@ -258,18 +339,20 @@ class MeroBlockerCensus(CensusReadsMixin, CensusDetectorsMixin):
         counts: dict[str, int] = {}
         for finding in due[: self.max_findings]:
             counts[finding["finding_type"]] = counts.get(finding["finding_type"], 0) + 1
+        self._save_pagination(committed)
         return CensusReport(
             census_id="mrc-"
             + _generation_key(started.isoformat(), self.home, len(cards), len(findings)),
             observed_at=started.isoformat(),
             cards_examined=len(cards),
-            cards_total=len(all_ids),
-            truncated=len(all_ids) > len(bounded_ids),
+            cards_total=total,
+            truncated=total > len(window),
             findings=due[: self.max_findings],
             suppressed_unchanged=unchanged,
             suppressed_by_bound=suppressed_by_bound,
             selector_ready=selector_ready,
             counts=counts,
+            coverage=coverage,
         )
 
     # -- emission ------------------------------------------------------------

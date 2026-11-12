@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Warm every gateway backend the fleet routes to, so lane admission can see it.
+#
+# WHY THIS EXISTS. Two independent fail-closed gates both key on "has this
+# backend been observed", and neither can establish that observation on its own:
+#
+#   1. skgateway router.mjs isAvailable() returns false while _lastCheck === 0,
+#      and _lastCheck is ONLY set by recordOutcome() AFTER a request completes.
+#      A backend with require_observed_health that has never served a request
+#      therefore never can.
+#   2. skcapstone fleet_lane_health.lane_health() is fail-closed on state
+#      "unknown", and a backend reports unknown until the gateway has observed
+#      it. So after every gateway restart the whole fleet's lane admission
+#      refuses every card until something sends real traffic.
+#
+# Measured on chi 2026-09-18: a gateway restart reset codex and zai to
+# observed=false, and lane admission blocked every card until a probe warmed
+# them. Earlier the same day the same class of block cost three days of zero
+# dispatch through a different path.
+#
+# One tiny completion per backend is enough: recordOutcome() runs, _lastCheck
+# is set, status becomes up, and lane_health starts returning healthy.
+#
+# NOTE ON USER-AGENT: the gateway forwards the CALLER's User-Agent upstream.
+# Some providers sit behind Cloudflare and answer 1010 "browser signature
+# banned" to a default python or scripted UA, which looks exactly like a
+# credential failure and is not one. Send a plausible one.
+set -uo pipefail
+
+GW="${SKFLEET_GATEWAY_URL:-http://localhost:18790}"
+GW="${GW%/}"
+UA="${WARM_USER_AGENT:-curl/8.5.0}"
+MODELS="${WARM_MODELS:-sk-codex-mid glm-4.7 kimi-for-coding k3}"
+BUDGET="${WARM_MAX_TOKENS:-200}"
+
+rc=0
+for m in $MODELS; do
+    # No temperature: kimi rejects 0 with "only 1 is allowed for this model",
+    # and a warmup does not care about determinism. Let each provider default.
+    body=$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with exactly: ok"}],"max_tokens":%s}' "$m" "$BUDGET")
+    code=$(curl -s -o /tmp/warm-$$.json -w "%{http_code}" --max-time 60 \
+        -A "$UA" -H "Content-Type: application/json" -d "$body" \
+        "$GW/v1/chat/completions" 2>/dev/null)
+    if [ "$code" = "200" ]; then
+        echo "  warm ok    $m"
+    else
+        echo "  warm FAIL  $m -> HTTP $code $(head -c 120 /tmp/warm-$$.json 2>/dev/null | tr -d '\n')"
+        rc=1
+    fi
+    rm -f /tmp/warm-$$.json
+done
+exit $rc

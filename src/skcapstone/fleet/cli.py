@@ -6,6 +6,7 @@ Available standalone as `skfleet` and as `skcapstone fleet ...`.
 from __future__ import annotations
 
 import json as jsonlib
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,12 +25,14 @@ from . import (
     node_controller,
     seat_audit,
     service_controller,
+    staged_rollout,
     store,
 )
 from . import profiles as profiles_mod
 from . import services as services_mod
 from . import sknoded as sknoded_mod
 from .explain import explain as explain_kind
+from .guidance import enqueue_guidance
 from .paths import default_paths, self_node_name
 
 
@@ -46,6 +49,43 @@ def fleet() -> None:
     """SKWorld fleet control plane (skfleet)."""
 
 
+@fleet.command("preserve-source")
+@click.argument("card_id")
+@click.option("--agent", required=True, help="Authorized operator writer, never a worker.")
+@click.option(
+    "--home",
+    type=click.Path(path_type=Path),
+    default=lambda: Path(os.environ.get("SKCAPSTONE_HOME", Path.home() / ".skcapstone")),
+)
+@click.option(
+    "--search-root",
+    multiple=True,
+    type=click.Path(exists=True, path_type=Path),
+    help="Explicit bounded local clone/bundle roots; replaces default roots.",
+)
+def preserve_source_cmd(card_id, agent, home, search_root):
+    """Preserve CARD_ID's exact base on skgit and verify its operator ref amendment."""
+    from .preserve_source import preserve
+
+    try:
+        result = preserve(home, card_id, agent, list(search_root) or None)
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(result, sort_keys=True))
+
+
+@fleet.command("nudge")
+@click.argument("card_id")
+@click.argument("text")
+def nudge_cmd(card_id: str, text: str) -> None:
+    """Queue guidance for CARD_ID and record it as card evidence."""
+    try:
+        request = enqueue_guidance(card_id, text)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(request, sort_keys=True))
+
+
 @fleet.command("nodes")
 def nodes_cmd() -> None:
     """List all fleet nodes with phase, labels, and capacity."""
@@ -59,6 +99,122 @@ def nodes_cmd() -> None:
             f"ram={v.capacity.get('ram_gb', '?')}GB "
             f"disk={v.capacity.get('disk_gb', '?')}GB\tbeat={age}"
         )
+
+
+@fleet.command("builder-retry")
+@click.argument("card_id")
+@click.option("--node", required=True)
+@click.option("--request-id", required=True)
+@click.option("--claim", required=True)
+@click.option("--invocation", required=True)
+@click.option("--agent", required=True)
+@click.option("--reason", required=True)
+@click.option("--evidence", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--apply", is_flag=True, help="Authorize once while frozen; default checks only.")
+def builder_retry_cmd(
+    card_id, node, request_id, claim, invocation, agent, reason, evidence, apply
+):
+    """Authorize a fresh session for one stopped unchanged production attempt."""
+    from .builder_retry import authorize
+
+    try:
+        result = authorize(
+            default_paths(),
+            Path.home() / ".skcapstone",
+            node,
+            card_id,
+            request_id=request_id,
+            claim=claim,
+            invocation=invocation,
+            actor=agent,
+            reason=reason,
+            evidence=evidence,
+            apply=apply,
+        )
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(result, sort_keys=True))
+
+
+@fleet.command("builder-continue")
+@click.argument("card_id")
+@click.option("--node", required=True)
+@click.option("--request-id", required=True)
+@click.option("--claim", required=True)
+@click.option("--invocation", required=True)
+@click.option("--agent", required=True)
+@click.option("--reason", required=True)
+@click.option("--transport-session", help="Exact failed Pi session basename; requires its SHA256.")
+@click.option(
+    "--transport-sha256", help="Digest of a native-invocation-bound terminal gateway413 session."
+)
+@click.option("--apply", is_flag=True, help="Authorize once; default checks only.")
+def builder_continue_cmd(
+    card_id,
+    node,
+    request_id,
+    claim,
+    invocation,
+    agent,
+    reason,
+    transport_session,
+    transport_sha256,
+    apply,
+):
+    """Continue exact stopped staged work without releasing its source claim."""
+    from .builder_continue import authorize
+
+    try:
+        result = authorize(
+            default_paths(),
+            Path.home() / ".skcapstone",
+            node,
+            card_id,
+            request_id=request_id,
+            claim=claim,
+            invocation=invocation,
+            actor=agent,
+            reason=reason,
+            transport_session=transport_session,
+            transport_sha256=transport_sha256,
+            apply=apply,
+        )
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(result, sort_keys=True))
+
+
+@fleet.command("builder-retire")
+@click.argument("card_id")
+@click.option("--node", required=True)
+@click.option("--request-sha256", required=True)
+@click.option("--status-sha256", required=True)
+@click.option("--card-sha256", required=True)
+@click.option("--agent", required=True)
+@click.option("--reason", required=True)
+@click.option("--apply", is_flag=True, help="Preserve source then retire; default checks only.")
+def builder_retire_cmd(
+    card_id, node, request_sha256, status_sha256, card_sha256, agent, reason, apply
+):
+    """Retire one exact stopped terminal offer on the production authority."""
+    from .builder_retire import retire
+
+    try:
+        result = retire(
+            default_paths(),
+            Path.home() / ".skcapstone",
+            node,
+            card_id,
+            request_sha256=request_sha256,
+            status_sha256=status_sha256,
+            card_sha256=card_sha256,
+            actor=agent,
+            reason=reason,
+            apply=apply,
+        )
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(jsonlib.dumps(result, sort_keys=True))
 
 
 @fleet.command("describe")
@@ -89,6 +245,33 @@ def placements_cmd(kind: str | None, as_json: bool) -> None:
             f"{r['kind'].lower()}/{r['name']}\t-> {r['node']}\t"
             f"gen={r['placementGeneration']}\t{r['reason']}"
         )
+
+
+@fleet.command("binary-setup")
+@click.argument("name")
+def binary_setup_cmd(name: str) -> None:
+    """Converge a pinned binary's config and post-install steps (no download).
+
+    `install --apply` only reaches a binary that is missing or off-pin, so a
+    node already at the pin never re-runs its config and post-install steps.
+    This does exactly those, idempotently. Operator-scoped, like a hand
+    install: it is NOT gated by the fleet freeze, and touches only this user's
+    files (the wt config, ~/skworld-worktrees, the Claude Code plugin).
+    """
+    from . import binaries
+
+    entry = binaries.CATALOG.get(name)
+    if entry is None:
+        raise click.ClickException(
+            f"{name}: not in the binaries catalog (known: {sorted(binaries.CATALOG)})"
+        )
+    observed = binaries.probe([name]).get(name)
+    if observed != entry.version:
+        raise click.ClickException(
+            f"{name}: installed version {observed!r} is not the pin {entry.version!r}; "
+            "run `skfleet install --apply --only " + name + "` first"
+        )
+    click.echo(binaries.finish(entry) or "nothing to report")
 
 
 @fleet.command("cordon")
@@ -501,6 +684,8 @@ def install_cmd(
         raise click.ClickException(
             f"actuation not enabled for {exc}: `skfleet actuation <name> --enable` first"
         ) from exc
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     if as_json:
         click.echo(jsonlib.dumps(summary, indent=2, sort_keys=True))
@@ -756,6 +941,584 @@ def node_endpoint_audit_cmd(status_file, as_json: bool, strict: bool) -> None:
             for peer_id in node["retirement_candidates"]:
                 click.echo(f"  plan  retirement_candidate        {peer_id}")
     if strict and report["summary"]["unsafe"]:
+        raise SystemExit(1)
+
+
+#: Artifacts whose ``missing`` finding is never a role difference.
+#:
+#: ``git_sha`` is the pre-rename name of ``package:git_sha``; a controller
+#: running this code may be gating a node that still reports the old name
+#: over ``fleet node drift --json``, and a rename must not quietly turn an
+#: unambiguous finding into a suppressed one mid-rollout.
+#:
+#: ``checkout:git_sha`` missing means git could not read the checkout at
+#: all, and ``package:git_sha`` missing means the installed distribution
+#: could not be read at all. Neither is a per-unit question about this
+#: host's role, so neither is ever ambiguous.
+_UNAMBIGUOUS_MISSING_ARTIFACTS = frozenset({"git_sha", "package:git_sha", "checkout:git_sha"})
+
+
+def _drift_is_role_ambiguous(drift) -> bool:
+    """True when ``drift`` cannot be told from a legitimate role difference.
+
+    See ``.superpowers/sdd/2026-09-17-rollout-observability/task-5-brief.md``
+    Part 1, and the incident it names: run against a real workstation or
+    against chiap01/chiap03, most of the ``missing`` findings on a shipped
+    unit or the dispatcher script are units that host's ROLE never installs
+    on purpose, not a rollout gap. This estate has no per-host role
+    manifest, so nothing here can tell those two apart -- and Task 3/4's own
+    documented rule is that ``unit_in_scope`` returning False already
+    suppresses the cases it CAN judge; what reaches ``detect_drift`` as
+    ``missing`` is exactly the residue that is genuinely undecidable.
+
+    ``changed``, ``enablement_mismatch``, and ``failed`` are never
+    ambiguous: the artifact is demonstrably installed, so a content or
+    activation difference is a fact about this host, not a guess about its
+    role. A ``missing`` finding on ``git_sha`` is not ambiguous either: it
+    means the installed distribution itself could not be read at all,
+    which is not a per-unit role question.
+
+    Neither is a ``missing`` finding on a ``script:``-prefixed artifact
+    (a ``pyproject.toml`` ``script-files`` entry, Fix 4 of the same
+    review). Unlike a shipped unit, which a host's role may legitimately
+    never install, pip installs every ``script-files`` entry into
+    ``~/.skenv/bin`` unconditionally on every host that has the package
+    installed at all -- there is no role for which a script-files entry is
+    supposed to be absent. Measured live: ``skfleet_readiness.py`` is
+    genuinely missing from chiap01's ``~/.skenv/bin``, which is exactly
+    the kind of finding this default output exists to surface, not bury.
+    """
+    return (
+        drift.kind == "missing"
+        and drift.artifact not in _UNAMBIGUOUS_MISSING_ARTIFACTS
+        and not drift.artifact.startswith("script:")
+        and not drift.artifact.startswith("qualified-runtime:")
+    )
+
+
+def _default_repo_root() -> Path:
+    """The checkout `node drift` reads EXPECTED content from.
+
+    ``SKCAPSTONE_REPO_ROOT`` when set, otherwise ``~/work/skcapstone``: the
+    shared-checkout convention documented in
+    ``docs/runbooks/chatgpt-codex-sk-client.md`` and confirmed, read-only,
+    on the live fleet (chiap01/02/03/04/08) -- every host that has a
+    checkout to diagnose itself against keeps it there. Deliberately not
+    ``install_backends._repos_root()`` (``~/clawd/skcapstone-repos``): that is
+    a different, developer-workstation convention, and no rotate host in
+    the live fleet has anything under it.
+    """
+    env = os.environ.get("SKCAPSTONE_REPO_ROOT")
+    return Path(env).expanduser() if env else Path.home() / "work" / "skcapstone"
+
+
+@node_group.command("drift")
+@click.option(
+    "--repo-root",
+    "repo_root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Checkout with expected content (default: $SKCAPSTONE_REPO_ROOT or ~/work/skcapstone)",
+)
+@click.option(
+    "--home",
+    "home",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Estate home to inspect for installed artifacts (default: $HOME).",
+)
+@click.option(
+    "--expect-git-sha",
+    "expect_git_sha",
+    default=None,
+    help=(
+        "Pin the commit this node is supposed to be on. Without it, the manifest is "
+        "built from --repo-root and the checkout can only ever agree with itself."
+    ),
+)
+@click.option(
+    "--fleet",
+    "include_fleet",
+    is_flag=True,
+    help=(
+        "Also report nodes that disagree with each OTHER, read from the rollout "
+        "history every node already publishes to the shared fleet tree."
+    ),
+)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.option("--strict", is_flag=True, help="Exit 1 when any drift is found.")
+def node_drift_cmd(
+    repo_root: Path | None,
+    home: Path | None,
+    expect_git_sha: str | None,
+    include_fleet: bool,
+    as_json: bool,
+    strict: bool,
+) -> None:
+    """Report rollout drift for this node against a fresh manifest. REPORT ONLY.
+
+    Builds a deployment manifest (Task 1's ``build_manifest``) from
+    --repo-root and compares it against what this node actually has
+    installed (Task 3's ``detect_drift``): content digests for unit files
+    and the dispatcher script, the installed distribution's embedded
+    git_sha, and enabled-versus-active state, never a version label alone.
+    See ``fleet/rollout_drift.py`` for why: a version check reported every
+    host healthy during all four real drift incidents this exists to catch.
+
+    Local only, like ``node doctor``: both the manifest and the installed
+    state it is compared against are facts about THIS machine. Grading a
+    remote node from a local repo checkout would be a confident wrong
+    answer dressed up as a report, not a report.
+
+    Cheap enough to run from a systemd timer independently of the rest of
+    ``skcapstone doctor``: every check here is a file read, a glob, or a
+    handful of ``systemctl --user show`` calls, the same read-only cost
+    Task 2's readiness gate already pays every 15 minutes.
+
+    Default text output shows every ``changed`` and ``enablement_mismatch``
+    finding, plus any ``git_sha`` finding, by name: those are unambiguous
+    drift regardless of what this host's role is. A ``missing`` unit or
+    dispatcher script is summarised as a count instead of printed by name,
+    because this estate has no per-host role manifest, so "this role never
+    installs it" cannot be told apart from "a rollout should have installed
+    it and did not" -- see ``_drift_is_role_ambiguous``. ``--json`` and
+    ``--strict`` are unaffected by this split: both see and act on every
+    finding, missing included.
+    """
+    from . import deployment_manifest, rollout_drift
+
+    resolved_repo_root = repo_root or _default_repo_root()
+    resolved_home = home or Path.home()
+
+    try:
+        manifest = deployment_manifest.build_manifest(resolved_repo_root, resolved_home)
+        if expect_git_sha:
+            # Replace the self-derived sha with the caller's pin and mark it
+            # as pinned, which is what unlocks the checkout:git_sha surface
+            # in detect_drift. Without this the manifest's git_sha came from
+            # this very checkout, so comparing the checkout against it is a
+            # tautology that can never fail -- the exact blind spot that let
+            # five uniformly-stale hosts report clean.
+            manifest = dict(manifest)
+            manifest["git_sha"] = expect_git_sha
+            manifest["checkout_git_sha_pinned"] = True
+        drifts = rollout_drift.detect_drift(manifest, resolved_home, resolved_repo_root)
+        if include_fleet:
+            # Deliberately opt-in, and deliberately NOT inside detect_drift:
+            # the staged rollout gates each node with detect_drift, and during
+            # a staged rollout the nodes are SUPPOSED to disagree (node 1
+            # deployed, node 5 not yet). Folding this in unconditionally would
+            # make every staged rollout fail at its second node. It is still
+            # the same command and the same Drift records, so --json and
+            # --strict handle it with no new reporting path.
+            drifts = drifts + rollout_drift.detect_fleet_incoherence(resolved_home)
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(
+            f"could not compute drift from repo root {resolved_repo_root}: {exc}"
+        ) from exc
+
+    node = self_node_name()
+    if as_json:
+        click.echo(
+            jsonlib.dumps(
+                {
+                    "node": node,
+                    "git_sha": manifest["git_sha"],
+                    "drifts": [
+                        {
+                            "artifact": d.artifact,
+                            "kind": d.kind,
+                            "expected": d.expected,
+                            "found": d.found,
+                            "host": d.host,
+                        }
+                        for d in drifts
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    elif not drifts:
+        click.echo(f"{node}: no drift (matches {manifest['git_sha']})")
+    else:
+        ambiguous = [d for d in drifts if _drift_is_role_ambiguous(d)]
+        unambiguous = [d for d in drifts if not _drift_is_role_ambiguous(d)]
+        click.echo(
+            f"{node}\t{len(drifts)} drift(s) against manifest git_sha={manifest['git_sha']}"
+        )
+        if not unambiguous:
+            click.echo("  (no unambiguous drift: no changed content, enablement, or git_sha)")
+        for d in unambiguous:
+            # fleet: findings are about a PEER, so they name the host they
+            # are about; every other finding is about this node.
+            where = f" on {d.host}" if d.artifact.startswith("fleet:") else ""
+            click.echo(
+                f"  {d.kind:20} {d.artifact:40} expected={d.expected!r} "
+                f"found={d.found!r}{where}"
+            )
+        if ambiguous:
+            click.echo(
+                f"  {len(ambiguous)} unit(s)/dispatcher script reported missing, not listed: "
+                "this estate has no per-host role manifest, so 'this host's role never "
+                "installs it' cannot be told apart from 'a rollout should have installed "
+                "it and did not'. Re-run with --json to see each by name."
+            )
+
+    if strict and drifts:
+        raise SystemExit(1)
+
+
+@node_group.command("manifest")
+@click.option(
+    "--repo-root",
+    "repo_root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Checkout to build the manifest from (default: $SKCAPSTONE_REPO_ROOT or "
+    "~/work/skcapstone)",
+)
+@click.option(
+    "--home",
+    "home",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Estate home to publish under (default: $HOME).",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print the published manifest as JSON.")
+def node_manifest_cmd(repo_root: Path | None, home: Path | None, as_json: bool) -> None:
+    """Build this node's deployment manifest and publish it to disk. WRITES.
+
+    ``deployment_manifest.write_manifest`` had no non-test caller before
+    this command: the manifest pipeline (Task 1) built a fresh manifest in
+    memory every time it was needed, but nothing ever pinned one to a
+    well-known path (``docs/fleet/rollout-drift.md`` said this outright).
+    This command is that caller: it builds the same manifest ``node drift``
+    builds (Task 1's ``build_manifest``) and publishes it to the FLEET tree
+    (``default_paths()``, i.e. the ``$SKFLEET_ROOT`` override or its
+    documented default -- see ``fleet/paths.py``) at
+    ``status/node-<node>/manifest/manifest.json``, the same
+    ``status/<node>/<kind>/<name>.json`` shape every other status write in
+    this package already uses (``fleet/paths.py``). Publishing through
+    ``default_paths()`` rather than a path built from ``--home`` here is
+    deliberate: this is fleet STATE, and ``paths.py`` is the one module
+    allowed to name where the fleet tree lives (see
+    ``tests/fleet/test_root_relocation.py``), so a relocated
+    ``SKFLEET_ROOT`` must relocate this too.
+
+    Unlike ``node drift`` / ``node doctor``, this command WRITES on
+    purpose -- publishing is its entire job, so it carries no
+    ``--strict``/report-only contract to violate. ``node drift`` itself
+    still compares against a freshly built manifest, not this pinned one
+    (deliberately unchanged here); publishing a comparison artifact a
+    future check could read against is exactly what closes the "no
+    caller" gap without also changing what ``node drift`` means today.
+    """
+    from . import deployment_manifest
+
+    resolved_repo_root = repo_root or _default_repo_root()
+    resolved_home = home or Path.home()
+
+    try:
+        manifest = deployment_manifest.build_manifest(resolved_repo_root, resolved_home)
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(
+            f"could not build a manifest from repo root {resolved_repo_root}: {exc}"
+        ) from exc
+
+    node = self_node_name()
+    manifest_path = default_paths().status_path(node, "manifest", "manifest")
+    deployment_manifest.write_manifest(manifest_path, manifest)
+
+    if as_json:
+        click.echo(jsonlib.dumps(manifest, indent=2, sort_keys=True))
+    else:
+        click.echo(f"{node}: published manifest git_sha={manifest['git_sha']} to {manifest_path}")
+
+
+def _staged_result_as_dict(result) -> dict:
+    """A ``RolloutResult`` or ``RollbackResult`` (same shape) as a JSON-safe
+    dict. Shared because both carry identical fields
+    (``dry_run``/``completed``/``halted_at``/``reason``/``remaining``).
+    """
+    return {
+        "dry_run": result.dry_run,
+        "completed": [
+            {
+                "node": r.node,
+                "dry_run": r.dry_run,
+                "deployed": r.deployed,
+                "ready": r.ready,
+                "drift": [
+                    {
+                        "artifact": d.artifact,
+                        "kind": d.kind,
+                        "expected": d.expected,
+                        "found": d.found,
+                    }
+                    for d in r.drift
+                ],
+                "detail": r.detail,
+            }
+            for r in result.completed
+        ],
+        "halted_at": result.halted_at,
+        "reason": result.reason,
+        "remaining": list(result.remaining),
+    }
+
+
+def _render_staged_result(result, as_json: bool, *, noun: str) -> None:
+    """Render a rollout/rollback result: every node in plan order, numbered,
+    so a human can read the whole plan (or the whole outcome) top to bottom
+    before deciding whether to authorise ``--apply``.
+
+    ``noun`` is "rollout" or "rollback", used only in the summary lines.
+    """
+    if as_json:
+        click.echo(jsonlib.dumps(_staged_result_as_dict(result), indent=2, sort_keys=True))
+        return
+
+    total = len(result.completed) + (1 if result.halted_at else 0) + len(result.remaining)
+
+    if result.dry_run:
+        click.echo(f"DRY RUN: previewing {noun} across {total} node(s); nothing was executed.")
+        click.echo("Pass --apply to run this for real.")
+    elif result.halted_at is None:
+        click.echo(f"{noun} complete: all {total} node(s) deployed and gate passed.")
+    else:
+        click.echo(f"{noun} HALTED after {len(result.completed)}/{total} node(s).")
+
+    index = 0
+    for r in result.completed:
+        index += 1
+        click.echo(f"  [{index}/{total}] {r.node}\t{r.detail}")
+    if result.halted_at is not None:
+        index += 1
+        click.echo(f"  [{index}/{total}] {result.halted_at}\tHALTED: {result.reason}")
+        for node in result.remaining:
+            index += 1
+            click.echo(
+                f"  [{index}/{total}] {node}\tnot attempted; {noun} halted before reaching it"
+            )
+
+
+@fleet.command("rollout")
+@click.option(
+    "--node",
+    "nodes",
+    multiple=True,
+    required=True,
+    help="A node to roll out to, in the order given. Repeat for each node, "
+    "e.g. --node chiap01 --node chiap02 --node chiap03.",
+)
+@click.option(
+    "--repo-root",
+    "repo_root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Checkout to build the manifest from, and to compare THIS machine "
+    "against when it is one of the target nodes (default: "
+    "$SKCAPSTONE_REPO_ROOT or ~/work/skcapstone).",
+)
+@click.option(
+    "--home",
+    "home",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Estate home to read/write node-scoped state under (default: $HOME).",
+)
+@click.option(
+    "--remote-repo-root",
+    "remote_repo_root",
+    default=staged_rollout.DEFAULT_REMOTE_REPO_ROOT,
+    help="Checkout path on each REMOTE node's own filesystem (default: "
+    f"{staged_rollout.DEFAULT_REMOTE_REPO_ROOT}).",
+)
+@click.option(
+    "--apply",
+    "apply_flag",
+    is_flag=True,
+    help="Execute for real. Without this flag the rollout is a DRY RUN: no "
+    "deploy, gate, or record call is made for any node.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Exit 1 when the rollout halts before every node completes.",
+)
+def rollout_cmd(
+    nodes: tuple[str, ...],
+    repo_root: Path | None,
+    home: Path | None,
+    remote_repo_root: str,
+    apply_flag: bool,
+    as_json: bool,
+    strict: bool,
+) -> None:
+    """Roll the manifest built from --repo-root out to NODES, one at a time.
+
+    DRY RUN BY DEFAULT: this command previews the plan and executes nothing
+    unless --apply is given. This is a human-invoked mechanism, not an
+    autonomous actuator; nothing schedules it, and it stops itself at the
+    first node that fails rather than continuing past a problem.
+
+    Visits --node arguments in the exact order given (repeat --node once per
+    node). For each node in turn: record the manifest now in force (so a
+    later rollback has something to return to), then deploy (git pull, pip
+    install, copy the dispatcher script, converge) and gate (the existing
+    readiness verdict plus `fleet node drift`'s own no-unambiguous-drift
+    rule -- no second notion of "healthy" is invented here). The first node
+    that fails to deploy or fails its gate HALTS the rollout: every later
+    node is left untouched, never even attempted, and the command reports
+    which node stopped it and why.
+
+    --apply is the only way anything here writes to a host. Without it, no
+    network call and no filesystem write happens for any node: this previews
+    what deploying and gating would do, it does not run a real health check
+    dressed up as a preview.
+
+    --strict sets a non-zero exit code when the rollout halts before every
+    node completes; it does not change the output (matching `node drift` and
+    `node doctor`). Re-run with --json for the full machine-readable result,
+    including every node's readiness and drift detail.
+    """
+    from . import deployment_manifest
+
+    resolved_repo_root = repo_root or _default_repo_root()
+    resolved_home = home or Path.home()
+
+    try:
+        manifest = deployment_manifest.build_manifest(resolved_repo_root, resolved_home)
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(
+            f"could not build a manifest from repo root {resolved_repo_root}: {exc}"
+        ) from exc
+
+    try:
+        plan = staged_rollout.plan_rollout(nodes, manifest)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    result = staged_rollout.execute_rollout(
+        plan,
+        dry_run=not apply_flag,
+        home=resolved_home,
+        remote_repo_root=remote_repo_root,
+        local_repo_root=resolved_repo_root,
+    )
+
+    _render_staged_result(result, as_json, noun="rollout")
+
+    if strict and result.halted_at is not None:
+        raise SystemExit(1)
+
+
+@fleet.command("rollback")
+@click.option(
+    "--node",
+    "nodes",
+    multiple=True,
+    required=True,
+    help="A node to roll back, in the order given. Repeat for each node, "
+    "e.g. --node chiap01 --node chiap02 --node chiap03.",
+)
+@click.option(
+    "--repo-root",
+    "repo_root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Checkout to compare THIS machine against when it is one of the "
+    "target nodes (default: $SKCAPSTONE_REPO_ROOT or ~/work/skcapstone).",
+)
+@click.option(
+    "--home",
+    "home",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Estate home to read/write node-scoped state under (default: $HOME).",
+)
+@click.option(
+    "--remote-repo-root",
+    "remote_repo_root",
+    default=staged_rollout.DEFAULT_REMOTE_REPO_ROOT,
+    help="Checkout path on each REMOTE node's own filesystem (default: "
+    f"{staged_rollout.DEFAULT_REMOTE_REPO_ROOT}).",
+)
+@click.option(
+    "--apply",
+    "apply_flag",
+    is_flag=True,
+    help="Execute for real. Without this flag the rollback is a DRY RUN: no "
+    "lookup, deploy, gate, or record call is made for any node.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Exit 1 when the rollback halts before every node completes.",
+)
+def rollback_cmd(
+    nodes: tuple[str, ...],
+    repo_root: Path | None,
+    home: Path | None,
+    remote_repo_root: str,
+    apply_flag: bool,
+    as_json: bool,
+    strict: bool,
+) -> None:
+    """Return NODES to whatever manifest each was running before its last
+    recorded rollout, one at a time.
+
+    DRY RUN BY DEFAULT: --apply is required to execute for real, the same
+    contract `rollout` uses.
+
+    There is no --manifest option: rollback's target is never chosen on the
+    command line. Each node's "previous manifest" is looked up per node, at
+    rollback time, from what `rollout` actually recorded for THAT node via
+    `record_deployment` -- never guessed, never reconstructed from "current
+    minus one commit". A NODE THAT HAS NO RECORDED PREVIOUS MANIFEST CAUSES
+    ROLLBACK TO REFUSE OUTRIGHT for that node: it halts there, with a reason
+    naming the node, exactly like any other halting failure, and every later
+    node is left untouched. This is deliberate: this estate's only existing
+    rollback practice before this command was hand-written `card_events`
+    evidence with no code behind it, and a refusal is a fact where a guess
+    would have been a liability.
+
+    Rollback re-runs the same gate the forward `rollout` path uses, after
+    every node, including after a successful rollback: a rollback is
+    remediation run under pressure on a fleet already known to be unhealthy,
+    which makes verifying each node MORE important, not a place to cut. When
+    the gate fails after a rollback, the node's rollback has already
+    happened; nothing here undoes it (there is no rollback-of-a-rollback).
+    What halts is only the ADVANCE to later nodes, reported with a reason
+    that says "after rollback" so it is never mistaken for a forward-deploy
+    failure.
+
+    --strict sets a non-zero exit code when the rollback halts before every
+    node completes; it does not change the output. Re-run with --json for
+    the full machine-readable result.
+    """
+    try:
+        plan = staged_rollout.plan_rollback(nodes)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    resolved_repo_root = repo_root or _default_repo_root()
+    resolved_home = home or Path.home()
+
+    result = staged_rollout.execute_rollback(
+        plan,
+        dry_run=not apply_flag,
+        home=resolved_home,
+        remote_repo_root=remote_repo_root,
+        local_repo_root=resolved_repo_root,
+    )
+
+    _render_staged_result(result, as_json, noun="rollback")
+
+    if strict and result.halted_at is not None:
         raise SystemExit(1)
 
 

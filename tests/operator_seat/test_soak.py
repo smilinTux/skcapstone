@@ -8,6 +8,7 @@ fleet tree -- never the live `~/.skcapstone/fleet`.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 from skcapstone.fleet import store
 from skcapstone.fleet.paths import FleetPaths
@@ -270,8 +271,6 @@ def test_prune_ignores_malformed_filenames(tmp_path):
     d.mkdir(parents=True)
     junk = d / "not-a-soak-file.jsonl"
     junk.write_text("{}\n")
-    from datetime import datetime, timezone
-
     soak.prune(paths, retention_days=1, now=datetime(2026, 8, 24, tzinfo=timezone.utc))
     assert junk.exists()
 
@@ -280,8 +279,6 @@ def test_prune_ignores_malformed_filenames(tmp_path):
 
 
 def _write_sample(paths, *, node, day_iso, apps):
-    from datetime import datetime
-
     when = datetime.strptime(day_iso, "%Y-%m-%dT%H:%M:%SZ")
     path = soak.soak_dir(paths) / f"{node}-{when.strftime('%Y-%m-%d')}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -340,7 +337,7 @@ def test_report_counts_lane_conflict_only_when_both_lanes_are_ok(tmp_path):
             _app_sample("skchat", "ok", {"AuthEnforced": "True"}, "ok", {"AuthEnforced": "False"})
         ],
     )
-    rep = soak.report(paths)
+    rep = soak.report(paths, now=datetime(2026, 8, 24, tzinfo=timezone.utc))
     (app,) = rep["apps"]
     assert app["lane_conflicts"] == 1
     assert "AuthEnforced" in app["conflict_examples"][0]
@@ -357,7 +354,7 @@ def test_report_does_not_count_conflict_when_endpoint_lane_not_ok(tmp_path):
             _app_sample("skgateway", "endpoint-unreachable", {}, "ok", {"UpstreamServing": "True"})
         ],
     )
-    rep = soak.report(paths)
+    rep = soak.report(paths, now=datetime(2026, 8, 24, tzinfo=timezone.utc))
     (app,) = rep["apps"]
     assert app["comparable_samples"] == 0
     assert app["lane_conflicts"] == 0
@@ -380,7 +377,7 @@ def test_report_counts_unknown_regression_only_in_the_dangerous_direction(tmp_pa
             )
         ],
     )
-    rep = soak.report(paths)
+    rep = soak.report(paths, now=datetime(2026, 8, 24, tzinfo=timezone.utc))
     (app,) = rep["apps"]
     # EmbedServing: old=True -> endpoint=Unknown is the dangerous direction: counts.
     # ReconcileFresh: old=Unknown -> endpoint=True is signal GAINED, not lost: does not count.
@@ -400,8 +397,6 @@ def test_report_verdict_ready_requires_span_and_sample_floor(tmp_path):
             day_iso=f"2026-08-{day:02d}T00:00:00Z",
             apps=[_app_sample("cmdb", "ok", {"A": "True"}, "ok", {"A": "True"})],
         )
-    from datetime import datetime, timezone
-
     rep = soak.report(paths, window_days=30, now=datetime(2026, 8, 9, tzinfo=timezone.utc))
     (app,) = rep["apps"]
     assert app["lane_conflicts"] == 0
@@ -419,7 +414,7 @@ def test_report_verdict_soaking_when_clean_but_under_the_floor(tmp_path):
         day_iso="2026-08-24T00:00:00Z",
         apps=[_app_sample("cmdb", "ok", {"A": "True"}, "ok", {"A": "True"})],
     )
-    rep = soak.report(paths)
+    rep = soak.report(paths, now=datetime(2026, 8, 24, tzinfo=timezone.utc))
     (app,) = rep["apps"]
     assert app["verdict"] == "SOAKING"
 
@@ -432,7 +427,7 @@ def test_report_skips_malformed_lines_without_crashing(tmp_path):
     p.write_text(
         "not json\n" + json.dumps({"at": "2026-08-24T00:00:00Z", "apps": []}) + "\n{broken\n"
     )
-    rep = soak.report(paths)
+    rep = soak.report(paths, now=datetime(2026, 8, 24, tzinfo=timezone.utc))
     assert rep["sample_passes"] == 1
 
 
@@ -444,8 +439,6 @@ def test_report_ignores_samples_outside_the_window(tmp_path):
         day_iso="2020-01-01T00:00:00Z",
         apps=[_app_sample("cmdb", "ok", {"A": "True"}, "ok", {"A": "False"})],
     )
-    from datetime import datetime, timezone
-
     rep = soak.report(paths, window_days=7, now=datetime(2026, 8, 24, tzinfo=timezone.utc))
     assert rep["apps"] == []
     assert rep["sample_passes"] == 0

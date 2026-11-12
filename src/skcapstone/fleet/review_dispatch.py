@@ -1,0 +1,783 @@
+"""Governed review transport on the existing authority and sknoded request tree."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import secrets
+import socket
+import stat
+import subprocess
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from skcoord.card_store import CardStore
+
+from ..seat_boundaries import canonical_principal
+from ..seat_runtime import (
+    authorize_review_launch,
+    governed_review_assignment_ready,
+    recommend_reviewer,
+    review_state_revision,
+)
+from . import builder_dispatch as dispatch
+from . import production_builder as production
+from . import store
+from .evidence_io import native_command
+from .production_policy import require_destination, validate_execution_policy
+from .production_review import producer_family, provider_family, review_family_allowed
+from .refusal_log import note, reason_of, refuse
+from .source_bundle import SourceBundleError, _binding, _review_manifest
+
+SCHEMA = "skfleet.builder-dispatch/v2"
+CAPABILITY = "remote-review-v1"
+_REVIEW_SOURCE_HOLD_REASONS = {
+    "review source metadata malformed",
+    "review source binding conflict",
+    "review source head binding invalid",
+    "review source manifest is not an object",
+    "review source manifest binding mismatch",
+    "review source manifest hash invalid",
+    "review source manifest reference invalid",
+    "review source candidate binding mismatch",
+    "review source bundle digest mismatch",
+    "review source artifacts unavailable or invalid",
+    "review source workspace already exists",
+    "review source object import failed",
+    "review bundle advertised head differs",
+    "review source tree differs",
+    "review source workspace appeared during import",
+    "review source import refused",
+}
+
+
+# Fixed custody refusals raised by this module. Their text is a constant, never
+# a path or card content, so the dispatcher may log them as reason codes.
+_REVIEW_CUSTODY_HOLD_REASONS = {
+    "original source custody unavailable",
+    "sealed producer generation unavailable",
+    "review source generation changed",
+    "review is not the current attempt",
+    "review product outside active scope",
+    "remote review request contract differs",
+    "remote review generation is malformed",
+    "remote review offer expired",
+}
+
+
+def hold_reason(error: BaseException) -> str:
+    """Expose only fixed reason codes in dispatcher evidence."""
+    name = type(error).__name__
+    detail = str(error)
+    if isinstance(error, SourceBundleError) and detail in _REVIEW_SOURCE_HOLD_REASONS:
+        return name + ":" + detail.replace(" ", "-")
+    if type(error) is ValueError and detail in _REVIEW_CUSTODY_HOLD_REASONS:
+        return name + ":" + detail.replace(" ", "-")
+    return name
+
+
+def partition_remote_reviews(owned, rollout):
+    """Send only native source-only reviews remotely.
+
+    offer_review() requires a sealed source manifest and collect() requires the
+    source-only label, so a legacy provisional review (even a distinct GLM one)
+    can never be offered. Routing it here only held it forever with
+    "original source custody unavailable" while also removing it from the
+    local seat path. Legacy reviews stay on their existing local seat.
+    """
+    remote = [
+        row
+        for row in owned
+        if {"review", "seat-seraph", "source-only"} <= set(row[4])
+        and (rollout["card_ids"] is None or row[2] in rollout["card_ids"])
+    ]
+    remote_ids = {row[2] for row in remote}
+    return remote, [row for row in owned if row[2] not in remote_ids]
+
+
+def _revision_drift_is_supplemental(home, review, source, pinned_revision, current_revision):
+    """Allow only an unstarted review to absorb a later native readback link."""
+    if pinned_revision == current_revision:
+        return True
+    if review.status.value != "review" or review.owner or review.meta.get("claim_conflicts"):
+        return False
+
+    cards = CardStore(home)
+    review_events = cards._read_events(review.id)
+    candidate_digest = _binding(review.model_dump(mode="json"), "candidate_evidence_sha256")
+    recommendations = [
+        event
+        for event in review_events
+        if event.get("action") == "review_assignment_recommendation"
+        and event.get("recommendation_id") == "link-review-" + review.id
+        and event.get("evidence_sha256") == candidate_digest
+    ]
+    if len(recommendations) != 1:
+        return False
+    opened_at = recommendations[0].get("ts")
+    if not isinstance(opened_at, str):
+        return False
+    try:
+        opened = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if opened.tzinfo is None:
+        return False
+
+    started_actions = {"claim", "remote_review_offer", "review_assignment_launch", "verdict"}
+    if any(event.get("action") in started_actions for event in review_events):
+        return False
+
+    source_events = cards._read_events(source.id) + cards._legacy_events(source.id)
+    unique_events = {}
+    for event in source_events:
+        event_id = event.get("event_id")
+        if isinstance(event_id, str) and event_id:
+            identity = ("native", event_id)
+        elif (
+            event.get("origin") == "legacy-overlay"
+            and isinstance(event.get("ts"), str)
+            and isinstance(event.get("writer"), str)
+            and type(event.get("seq")) is int
+            and event["seq"] >= 0
+        ):
+            # The sanctioned append-only overlay uses (ts, writer, seq), not
+            # event_id. Its legacy projection must participate in the same
+            # source-generation check as native CardStore events.
+            identity = ("legacy-overlay", event["ts"], event["writer"], event["seq"])
+        else:
+            return False
+        prior = unique_events.get(identity)
+        if prior is not None and any(
+            prior.get(key) != event.get(key)
+            for key in ("action", "link_key", "link_value", "ts", "writer")
+        ):
+            return False
+        unique_events[identity] = event
+    later = []
+    for event in unique_events.values():
+        stamp = event.get("ts")
+        if not isinstance(stamp, str):
+            return False
+        try:
+            occurred = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if occurred.tzinfo is None:
+            return False
+        if occurred > opened:
+            later.append(event)
+    return bool(later) and all(
+        event.get("action") == "link" and event.get("link_key") == "native_glm_readback"
+        for event in later
+    )
+
+
+def validate_contract(request, policy, *, host, historical=False):
+    """Reject ambiguous role, placement, generation or independence bindings."""
+    validate_execution_policy(policy)
+    bound = request["production"]
+    admitted = request["policy"]
+    validate_execution_policy(admitted)
+    rollout = admitted["remote_review"]
+    source = request["source"]
+    family = producer_family(source["owner"], source["family"])
+    if (
+        request.get("schema") != SCHEMA
+        or request.get("work_kind") != "review"
+        or request.get("capability") != CAPABILITY
+        or request.get("seat") != "seraph"
+        or not {"review", "seat-seraph", "source-only"} <= set(request["labels"])
+        or request["reviewer"] != "pi-seraph-" + host + "-" + request["card_id"]
+        or canonical_principal(source["owner"]) == canonical_principal(request["reviewer"])
+        or provider_family(bound["family"]) != provider_family(bound["provider_family"])
+        or provider_family(bound["capacity_domain"]) != provider_family(bound["family"])
+        or not review_family_allowed(family, bound["family"], request["labels"], policy=admitted)
+        or bound["provider"] != "skgateway"
+        or bound["host"] != host
+        or bound["authority"] != policy["authority_host"]
+        or admitted["authority_host"] != policy["authority_host"]
+        or bound["policy_sha256"] != production.digest(admitted)
+        or bound["resources"] != require_destination(admitted, host)
+        or not rollout["enabled"]
+        or host not in rollout["destinations"]
+        or (rollout["card_ids"] is not None and request["card_id"] not in rollout["card_ids"])
+        or request.get("writer", {}).get("role") != "scheduler"
+        or request.get("writer", {}).get("node") != "niobe"
+        or not request["writer"].get("identity")
+    ):
+        raise ValueError("remote review request contract differs")
+    require_destination(policy, host)
+    for value, width in [
+        (request["request_id"], 64),
+        (request["card_id"], 8),
+        (request["review_revision"], 64),
+        (source["card"], 8),
+        (source["revision"], 64),
+        (source["claim"], 32),
+        (source["head"], 40),
+        (source["tree"], 40),
+        (source["evidence_sha256"], 64),
+        (source["manifest_sha256"], 64),
+    ]:
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{%d}" % width, value):
+            raise ValueError("remote review generation is malformed")
+    expiry = datetime.fromisoformat(request["lease_expires_at"].replace("Z", "+00:00"))
+    if expiry.tzinfo is None or (not historical and expiry <= datetime.now(timezone.utc)):
+        raise ValueError("remote review offer expired")
+
+
+def _source(home, card, *, historical=False):
+    """Resolve producer facts from native source custody, not review prose."""
+    from ..seraph_review_cardstore import LiveCardStoreGateway
+    from .evidence_io import _current_outcome, _producer_terminal
+    from .source_custody import sealed_source_outcome as _sealed_source_outcome
+
+    core = card.model_dump(mode="json")
+    parent, head = _binding(core, "link_source_card"), _binding(core, "link_head_revision")
+    repository = _binding(core, "repository")
+    selected = _review_manifest(core, repository, head)
+    source = CardStore(home).fold(parent) if parent else None
+    if (
+        selected is None
+        or source is None
+        or source.archived
+        or source.status.value
+        in {
+            "done",
+            "archived",
+        }
+    ):
+        raise ValueError("original source custody unavailable")
+    manifest, _ = selected
+    if historical:
+        owner, claim = manifest.get("owner"), manifest.get("claim_revision")
+        if not isinstance(owner, str) or not isinstance(claim, str):
+            raise ValueError("sealed producer generation unavailable")
+        outcome = _sealed_source_outcome(
+            CardStore(home), parent, owner, claim, head, manifest["tree"]
+        )
+        revision = _binding(core, "source_revision")
+    else:
+        if not source.owner:
+            raise ValueError("original source custody unavailable")
+        owner, claim = source.owner, source.meta.get("_claim_revision")
+        outcome = _current_outcome(CardStore(home), source)
+        revision = LiveCardStoreGateway(home).read_card(parent).revision
+    if (
+        outcome.get("verdict") != "PASS_FOR_REVIEW"
+        or outcome.get("candidate_commit") != head
+        or manifest["owner"] != owner
+        or manifest["claim_revision"] != claim
+        or _binding(core, "producer_identity") != owner
+        or (
+            not historical
+            and not _revision_drift_is_supplemental(
+                home, card, source, _binding(core, "source_revision"), revision
+            )
+        )
+        or {"hold", "do-not-claim"}.intersection(source.labels)
+    ):
+        raise ValueError("review source generation changed")
+    if not historical:
+        from ..review_work_identity import card_generation, review_card_id
+
+        # One review attempt per candidate commit: the identity is keyed by the
+        # exact head, producer generation and evidence, so a new commit gets a
+        # new review and an older attempt can never be the current one.
+        if (
+            review_card_id(parent, head, card_generation(source), outcome["candidate_sha256"])
+            != card.id
+        ):
+            raise ValueError("review is not the current attempt")
+    terminal = _producer_terminal(Path(home), source, manifest)
+    producer_family(owner, terminal["family"])
+    return dict(
+        card=parent,
+        revision=revision,
+        claim=claim,
+        owner=owner,
+        family=terminal["family"],
+        head=head,
+        tree=manifest["tree"],
+        evidence_sha256=manifest["evidence_sha256"],
+        manifest_sha256=production.digest(manifest),
+    )
+
+
+def _activation(home, policy, card):
+    """Fail closed: the Niobe activation record that scoped remote review is retired.
+
+    The paused Niobe seat and its activation file were removed in the dispatcher
+    cut, so no review offer can be authorised from them any more. Raising here
+    keeps ``offer`` and the claim recheck refusing instead of trusting a
+    missing gate.
+    """
+    raise ValueError("remote review activation is retired")
+
+
+def _current(home, request, *, claimed=False):
+    """Recheck native explicit dependencies, holds, complete criteria and source."""
+    from ..human_wait import assert_human_claim
+    from ..review_admission import dependency_blocker_unresolved, governed_review_gate_reasons
+
+    cards = CardStore(home)
+    card = cards.fold(request["card_id"])
+    if card is None or card.archived or card.meta.get("claim_conflicts"):
+        raise ValueError("review is unavailable")
+    core = card.model_dump(mode="json")
+    dependencies = [cards.fold(key) for key in card.dependencies]
+    if (
+        any(row is None or row.status.value != "done" for row in dependencies)
+        or {"hold", "do-not-claim"}.intersection(card.labels)
+        or dependency_blocker_unresolved(home, core, card.labels)
+        or governed_review_gate_reasons(core, card.labels)
+    ):
+        raise ValueError("review has unfinished explicit gates")
+    assert_human_claim(home, card.id, request["reviewer"])
+    if not claimed and (
+        not governed_review_assignment_ready(card)
+        or review_state_revision(card) != request["review_revision"]
+    ):
+        raise ValueError("review changed before claim")
+    if claimed and card.owner != request["reviewer"]:
+        raise ValueError("review exact owner changed")
+    if _source(home, card) != request["source"]:
+        raise ValueError("source changed after offer")
+    if _activation(home, request["policy"], card) != request["activation_sha256"]:
+        raise ValueError("authority activation changed")
+    # Claim changes status/owner, but never authorizes edited instructions.
+    if (
+        production.digest(
+            {
+                key: core.get(key)
+                for key in (
+                    "title",
+                    "description",
+                    "acceptance_criteria",
+                    "labels",
+                    "dependencies",
+                    "links",
+                )
+            }
+        )
+        != request["criteria_sha256"]
+    ):
+        raise ValueError("review contract changed")
+    return card
+
+
+def _capable(paths, node):
+    spec = store.read_spec(paths, "node", node) or {}
+    # Operator-owned installation capability; a heartbeat cannot self-qualify.
+    return CAPABILITY in spec.get("spec", {}).get("capabilities", [])
+
+
+def _offer_directory_safe(paths, node, card_id):
+    """Skip offer targets whose request parent the sealed writer rejects."""
+    directory = dispatch.request_path(paths, node, card_id).parent
+    try:
+        if directory.resolve(strict=False) != directory:
+            return refuse(
+                "offer-directory",
+                card_id,
+                f"node={node} offer directory path is a symlink or not canonical",
+            )
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if directory.resolve() != directory:
+            return refuse(
+                "offer-directory",
+                card_id,
+                f"node={node} offer directory path is a symlink or not canonical",
+            )
+        info = directory.stat(follow_symlinks=False)
+    except OSError as exc:
+        return refuse("offer-directory", card_id, f"node={node} {reason_of(exc)}")
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        return refuse(
+            "offer-directory",
+            card_id,
+            f"node={node} offer directory is not a directory owned by this user",
+        )
+    if info.st_mode & 0o022:
+        try:
+            fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as exc:
+            return refuse("offer-directory", card_id, f"node={node} {reason_of(exc)}")
+        try:
+            opened = os.fstat(fd)
+            if (
+                opened.st_dev != info.st_dev
+                or opened.st_ino != info.st_ino
+                or opened.st_uid != os.getuid()
+            ):
+                return refuse(
+                    "offer-directory",
+                    card_id,
+                    f"node={node} offer directory changed while opening",
+                )
+            os.fchmod(fd, stat.S_IMODE(opened.st_mode) & ~0o022)
+            info = os.fstat(fd)
+        except OSError as exc:
+            return refuse("offer-directory", card_id, f"node={node} {reason_of(exc)}")
+        finally:
+            os.close(fd)
+    return stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o022
+
+
+def _recorded(home, request):
+    events = CardStore(home)._read_events(request["card_id"])
+    matches = [
+        e
+        for e in events
+        if e.get("action") == "remote_review_offer"
+        and e.get("request_id") == request["request_id"]
+    ]
+    if (
+        len(matches) != 1
+        or matches[0].get("writer") != "niobe"
+        or matches[0].get("request_sha256") != production.digest(request)
+    ):
+        raise ValueError("exact native authority offer is missing")
+
+
+def _defer(card_id, reason, *, expected=True):
+    """Record why an offer was deferred; unexpected reasons also log a warning."""
+    if expected:
+        note(card_id, reason)
+    else:
+        refuse("review-offer", card_id, reason)
+    return None
+
+
+def offer_review(paths, home, card_id, *, writer):
+    """Offer once under the existing serialized authority placement lock."""
+    policy = production.policy()
+    if not policy or not policy.get("remote_review", {}).get("enabled"):
+        return _defer(card_id, "remote review disabled")
+    if (
+        socket.gethostname().split(".")[0].lower() != policy["authority_host"]
+        or writer.role != "scheduler"
+        or writer.node != "niobe"
+    ):
+        raise ValueError("only the current authority may offer a remote review")
+    with dispatch._request_exclusion(paths.root / "dispatch/.production-offer"):
+        if not store.actuation_allowed(paths):
+            return _defer(card_id, "fleet actuation paused")
+        # Any generation, including expired or orphaned custody, suppresses
+        # reassignment. An operator must resolve uncertain custody explicitly.
+        existing = list((paths.root / "dispatch").glob("*/" + card_id + ".json"))
+        events = CardStore(home)._read_events(card_id)
+        offered = any(e.get("action") == "remote_review_offer" for e in events)
+        if existing or offered or card_id in dispatch.held_card_ids(paths):
+            return _defer(card_id, "offer or custody already exists")
+        rollout = policy["remote_review"]
+        if rollout["card_ids"] is not None and card_id not in rollout["card_ids"]:
+            return _defer(card_id, "card outside remote review rollout")
+        card = CardStore(home).fold(card_id)
+        if not governed_review_assignment_ready(card):
+            return _defer(card_id, "review not ready for assignment", expected=False)
+        source = _source(home, card)
+        from .production_receipts import card_required_size
+
+        route = "sk-" + (card_required_size(card) or "").lower()
+        routes = production.production_routes.candidates(policy, route, card.labels)
+        family = producer_family(source["owner"], source["family"])
+        routes = [
+            r
+            for r in routes
+            if review_family_allowed(family, r["family"], card.labels, policy=policy)
+        ]
+        nodes = production.ready_nodes(paths, dispatch._ready_builders(paths), policy, card_id)
+        ready_count = len(nodes)
+        nodes = [
+            v
+            for v in nodes
+            if _capable(paths, v.name)
+            and production.node_binding(paths, v.name, policy)["host"] in rollout["destinations"]
+            and _offer_directory_safe(paths, v.name, card_id)
+        ]
+        capable_count = len(nodes)
+        nodes = dispatch._production_ready(paths, nodes, policy, card_id)
+        if not routes or not nodes:
+            if not routes:
+                why = "no eligible review route (candidates or producer family)"
+            elif not ready_count:
+                why = "no ready builder node"
+            elif not capable_count:
+                why = "no node with review capability, allowed destination and safe offer dir"
+            else:
+                why = "no node passed production readiness"
+            return _defer(card_id, why, expected=False)
+        primary = [
+            v
+            for v in nodes
+            if production.node_binding(paths, v.name, policy)["host"] != policy["authority_host"]
+        ]
+        candidates = primary or nodes
+        node = min(candidates, key=lambda v: dispatch.production_load_key(paths, v, policy)).name
+        bound = {**production.node_binding(paths, node, policy), **routes[0]}
+        core = card.model_dump(mode="json")
+        request = dict(
+            schema=SCHEMA,
+            work_kind="review",
+            capability=CAPABILITY,
+            request_id=secrets.token_hex(32),
+            card_id=card_id,
+            node=node,
+            seat="seraph",
+            reviewer="pi-seraph-" + bound["host"] + "-" + card_id,
+            review_revision=review_state_revision(card),
+            source=source,
+            criteria_sha256=production.digest(
+                {
+                    key: core.get(key)
+                    for key in (
+                        "title",
+                        "description",
+                        "acceptance_criteria",
+                        "labels",
+                        "dependencies",
+                        "links",
+                    )
+                }
+            ),
+            activation_sha256=_activation(home, policy, card),
+            policy=policy,
+            production=bound,
+            logical_route=route,
+            labels=card.labels,
+            repository=_binding(core, "repository"),
+            base_revision=source["head"],
+            offered_at=dispatch._iso(dispatch._now()),
+            lease_expires_at=dispatch._iso(
+                dispatch._now() + timedelta(seconds=dispatch.LEASE_SECONDS)
+            ),
+            writer=dict(role=writer.role, node=writer.node, identity=writer.identity),
+        )
+        validate_contract(request, policy, host=bound["host"])
+        _current(home, request)
+        # Persist the request before the ledger proof: a crash holds the offer,
+        # and consumers refuse until both independently readable records exist.
+        path = dispatch.request_path(paths, node, card_id)
+        from .source_bundle import _once
+
+        _once(path, json.dumps(request, sort_keys=True).encode())
+        CardStore(home).append_event(
+            card_id,
+            "remote_review_offer",
+            "niobe",
+            request_id=request["request_id"],
+            request_sha256=production.digest(request),
+        )
+        return request
+
+
+def validate_request(paths, home, node, request, *, claimed=False):
+    """Validate live destination/node/route truth before any claim or spawn."""
+    policy = production.policy()
+    if policy is None:
+        raise ValueError("remote review requires production policy")
+    host = socket.gethostname().split(".")[0].lower()
+    try:
+        validate_contract(request, policy, host=host)
+    except ValueError as exc:
+        if str(exc) != "remote review offer expired":
+            raise
+        # Capacity may defer an exact native offer past its lease without ever
+        # launching it. Continue only that same generation under current
+        # source/policy/activation checks; unknown custody still stays held.
+        if not _expired_unlaunched(paths, home, node, request):
+            raise
+        validate_contract(request, policy, host=host, historical=True)
+    if request["node"] != node or not _capable(paths, node):
+        raise ValueError("destination consumer capability or node differs")
+    production.validate_request(paths, node, request, local=True)
+    if not any(
+        view.name == node
+        for view in production.ready_nodes(
+            paths, dispatch._ready_builders(paths), policy, request["card_id"]
+        )
+    ):
+        raise ValueError("destination no longer ready or resource feasible")
+    if not store.actuation_allowed(paths):
+        raise ValueError("fleet actuation is frozen")
+    _recorded(home, request)
+    return _current(home, request, claimed=claimed)
+
+
+def _expired_unlaunched(paths, home, node, request):
+    """Prove the expired review has recommendation but no launch custody."""
+    if dispatch.status_path(paths, node, request["card_id"]).exists():
+        return False
+    events = CardStore(home)._read_events(request["card_id"])
+    recommendation = request["request_id"]
+    if not any(
+        row.get("action") == "review_assignment_recommendation"
+        and row.get("recommendation_id") == recommendation
+        and row.get("reviewer") == request["reviewer"]
+        for row in events
+    ) or any(row.get("action") == "review_assignment_launch" for row in events):
+        return False
+    observed = process_snapshot(request["card_id"])
+    return not any(observed.values())
+
+
+def process_snapshot(card):
+    """Read local service/session custody; failed inventory is a hold."""
+    from .production_resources import active_resource_units
+
+    units = [
+        r["unit"] for r in active_resource_units() if r["unit"].endswith("-" + card + ".service")
+    ]
+    result = subprocess.run(
+        ["tmux", "ls", "-F", "#{session_name}"], capture_output=True, text=True, timeout=5
+    )
+    if result.returncode not in {0, 1}:
+        raise ValueError("session inventory unavailable")
+    sessions = [s for s in result.stdout.splitlines() if s.endswith("-" + card)]
+    return dict(units=units, sessions=sessions)
+
+
+def consume_review(paths, home, node, request, *, launcher=None):
+    """Use governed recommendation and native claim, then destination admission."""
+    from .production_admission import AdmissionDeferredError, admission_ready
+    from .source_bundle import import_review_source
+
+    prior = dispatch._validated_status(
+        dispatch.status_path(paths, node, request["card_id"]), paths, node
+    )
+    if prior:
+        return reconcile_review(paths, home, request, prior)
+    card = validate_request(paths, home, node, request)
+    production.review_runtime()
+    dispatch._guard_path()
+    host, owner = request["production"]["host"], request["reviewer"]
+    ready, _ = admission_ready(home, request["policy"], host)
+    if not ready:
+        return None  # No claim, intent or retry is charged for capacity deferral.
+    observed = process_snapshot(card.id)
+    if any(observed.values()):
+        raise ValueError("review already has a same-card process")
+    workspace = paths.root / "workspaces" / owner
+    if not workspace.exists():
+        if not import_review_source(
+            card.model_dump(mode="json"),
+            request["repository"],
+            request["source"]["head"],
+            workspace,
+        ):
+            raise ValueError("exact review source could not be materialized")
+    validate_request(paths, home, node, request)
+    production.production_routes.preflight(request["policy"], request["production"])
+    recommendation = recommend_reviewer(
+        home,
+        card_id=card.id,
+        recommendation_id=request["request_id"],
+        author=request["source"]["owner"],
+        candidates=[owner],
+        observed_process=observed,
+        evidence_sha256=request["source"]["evidence_sha256"],
+        expected_state_revision=request["review_revision"],
+    )
+    handoff = authorize_review_launch(
+        home,
+        recommendation,
+        actor=owner,
+        current_process=process_snapshot(card.id),
+        used_recommendation_ids={
+            e.get("recommendation_id")
+            for e in CardStore(home)._read_events(card.id)
+            if e.get("action") == "review_assignment_launch"
+        },
+    )
+    capacity_path = Path(home) / "evidence" / ("fleet-review-routes." + host + ".json")
+    capacity_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    dispatch.atomic_write_text(
+        capacity_path, json.dumps(production.production_routes.snapshot(request["policy"]))
+    )
+    native_command(home, ["claim", card.id, "--agent", owner])
+    card = validate_request(paths, home, node, request, claimed=True)
+    claim = card.meta["_claim_revision"]
+    try:
+        return production.launch_review(
+            paths, home, request, card, handoff, workspace, launcher=launcher
+        )
+    except AdmissionDeferredError:
+        native_command(
+            home,
+            [
+                "release-claim",
+                card.id,
+                "--owner",
+                owner,
+                "--expected-claim-revision",
+                claim,
+                "--agent",
+                owner,
+                "--abandon-reason",
+                "error",
+            ],
+        )
+        return None
+
+
+def reconcile_review(paths, home, request, status):
+    """Retain every uncertain generation; exit alone never completes a review."""
+    from .production_review_custody import read_exit, unit_terminal
+    from .source_bundle import export_review_packet, retain_review_packet
+
+    process = dispatch._PROCESSES.get(request["request_id"])
+    if process is not None and hasattr(process, "poll") and process.poll() is not None:
+        dispatch._PROCESSES.pop(request["request_id"], None)
+    if status.get("request_id") != request["request_id"]:
+        raise ValueError("different review generation retains custody")
+    if status.get("state") in {"awaiting-review-acceptance", "review-fail", "review-blocked"}:
+        return status
+    terminal = read_exit(home, request["card_id"], status["claim_revision"])
+    execution = status["execution"]
+    if any(terminal.get(key) != execution[key] for key in ("host", "unit", "invocation")):
+        raise ValueError("remote review terminal service differs")
+    if terminal.get("execution") != execution or terminal["owner"] != request["reviewer"]:
+        raise ValueError("remote review terminal custody differs")
+    proof = unit_terminal(execution["unit"], execution["invocation"])
+    packet = export_review_packet(
+        home, Path(terminal["workspace"]), proposal_binding(request), execution=execution
+    )
+    verdict = packet["manifest"]["verdict"].split()[0]
+    return dispatch._write_status(
+        paths,
+        request["node"],
+        request,
+        "awaiting-review-acceptance" if verdict == "PASS" else "review-" + verdict.lower(),
+        owner=request["reviewer"],
+        claim_revision=status["claim_revision"],
+        claim_released=False,
+        execution=execution,
+        terminal=terminal,
+        terminal_observation=proof,
+        review_packet=retain_review_packet(home, packet),
+        admission=status["admission"],
+        route_snapshot=status["route_snapshot"],
+        acknowledgment=status["acknowledgment"],
+        command=status["command"],
+    )
+
+
+def proposal_binding(request):
+    """One original candidate and exact independent reviewer for Git inspection."""
+    return dict(
+        card=request["card_id"],
+        parent_card=request["source"]["card"],
+        source_head=request["source"]["head"],
+        source_tree=request["source"]["tree"],
+        reviewer_identity=request["reviewer"],
+    )
+
+
+def validate_execution(*args, **kwargs):
+    """Use the shared receipt validator before recording a native launch."""
+    from .production_receipts import validate_review_execution
+
+    return validate_review_execution(*args, **kwargs)

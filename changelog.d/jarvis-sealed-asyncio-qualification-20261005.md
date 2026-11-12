@@ -1,0 +1,1 @@
+- Card `9817b0ae`: explicitly load the trusted pytest-asyncio plugin in sealed tests while keeping plugin autoload disabled, and bind its code and metadata to the scoped test runtime fingerprint. Exact-source SKLegal qualification previously refused strict asyncio configuration before running any tests.

@@ -46,8 +46,11 @@ def test_launch_command_creates_a_collected_user_service() -> None:
         "--unit",
         "skfleet-worker-codex-3b227de2.service",
         "--property=KillMode=control-group",
+        "--setenv=SKMEMORY_HOOKS=off",
         "--working-directory",
         "/workspace",
+        # Deployed dispatcher 997b9795 separates systemd options from argv.
+        "--",
         "bash",
         "-lc",
         "worker",
@@ -79,7 +82,7 @@ def test_invalid_legacy_id_does_not_block_valid_subsequent_unit() -> None:
 
 def test_unit_identity_skip_precedes_workspace_and_claim() -> None:
     source = ROTATE.read_text(encoding="utf-8")
-    loop = source[source.index("for _LANE,(_,_,cid,core,_labels,_nb) in picks:") :]
+    loop = source[source.index("for _pick_index,") :]
     skip_at = loop.index("UNSUPPORTED_CARD_ID|")
     materialize_at = loop.index("workspace=_materialize_worker_workspace(")
     claim_at = loop.index('claim=subprocess.run([SKC,"coord","claim",cid')
@@ -117,10 +120,16 @@ def test_migration_counts_and_publishes_old_and_new_workers() -> None:
 
 def test_launch_delegates_exact_claim_release_to_wrapper() -> None:
     source = ROTATE.read_text(encoding="utf-8")
-    assert "release-claim" not in source[source.index("child=(") : source.index("wrapper=os.path")]
-    assert 'trap "stop_beat; idle_agent; exit 143" HUP INT TERM' in source
-    assert 'trap "stop_beat; idle_agent" EXIT' in source
+    child = source[source.index("child=(") : source.index("wrapper=os.path")]
+    assert "release-claim" not in child
+    assert "idle_agent" not in child
+    assert 'trap "stop_beat; exit 143" HUP INT TERM' in source
+    assert 'trap "stop_beat" EXIT' in source
     assert '"--claim-revision",claimed_revision' in source
     assert '"--live-snapshot",os.path.join(LIVE, HOST + ".json")' in source
-    assert "subprocess.run(_worker_launch_command(unit,workspace,inner)" in source
+    # Captured dispatcher 997b9795 reserves production custody before spawning.
+    prepared = source.index("_launch_argv=_worker_launch_command(unit,workspace,inner)")
+    reserved = source.index("_launch_argv=reserve_launch(", prepared)
+    spawned = source.index("r=subprocess.run(_launch_argv,", reserved)
+    assert prepared < reserved < spawned
     assert '["tmux","new-session"' not in source

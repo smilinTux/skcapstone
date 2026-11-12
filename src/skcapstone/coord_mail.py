@@ -34,10 +34,24 @@ import socket
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .estate import (
+    NODE_ENV,
+    environment_d_dir,
+    estate_id,
+    local_host,
+    node_name,
+)
+from .lifecycle_seats import LIFECYCLE_SEATS
+
 VALID_PRIORITIES = ("urgent", "normal", "fyi")
 
 #: Subdirectories every coordination plane needs. ``bootstrap`` creates these.
 COORD_SUBDIRS = ("skmail.d", "card_events", "locks", "tasks", "agents", "reviews")
+
+#: Host-local file that persists this machine's fleet node name. It lives
+#: under XDG config, NEVER in the synced coordination tree: every node has a
+#: different answer, and a synced copy would hand them all the same one.
+NODE_ENV_FILENAME = "skfleet-node.conf"
 
 
 def _now() -> str:
@@ -57,6 +71,34 @@ def writer_file(home: Path, sender: str, host: str | None = None) -> Path:
     """
     host = host or socket.gethostname()
     return mailbox_dir(home) / f"{sender.lower()}@{host}.jsonl"
+
+
+def sender_fqid(home: Path, sender: str) -> str | None:
+    """The sender's fully-qualified id, so a message says which estate it is from.
+
+    Two estates run the same agent NAMES. `jarvis@chef.skworld` on the nor
+    fleet is a different being, with a different identity, memory and operator,
+    from Casey's jarvis on chi. The mailboxes are already separated
+    structurally (a different Syncthing folder per estate, which is what
+    actually keeps them apart), but the record itself carried only a bare
+    `from: "jarvis"`. A message quoted, forwarded, or read outside its own
+    folder therefore had nothing on it to disambiguate against, and the only
+    thing standing between the two was whoever was reading remembering the
+    difference.
+
+    Best effort by design: a node with no identity file still sends, with the
+    field left None rather than the send failing. Absent is honest; a guessed
+    realm would be worse than none.
+    """
+    try:
+        data = json.loads(
+            (Path(home) / "agents" / sender.lower() / "identity" / "identity.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, ValueError):
+        return None
+    return data.get("fqid") or None
 
 
 def send(
@@ -83,6 +125,10 @@ def send(
         "re": re,
         "body": body,
         "host": host or socket.gethostname(),
+        # Which estate this came from. None when the node has no identity
+        # file; always present as a key so an unqualified sender is
+        # explicit rather than indistinguishable from an older record.
+        "from_fqid": sender_fqid(home, sender),
     }
     with open(path, "a", encoding="utf-8") as fh:
         # Same-host concurrency only; cross-host is solved by the filename.
@@ -156,14 +202,211 @@ def tail(home: Path, n: int = 10) -> list[dict]:
     return _read_all(home)[-n:]
 
 
-def bootstrap(home: Path, agent: str | None = None) -> dict:
+def _canonical(value: object) -> str:
+    """Serialize one record the way every other coordination writer does."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+
+
+def seat_control_plane_document(host: str, estate: str) -> dict:
+    """Build the estate's five-seat control record for one elected host.
+
+    Args:
+        host: The host this estate elects to run the five lifecycle seats.
+        estate: The estate identifier, used only to label the revision so a
+            record read out of context says which estate it came from.
+
+    Returns:
+        A schema 1 control record pinning all five seats to ``host``.
+    """
+    return {
+        "schema_version": 1,
+        "revision": f"{estate}-lifecycle-five-seat-v1",
+        "active_host": host,
+        "seats": {seat: [host] for seat in sorted(LIFECYCLE_SEATS)},
+    }
+
+
+def _ensure_seat_control_plane(home: Path, host: str, estate: str) -> str | None:
+    """Create ``coordination/seat-control-plane.json`` when it is absent.
+
+    Without this file EVERY lifecycle seat refuses to run, because
+    ``seat_cycle_entrypoint`` loads it before it will do anything at all.
+    Nothing in the codebase created it, so a fresh estate had six seats that
+    all failed closed until an operator wrote the file by hand.
+
+    Create-or-skip on purpose: an existing record is the estate's own
+    election and must never be silently repointed at whichever host happened
+    to run bootstrap last.
+
+    Args:
+        home: The SKCapstone home (the synced estate tree).
+        host: The host to elect when the record is absent.
+        estate: The estate identifier for the revision label.
+
+    Returns:
+        The path relative to ``home`` when created, else ``None``.
+    """
+    path = home / "coordination" / "seat-control-plane.json"
+    if path.exists():
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_canonical(seat_control_plane_document(host, estate)), encoding="utf-8")
+    return str(path.relative_to(home))
+
+
+def observation_feed_seed(home: Path, host: str, estate: str) -> dict:
+    """Build a valid, self-hashed, EMPTY Link observation feed.
+
+    The producer identity names bootstrap, not the GitHub producer, because
+    that is what actually wrote it. Claiming otherwise would put a
+    fabricated provenance behind a hash whose entire point is provenance.
+
+    Zero records is the honest content: bootstrap observed no pull requests,
+    and it has no connector with which to observe any.
+
+    Args:
+        home: The SKCapstone home, recorded as the producer workspace.
+        host: The host that produced the seed.
+        estate: The estate identifier for the source revision label.
+
+    Returns:
+        A document that ``link_observation_feed.load_observation_feed``
+        accepts, yielding an empty but well-formed feed.
+    """
+    from .link_cycle import _digest
+    from .link_observation_feed import SCHEMA, _canonical_payload
+
+    payload = {
+        "source_revision": f"{estate}-bootstrap-seed",
+        "observed_at": _now(),
+        "producer": {
+            "identity": "coord-bootstrap",
+            "host": host,
+            "session": "bootstrap",
+            "workspace": str(home),
+        },
+        "records": [],
+        "reviewer_candidates": [],
+    }
+    return {"schema": SCHEMA, **payload, "evidence_sha256": _digest(_canonical_payload(payload))}
+
+
+def _ensure_observation_feed(home: Path, host: str, estate: str) -> str | None:
+    """Create ``coordination/link-observations.json`` when it is absent.
+
+    Without it the Link seat returns ``observation_feed_missing`` on every
+    cycle. Seeding an empty feed does not invent observations: it gives Link
+    a well-formed input so its first cycle reports "nothing to recommend"
+    instead of an input error, and so the failure it reports fifteen minutes
+    later is the true one, ``observation_feed_stale``, which points at the
+    producer timer nobody enabled rather than at a missing file.
+
+    Args:
+        home: The SKCapstone home (the synced estate tree).
+        host: The host writing the seed.
+        estate: The estate identifier for the source revision label.
+
+    Returns:
+        The path relative to ``home`` when created, else ``None``.
+    """
+    path = home / "coordination" / "link-observations.json"
+    if path.exists():
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_canonical(observation_feed_seed(home, host, estate)), encoding="utf-8")
+    return str(path.relative_to(home))
+
+
+def _ensure_node_env(env_dir: Path, node: str) -> str | None:
+    """Persist ``SKFLEET_NODE`` where every shell on THIS host can see it.
+
+    The value was previously set only inside a systemd unit, so it existed
+    for the timer-driven seats and for nobody else: every interactive
+    ``skcapstone fleet ...`` call failed with "no such node object". The fix
+    is not to set it in more units, it is to put it in the host-local
+    environment, which is exactly what ``environment.d`` is for.
+
+    This file must never move into the synced tree. Every node has a
+    different node name, so one synced copy would make every node in the
+    estate answer with the first one's name.
+
+    Args:
+        env_dir: The ``environment.d`` directory under XDG config.
+        node: The derived node name to persist.
+
+    Returns:
+        The absolute path when created, else ``None``.
+    """
+    path = env_dir / NODE_ENV_FILENAME
+    if path.exists():
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# Host-local: this machine's fleet node name. Derived from the host\n"
+        "# name by `skcapstone coord bootstrap`. Never copy this file into\n"
+        "# ~/.skcapstone, which is shared with every node in the estate.\n"
+        f"{NODE_ENV}={node}\n",
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def bootstrap(
+    home: Path,
+    agent: str | None = None,
+    *,
+    host: str | None = None,
+    estate: str | None = None,
+    unit_dir: Path | None = None,
+    env_dir: Path | None = None,
+) -> dict:
     """Create the coordination skeleton. Idempotent: creates only what is absent.
 
     Nothing in coordination.py ever created these directories, which is why a
     new node silently has no mailbox until someone makes one by hand. This is
     that step, made repeatable.
+
+    A second estate stood up from scratch showed that the mailbox was only
+    part of what nobody creates. Four more things had to be made by hand
+    before a single lifecycle seat would run, and this function now makes
+    all of them, still create-or-skip so re-running it never overwrites a
+    decision the estate has already recorded:
+
+    * ``coordination/seat-control-plane.json``, without which every seat
+      refuses to run,
+    * ``coordination/link-observations.json``, without which the Link seat
+      reports ``observation_feed_missing`` forever,
+    * ``SKFLEET_NODE`` in the host-local ``environment.d``, without which
+      every interactive ``skcapstone fleet`` call fails with "no such node
+      object".
+
+    The first two go in the synced estate tree, the last two are host-local
+    and go under XDG. That split is the whole point: see
+    :mod:`skcapstone.estate`.
+
+    Args:
+        home: The SKCapstone home (the synced estate tree).
+        agent: Also create this agent's own mailbox file.
+        host: Override the local host name. Derived from the machine when
+            ``None``; no host name is ever hardcoded.
+        estate: Override the estate identifier. Resolved from
+            ``cluster.json`` or the local host when ``None``.
+        unit_dir: Unused. Kept so existing callers keep working: bootstrap no
+            longer installs any unit.
+        env_dir: Override the ``environment.d`` directory (host-local XDG
+            config). Mainly for tests.
+
+    Returns:
+        A dict with ``home``, ``created``, ``already_present``, ``mailbox``,
+        ``host``, ``estate`` and ``node``. Paths inside ``home`` are
+        reported relative to it; host-local paths outside the estate tree
+        are reported absolutely, so the report itself shows which side of
+        the split each item landed on.
     """
     home = Path(home)
+    local = local_host(host)
+    estate_name = estate_id(home, estate=estate, host=host)
+    node = node_name(host)
     created: list[str] = []
     for sub in COORD_SUBDIRS:
         p = home / "coordination" / sub
@@ -189,10 +432,27 @@ def bootstrap(home: Path, agent: str | None = None) -> dict:
             wf.touch(mode=0o600)
             created.append(str(wf.relative_to(home)))
         mailbox = str(wf)
+
+    # Estate-wide truth, written into the synced tree.
+    for made in (
+        _ensure_seat_control_plane(home, local, estate_name),
+        _ensure_observation_feed(home, local, estate_name),
+    ):
+        if made:
+            created.append(made)
+
+    # Host-local truth, written under XDG and never into the synced tree.
+    made = _ensure_node_env(env_dir or environment_d_dir(), node)
+    if made:
+        created.append(made)
+
     return {
         "home": str(home),
         "created": created,
         "mailbox": mailbox,
+        "host": local,
+        "estate": estate_name,
+        "node": node,
         "already_present": [
             s for s in COORD_SUBDIRS if str(Path("coordination") / s) not in created
         ],

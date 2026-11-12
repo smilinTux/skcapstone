@@ -70,6 +70,53 @@ CONTROL_REQUIRED = [
     "skoperator.timer",
 ]
 
+#: Independently scheduled seat timers. The control role forbids them because
+#: the single seat-cycle timer serializes Atlas, Seraph, and Niobe.
+SERIALIZED_SEAT_MUST_NOT = [
+    "skfleet-atlas.timer",
+    "skfleet-niobe-live.timer",
+    "skfleet-niobe.timer",
+    "skfleet-seraph.timer",
+]
+#: Dispatcher timers that are paused fleet-wide (skfleet cut P1). Their unit
+#: files stay installed until P4b; the profile only forbids them so that a
+#: converge run can never re-enable them. The unit files are gone from the repo
+#: (skfleet cut P4b), so this is a standing guard against a host regaining one.
+PAUSED_DISPATCHER_MUST_NOT = [
+    "skfleet-estate-glm.timer",
+    "skfleet-rotate.timer",
+    "skfleet-seat-cycle.timer",
+    "skfleet-seraph-review-publisher.timer",
+]
+SEAT_CYCLE_TIMERS = [f"skfleet-{seat}.timer" for seat in ("link", "mero")] + [
+    "skfleet-link-producer.timer",
+]
+
+#: Daily worktrunk worktree GC (docs/fleet/WORKTRUNK.md). Required wherever
+#: agents create worktrees (control, builder-standby); permitted elsewhere.
+WT_GC_UNITS = ["skfleet-wt-gc.service", "skfleet-wt-gc.timer"]
+WT_GC_REQUIRED = ["skfleet-wt-gc.timer"]
+
+#: Seat services the control role permits but does not mandate.
+SEAT_ALLOWED_EXTRA = [f"skfleet-{seat}.service" for seat in ("link", "mero")] + [
+    "skfleet-link-producer.service",
+]
+
+#: Required BY THE ROLE, as opposed to CONTROL_REQUIRED which is additionally
+#: asserted to be enabled on the node right now.
+#:
+#: The seat timers are a deliberate exception to that assertion, and the
+#: exception is the entire point of this list existing. The control profile
+#: is defined as the node that runs the control-plane loops, and the seats
+#: ARE those loops, yet they were in no profile's allowed or required list at
+#: all. So a brand new estate with none of them installed reported ok=True
+#: from `fleet install --check` while the whole workflow layer was absent.
+#: Requiring only the seats that happen to be enabled on the node today would
+#: reproduce exactly that bug: it would let the manifest agree with whatever
+#: state the node drifted into. A seat timer that is required here and not
+#: enabled on the node is a REAL drift finding, and surfacing it is the fix.
+CONTROL_ROLE_REQUIRED = sorted(set(CONTROL_REQUIRED) | set(SEAT_CYCLE_TIMERS))
+
 #: Desktop, distro and third-party noise. Patterns, not names, so a manifest
 #: does not have to be regenerated every time someone installs a snap.
 DESKTOP_IGNORE = [
@@ -200,13 +247,22 @@ def build_control() -> dict:
             "description": (
                 "The single control seat (.158, node-noroc2027). Holds the full "
                 "sovereign tree and runs the control-plane loops. Changes almost "
-                "nothing, which is the point. " + _IGNORE_RULE + " " + _ADR_LINK
+                "nothing, which is the point. Link and Mero retain bounded "
+                "timers. The seat-cycle, rotate, estate-glm and "
+                "seraph-review-publisher dispatcher timers are paused and "
+                "forbidden, as are the individual Atlas, Seraph, Niobe, and "
+                "Niobe-live timers. " + _IGNORE_RULE + " " + _ADR_LINK
             ),
-            "units": _units_block(allowed, CONTROL_REQUIRED, MODEL_SERVING),
+            "units": _units_block(
+                sorted(set(allowed) | set(SEAT_ALLOWED_EXTRA) | set(WT_GC_UNITS)),
+                CONTROL_ROLE_REQUIRED + WT_GC_REQUIRED,
+                MODEL_SERVING + SERIALIZED_SEAT_MUST_NOT + PAUSED_DISPATCHER_MUST_NOT,
+            ),
             "unitsIgnore": sorted(DESKTOP_IGNORE),
             "packages": _units_block(load_packages("node-noroc2027"), ["skcapstone"], []),
             "stateTier": "full-replica",
             "capauthIdentityClass": "operator",
+            "binaries": {"required": ["wt", "gitleaks"], "allowed": ["wt", "gitleaks"], "mustNot": []},
             "syncFolders": ["skcapstone-sync", "skfleet-control"],
         },
     )
@@ -227,12 +283,15 @@ def build_builder_standby() -> dict:
                 "source of comms pileups and outbox floods. " + _IGNORE_RULE + " " + _ADR_LINK
             ),
             "units": _units_block(
-                allowed, ["sknoded.service"], sorted(set(CONTROL_PLANE_LOOPS) | set(MODEL_SERVING))
+                sorted(set(allowed) | set(WT_GC_UNITS)),
+                ["sknoded.service"] + WT_GC_REQUIRED,
+                sorted(set(CONTROL_PLANE_LOOPS) | set(MODEL_SERVING)),
             ),
             "unitsIgnore": sorted(DESKTOP_IGNORE),
             "packages": _units_block(load_packages("node-41"), ["skcapstone"], []),
             "stateTier": "full-replica",
             "capauthIdentityClass": "agent",
+            "binaries": {"required": ["wt", "gitleaks"], "allowed": ["wt", "gitleaks"], "mustNot": []},
             "syncFolders": ["skcapstone-sync", "skfleet-control"],
         },
     )
@@ -253,7 +312,7 @@ def build_worker_gpu() -> dict:
                 "reached 83G. " + _IGNORE_RULE + " " + _ADR_LINK
             ),
             "units": _units_block(
-                allowed,
+                sorted(set(allowed) | set(WT_GC_UNITS)),
                 ["skai-beellama.service"],
                 sorted(
                     set(CONTROL_PLANE_LOOPS)
@@ -281,6 +340,7 @@ def build_worker_gpu() -> dict:
             # matrix in docs/fleet/control-bus-folder.md.
             "stateTier": "control-bus",
             "capauthIdentityClass": "worker",
+            "binaries": {"required": ["wt"], "allowed": ["wt"], "mustNot": []},
             "syncFolders": ["skfleet-control"],
         },
     )
@@ -298,8 +358,7 @@ def build_observer() -> dict:
                 "sknoded, which is the ssh-pull fallback in docs/fleet/"
                 "control-bus-folder.md. Putting SK software on the box that hosts "
                 "the node adds risk for near-zero benefit. This manifest exists so "
-                "that 'not managed' is a recorded decision rather than an omission. "
-                + _ADR_LINK
+                "that 'not managed' is a recorded decision rather than an omission. " + _ADR_LINK
             ),
             "units": _units_block(
                 [],
@@ -323,6 +382,7 @@ def build_observer() -> dict:
             },
             "stateTier": "none",
             "capauthIdentityClass": "observer",
+            "binaries": {"required": [], "allowed": ["wt"], "mustNot": []},
             "syncFolders": [],
         },
     )

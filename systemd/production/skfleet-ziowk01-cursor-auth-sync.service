@@ -1,0 +1,6 @@
+[Unit]
+Description=Push the Cursor CLI credential to the ZIOWK01 worker credential slot
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/sync-cursor-auth-ziowk01.sh

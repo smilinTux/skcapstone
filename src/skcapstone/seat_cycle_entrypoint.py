@@ -4,45 +4,35 @@ The entrypoint performs the cheap, revision-pinned host fence before opening
 CardStore or mediated PR input. A host-local :class:`SeatCycleGuard` then
 prevents a second invocation from waiting or doing duplicate work. A missing
 or invalid Link feed is recorded as an honest bounded no-op.
+
+The paused Atlas, Seraph and Niobe dispatcher seats were retired in the
+dispatcher cut; only the two seats whose units still ship are runnable here.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
-import re
 import socket
-import subprocess
-import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from skcoord.card import Column
-from skcoord.card_store import CardStore
-
-from .lifecycle_seats import LIFECYCLE_SEATS
+from .estate import host_lifecycle_claim
 from .link_cycle import recommend_one_reviewer
 from .link_observation_feed import ObservationFeedError, load_observation_feed
 from .link_review_work import load_review_work, reconcile_review_work_batch
 from .mero_census import run_blocker_census
-from .seat_boundaries import BoundaryError, canonical_principal
+from .receipt_output import condense_dispatcher_output
+from .seat_boundaries import BoundaryError
 from .seat_cycle_guard import CycleResult, SeatCycleGuard
 from .seat_mail import poll_mail, startup_hello
 
-_SEATS = LIFECYCLE_SEATS
-_LAUNCH = re.compile(
-    r"^(?P<outcome>LAUNCHED|LAUNCH_FAILED)\|(?P<host>[^|]+)\|(?P<session>[^|]+)\|(?P<card>[^|]+)"
-    r"\|lane=(?P<lane>[^|]+)\|model=(?P<model>[^|]+)"
-    r"\|owner=(?P<owner>[^|]+)\|claim_revision=(?P<revision>[^|]+)$"
-)
-_MAX_SERAPH_BATCH = 8
-_MAX_ROLE_BATCH = 8
-_NOOP = re.compile(
-    r"^NOOP_RECEIPT\|(?P<host>[^|]+)\|reason=(?P<reason>[^|]+)" r"\|seat=(?P<seat>[^|]+)$"
-)
+#: The seats this entrypoint runs. A narrower set than
+#: ``lifecycle_seats.LIFECYCLE_SEATS`` (the packaged five-seat profile
+#: contract) on purpose: the other three have no unit and no code path here.
+_SEATS = frozenset({"link", "mero"})
 
 
 def _now() -> str:
@@ -65,6 +55,10 @@ class CycleSummary:
     reason: str | None = None
     source_revision: str | None = None
     evidence_sha256: str | None = None
+    exception_type: str | None = None
+    cleanup: str | None = None
+    dispatcher_stdout: str | None = None
+    dispatcher_stderr: str | None = None
     mailbox_poll_at: str | None = None
     mailbox_ok: bool = False
     mailbox_new_messages: int = 0
@@ -73,8 +67,30 @@ class CycleSummary:
     mailbox_error: str | None = None
 
 
-def load_control_plane(path: Path) -> dict[str, Any]:
-    """Read and validate the small public active-host control record."""
+def load_control_plane(path: Path, *, host: str | None = None) -> dict[str, Any]:
+    """Read and validate the small public active-host control record.
+
+    This is the point where a record from the SYNCED coordination tree is
+    read and then trusted, so it is also where a host-local refusal belongs.
+    The election itself stays estate-wide (see :mod:`skcapstone.estate` for
+    why exactly one host per estate must be elected there). What is added on
+    top is one-directional: when this machine carries a host-local lifecycle
+    claim, the synced record has to agree with it. The claim can only ever
+    refuse, never grant, so a record that reached this machine by mis-sync or
+    tampering cannot activate a host whose own operator never declared it.
+
+    Args:
+        path: The estate's ``coordination/seat-control-plane.json``.
+        host: Running host override, for tests.
+
+    Returns:
+        The validated control record.
+
+    Raises:
+        ValueError: On a bad schema, a missing active host or revision, a seat
+            not provisioned on the active host, or a record that contradicts
+            this machine's own host-local claim.
+    """
 
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict) or value.get("schema_version") != 1:
@@ -90,6 +106,9 @@ def load_control_plane(path: Path) -> dict[str, Any]:
         hosts = seats.get(seat)
         if not isinstance(hosts, list) or active_host not in hosts:
             raise ValueError(f"seat {seat} is not provisioned on active host")
+    claim = host_lifecycle_claim(host=host)
+    if claim is not None and claim != active_host.strip().lower():
+        raise ValueError(f"seat control plane names {active_host} but this machine claims {claim}")
     return value
 
 
@@ -97,10 +116,26 @@ def _health_path(home: Path, seat: str) -> Path:
     return home / "coordination" / "seat-cycles" / f"{seat}.health.jsonl"
 
 
+def _condensed_receipt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return payload with dispatcher stdout/stderr bounded for embedding.
+
+    This is the single place both receipt outputs (the health JSONL file
+    and the CLI's own stdout summary, see main() below) go through, so
+    every current and future producer of dispatcher_stdout/stderr on
+    CycleSummary is bounded, not just the seraph timeout path that
+    happens to set them today.
+    """
+
+    payload = dict(payload)
+    payload["dispatcher_stdout"] = condense_dispatcher_output(payload.get("dispatcher_stdout"))
+    payload["dispatcher_stderr"] = condense_dispatcher_output(payload.get("dispatcher_stderr"))
+    return payload
+
+
 def _append_health(home: Path, summary: CycleSummary) -> None:
     path = _health_path(home, summary.seat)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"at": _now(), **asdict(summary)}
+    payload = _condensed_receipt_payload({"at": _now(), **asdict(summary)})
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
 
@@ -120,7 +155,7 @@ def run_cycle(
     if seat not in _SEATS:
         raise ValueError(f"unsupported recurring seat: {seat}")
     host = (local_host or socket.gethostname()).strip().lower()
-    control = load_control_plane(control_plane)
+    control = load_control_plane(control_plane, host=host)
     revision = str(control["revision"])
     if host != str(control["active_host"]):
         summary = CycleSummary(
@@ -187,6 +222,20 @@ def run_cycle(
             evidence_sha256=(
                 str(values["evidence_sha256"]) if values.get("evidence_sha256") else None
             ),
+            exception_type=(
+                str(values["exception_type"]) if values.get("exception_type") else None
+            ),
+            cleanup=str(values["cleanup"]) if values.get("cleanup") else None,
+            dispatcher_stdout=(
+                str(values["dispatcher_stdout"])
+                if values.get("dispatcher_stdout") is not None
+                else None
+            ),
+            dispatcher_stderr=(
+                str(values["dispatcher_stderr"])
+                if values.get("dispatcher_stderr") is not None
+                else None
+            ),
             **mailbox.as_dict(),
         )
     _append_health(home, summary)
@@ -200,458 +249,6 @@ def mero_operation(home: Path) -> dict[str, int]:
         "recommendations": len(report.findings),
         "suppressed": report.suppressed_unchanged,
     }
-
-
-def presence_operation() -> dict[str, int | str]:
-    """Record a bounded presence cycle without acquiring card authority."""
-
-    return {
-        "cards_examined": 0,
-        "recommendations": 0,
-        "suppressed": 0,
-        "reason": "presence_complete",
-    }
-
-
-def verify_seraph_dispatch(
-    home: Path,
-    completed: subprocess.CompletedProcess[str],
-) -> dict[str, int | str]:
-    """Verify every selector result independently and report partial outcomes."""
-
-    # The launcher writes its action log to stdout in normal operation, but
-    # worker/bootstrap failures can move the same typed lines to stderr.  A
-    # receipt is an output contract, not a stream contract, so inspect both
-    # streams without treating diagnostics as receipts.
-    output = "\n".join(
-        value
-        for value in (getattr(completed, "stdout", ""), getattr(completed, "stderr", ""))
-        if value
-    )
-    launches = [
-        match.groupdict()
-        for line in output.splitlines()
-        if (match := _LAUNCH.fullmatch(line.strip()))
-    ]
-    noops = [
-        match.groupdict()
-        for line in output.splitlines()
-        if (match := _NOOP.fullmatch(line.strip()))
-    ]
-    if completed.returncode != 0 and not launches:
-        return {
-            "cards_examined": 0,
-            "recommendations": 0,
-            "suppressed": 1,
-            "reason": "seraph_dispatch_failed",
-        }
-    if not launches and len(noops) == 1 and noops[0]["seat"] == "seraph":
-        reason = noops[0]["reason"]
-        if reason in {
-            "no_eligible_work",
-            "no_available_capacity",
-            "all_candidates_suppressed",
-            "rotation_overlap",
-        }:
-            return {
-                "cards_examined": 0,
-                "recommendations": 0,
-                "suppressed": 0,
-                "reason": f"seraph_{reason}",
-            }
-    if not launches or noops:
-        return {
-            "cards_examined": len(launches),
-            "recommendations": 0,
-            "suppressed": 1,
-            "reason": "seraph_launch_receipt_missing",
-        }
-    store = CardStore(home)
-    succeeded = failed = 0
-    invalid = int(completed.returncode != 0)
-    source_heads: set[tuple[str, str]] = set()
-    seen_cards: set[str] = set()
-    for launch in launches:
-        card = store.fold(launch["card"])
-        events = store._read_events(launch["card"])
-        recommendations = [
-            event
-            for event in events
-            if event.get("action") == "review_assignment_recommendation"
-            and event.get("writer") == "link"
-            and event.get("reviewer") == launch["owner"]
-        ]
-        receipts = [
-            event
-            for event in events
-            if event.get("action") == "review_assignment_launch"
-            and event.get("reviewer") == launch["owner"]
-            and event.get("claim_revision") == launch["revision"]
-        ]
-        producer = str((getattr(card, "links", {}) or {}).get("producer_identity") or "")
-        source_head = (
-            str(getattr(card, "meta", {}).get("link_source_card") or ""),
-            str(getattr(card, "meta", {}).get("link_head_revision") or ""),
-        )
-        model_allowed = (launch["lane"] == "codex" and launch["model"] == "sk-codex-mid") or (
-            launch["lane"] == "escalate"
-            and launch["model"] == os.environ.get("SKFLEET_ESC_MODEL", "gpt-5.6-sol")
-        )
-        common_valid = (
-            card is not None
-            and launch["card"] not in seen_cards
-            and all(source_head)
-            and source_head not in source_heads
-            and "review" in card.labels
-            and "seat-seraph" in card.labels
-            and model_allowed
-            and launch["owner"].startswith("pi-seraph-")
-            and len(recommendations) == 1
-            and len(receipts) == 1
-            and recommendations[0].get("author") == producer
-            and canonical_principal(producer) != canonical_principal(launch["owner"])
-            and canonical_principal(producer)
-            != canonical_principal(str(recommendations[0].get("reviewer") or ""))
-            and receipts[0].get("recommendation_id") == recommendations[0].get("recommendation_id")
-        )
-        seen_cards.add(launch["card"])
-        source_heads.add(source_head)
-        if not common_valid:
-            invalid += 1
-            continue
-        launched = launch["outcome"] == "LAUNCHED"
-        if receipts[0].get("launched") is not launched:
-            invalid += 1
-            continue
-        if launched:
-            status = getattr(getattr(card, "status", None), "value", getattr(card, "status", None))
-            if (
-                status != "doing"
-                or card.owner != launch["owner"]
-                or card.meta.get("_claim_revision") != launch["revision"]
-            ):
-                invalid += 1
-                continue
-            unit = f"skfleet-worker-{launch['lane']}-{launch['card']}.service"
-            active = subprocess.run(
-                ["systemctl", "--user", "is-active", "--quiet", unit],
-                capture_output=True,
-                timeout=10,
-            )
-            if active.returncode != 0:
-                invalid += 1
-                continue
-            succeeded += 1
-        elif _failed_launch_is_retryable(store, launch, card, events, receipts[0]):
-            failed += 1
-        else:
-            invalid += 1
-    suppressed = failed + invalid
-    if succeeded and suppressed:
-        reason = "seraph_dispatch_partial"
-    elif succeeded:
-        reason = "seraph_dispatch_complete"
-    else:
-        reason = "seraph_dispatch_failed"
-    return {
-        "cards_examined": len(launches),
-        "recommendations": succeeded,
-        "suppressed": suppressed,
-        "dispatch_succeeded": succeeded,
-        "dispatch_failed": suppressed,
-        "dispatch_retryable": failed,
-        "reason": reason,
-    }
-
-
-def _failed_launch_is_retryable(
-    store: CardStore,
-    launch: dict[str, str],
-    card: object,
-    events: list[dict[str, object]],
-    receipt: dict[str, object],
-) -> bool:
-    """Bind a failed launch to its exact released, currently claimable generation."""
-
-    owner = launch["owner"]
-    revision = launch["revision"]
-    claims = [
-        index
-        for index, event in enumerate(events)
-        if event.get("action") == "claim"
-        and event.get("owner") == owner
-        and (event.get("claim_revision") or event.get("event_id")) == revision
-    ]
-    releases = [
-        index
-        for index, event in enumerate(events)
-        if event.get("action") == "release_claim"
-        and event.get("released_owner") == owner
-        and event.get("expected_claim_revision") == revision
-    ]
-    try:
-        receipt_index = next(index for index, event in enumerate(events) if event is receipt)
-    except StopIteration:
-        return False
-    if (
-        len(claims) != 1
-        or len(releases) != 1
-        or not claims[0] < receipt_index < releases[0]
-        or getattr(card, "owner", None) is not None
-        or getattr(card, "status", None) != Column.BACKLOG
-        or bool(getattr(card, "archived", False))
-    ):
-        return False
-    labels = {str(label).lower() for label in getattr(card, "labels", ())}
-    if (
-        labels & {"do-not-claim", "human-gate", "not-claimable", "superseded"}
-        or any(label.startswith("superseded-") or "do-not-claim" in label for label in labels)
-        or "[human]" in str(getattr(card, "title", "")).lower()
-    ):
-        return False
-    return all(
-        (dependency := store.fold(dependency_id)) is not None and dependency.status == Column.DONE
-        for dependency_id in getattr(card, "dependencies", ())
-    )
-
-
-def seraph_operation(home: Path) -> dict[str, int | str]:
-    """Launch one configurable, bounded Seraph review batch."""
-
-    dispatcher = Path(sys.executable).parent / "skfleet-rotate.py"
-    if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
-        return {
-            "cards_examined": 0,
-            "recommendations": 0,
-            "suppressed": 1,
-            "dispatch_succeeded": 0,
-            "dispatch_failed": 1,
-            "reason": "seraph_dispatcher_missing",
-        }
-    try:
-        batch_size = int(os.environ.get("SKFLEET_SERAPH_BATCH_SIZE", "2"))
-    except ValueError:
-        batch_size = 0
-    if not 1 <= batch_size <= _MAX_SERAPH_BATCH:
-        return {
-            "cards_examined": 0,
-            "recommendations": 0,
-            "suppressed": 1,
-            "dispatch_succeeded": 0,
-            "dispatch_failed": 1,
-            "reason": "seraph_batch_size_invalid",
-        }
-    env = os.environ.copy()
-    env.update(
-        {
-            "SKFLEET_ONLY_SEAT": "seraph",
-            "SKFLEET_SEAT_TARGET": str(batch_size),
-            "SKFLEET_CODEX_MODEL_S": "sk-codex-mid",
-            "SKFLEET_QWEN_TARGET": "0",
-            "SKFLEET_GLM_TARGET": "0",
-            "SKFLEET_KIMI_TARGET": "0",
-            "SKFLEET_MAX_LAUNCH": str(batch_size),
-        }
-    )
-    completed = subprocess.run(
-        [str(dispatcher), "--go"], env=env, capture_output=True, text=True, timeout=240
-    )
-    return verify_seraph_dispatch(home, completed)
-
-
-def verify_role_dispatch(
-    home: Path, completed: subprocess.CompletedProcess[str], seat: str
-) -> dict[str, int | str]:
-    """Verify a bounded Tank or ATLAS selector result."""
-
-    output = "\n".join(
-        value
-        for value in (getattr(completed, "stdout", ""), getattr(completed, "stderr", ""))
-        if value
-    )
-    launches = [
-        match.groupdict()
-        for line in output.splitlines()
-        if (match := _LAUNCH.fullmatch(line.strip()))
-    ]
-    noops = [
-        match.groupdict()
-        for line in output.splitlines()
-        if (match := _NOOP.fullmatch(line.strip()))
-    ]
-    if not launches and len(noops) == 1 and noops[0]["seat"] == seat:
-        reason = noops[0]["reason"]
-        if completed.returncode == 0 and reason in {
-            "no_eligible_work",
-            "no_available_capacity",
-            "rotation_overlap",
-        }:
-            return {
-                "cards_examined": 0,
-                "recommendations": 0,
-                "suppressed": 0,
-                "reason": f"{seat}_{reason}",
-            }
-    if not launches or noops:
-        return {
-            "cards_examined": len(launches),
-            "recommendations": 0,
-            "suppressed": 1,
-            "dispatch_succeeded": 0,
-            "dispatch_failed": 1,
-            "reason": f"{seat}_dispatch_failed",
-        }
-
-    store = CardStore(home)
-    succeeded = failed = 0
-    invalid = int(completed.returncode != 0)
-    seen_cards: set[str] = set()
-    for launch in launches:
-        card = store.fold(launch["card"])
-        events = store._read_events(launch["card"])
-        labels = {str(label).strip().lower() for label in getattr(card, "labels", ())}
-        seat_labels = {label for label in labels if label.startswith("seat-")}
-        valid = (
-            card is not None
-            and launch["card"] not in seen_cards
-            and launch["owner"].startswith(f"pi-{seat}-")
-            and seat_labels == {f"seat-{seat}"}
-            and "dispatch-approved" in labels
-            and launch["lane"] == "codex"
-            and launch["model"] == "sk-codex-mid"
-        )
-        seen_cards.add(launch["card"])
-        if not valid:
-            invalid += 1
-            continue
-        if launch["outcome"] == "LAUNCHED":
-            status = getattr(getattr(card, "status", None), "value", getattr(card, "status", None))
-            if (
-                status != "doing"
-                or card.owner != launch["owner"]
-                or card.meta.get("_claim_revision") != launch["revision"]
-            ):
-                invalid += 1
-                continue
-            unit = f"skfleet-worker-{launch['lane']}-{launch['card']}.service"
-            active = subprocess.run(
-                ["systemctl", "--user", "is-active", "--quiet", unit],
-                capture_output=True,
-                timeout=10,
-            )
-            if active.returncode != 0:
-                invalid += 1
-                continue
-            succeeded += 1
-        elif _failed_claim_is_retryable(store, launch, card, events):
-            failed += 1
-        else:
-            invalid += 1
-    suppressed = failed + invalid
-    reason = (
-        f"{seat}_dispatch_partial"
-        if succeeded and suppressed
-        else f"{seat}_dispatch_complete" if succeeded else f"{seat}_dispatch_failed"
-    )
-    return {
-        "cards_examined": len(launches),
-        "recommendations": succeeded,
-        "suppressed": suppressed,
-        "dispatch_succeeded": succeeded,
-        "dispatch_failed": suppressed,
-        "dispatch_retryable": failed,
-        "reason": reason,
-    }
-
-
-def _failed_claim_is_retryable(
-    store: CardStore,
-    launch: dict[str, str],
-    card: object,
-    events: list[dict[str, object]],
-) -> bool:
-    """Require exact-generation claim release after a failed role launch."""
-
-    owner, revision = launch["owner"], launch["revision"]
-    claims = [
-        index
-        for index, event in enumerate(events)
-        if event.get("action") == "claim"
-        and event.get("owner") == owner
-        and (event.get("claim_revision") or event.get("event_id")) == revision
-    ]
-    releases = [
-        index
-        for index, event in enumerate(events)
-        if event.get("action") == "release_claim"
-        and event.get("released_owner") == owner
-        and event.get("expected_claim_revision") == revision
-    ]
-    if (
-        len(claims) != 1
-        or len(releases) != 1
-        or claims[0] >= releases[0]
-        or getattr(card, "owner", None) is not None
-        or getattr(card, "status", None) != Column.BACKLOG
-        or bool(getattr(card, "archived", False))
-    ):
-        return False
-    return all(
-        (dependency := store.fold(dependency_id)) is not None and dependency.status == Column.DONE
-        for dependency_id in getattr(card, "dependencies", ())
-    )
-
-
-def role_dispatch_operation(home: Path, seat: str) -> dict[str, int | str]:
-    """Launch one configurable, bounded Tank or ATLAS batch."""
-
-    dispatcher = Path(sys.executable).parent / "skfleet-rotate.py"
-    if not dispatcher.is_file() or not os.access(dispatcher, os.X_OK):
-        return {
-            "cards_examined": 0,
-            "recommendations": 0,
-            "suppressed": 1,
-            "dispatch_succeeded": 0,
-            "dispatch_failed": 1,
-            "reason": f"{seat}_dispatcher_missing",
-        }
-    env_name = f"SKFLEET_{seat.upper()}_BATCH_SIZE"
-    try:
-        batch_size = int(os.environ.get(env_name, "2"))
-    except ValueError:
-        batch_size = 0
-    if seat not in {"tank", "atlas"} or not 1 <= batch_size <= _MAX_ROLE_BATCH:
-        return {
-            "cards_examined": 0,
-            "recommendations": 0,
-            "suppressed": 1,
-            "dispatch_succeeded": 0,
-            "dispatch_failed": 1,
-            "reason": f"{seat}_batch_size_invalid",
-        }
-    env = os.environ.copy()
-    env.update(
-        {
-            "SKFLEET_ONLY_SEAT": seat,
-            "SKFLEET_SEAT_TARGET": str(batch_size),
-            "SKFLEET_CODEX_MODEL_S": "sk-codex-mid",
-            "SKFLEET_CODEX_MODEL_M": "sk-codex-mid",
-            "SKFLEET_CODEX_MODEL_L": "sk-codex-mid",
-            "SKFLEET_CODEX_MODEL_XL": "sk-codex-mid",
-            "SKFLEET_QWEN_TARGET": "0",
-            "SKFLEET_GLM_TARGET": "0",
-            "SKFLEET_KIMI_TARGET": "0",
-            "SKFLEET_MAX_LAUNCH": str(batch_size),
-        }
-    )
-    completed = subprocess.run(
-        [str(dispatcher), "--go"],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=240,
-    )
-    return verify_role_dispatch(home, completed, seat)
 
 
 def _emit_review_work(home: Path, lineage_path: Path, feed_reason: str) -> dict[str, int | str]:
@@ -689,11 +286,22 @@ def link_operation(
 ) -> dict[str, int | str]:
     """Consume mediated observations and append advisory handoffs only."""
 
+    # Replay fence: a feed whose evidence hash was already consumed by the
+    # previous cycle is refused (observation_feed_replayed), so an unchanged
+    # feed cannot append the same handoffs twice. The marker is only written
+    # after a feed has been accepted, and dry runs never reach this function.
+    marker = home / "coordination" / "seat-cycles" / "link.last-feed-sha256"
     try:
-        feed = load_observation_feed(feed_path)
+        prior = marker.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        prior = None
+    try:
+        feed = load_observation_feed(feed_path, prior_evidence_sha256=prior)
     except ObservationFeedError as exc:
         lineage = lineage_path or home / "coordination" / "link-lineage.json"
         return _emit_review_work(home, lineage, str(exc))
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(feed.evidence_sha256 + "\n", encoding="utf-8")
 
     handoffs: list[dict[str, object]] = []
     suppressed = 0
@@ -757,28 +365,13 @@ def main(argv: list[str] | None = None) -> int:
     feed_path = args.observation_feed or args.home / "coordination" / "link-observations.json"
     if args.seat == "mero":
 
-        def operation() -> dict[str, int]:
+        def operation() -> dict[str, int | str]:
             return mero_operation(args.home)
-
-    elif args.seat == "seraph":
-
-        def operation() -> dict[str, int | str]:
-            return seraph_operation(args.home)
-
-    elif args.seat == "link":
-
-        def operation() -> dict[str, int | str]:
-            return link_operation(args.home, feed_path)
-
-    elif args.seat in {"tank", "atlas"}:
-
-        def operation() -> dict[str, int | str]:
-            return role_dispatch_operation(args.home, args.seat)
 
     else:
 
         def operation() -> dict[str, int | str]:
-            return presence_operation()
+            return link_operation(args.home, feed_path)
 
     summary = run_cycle(
         seat=args.seat,
@@ -787,8 +380,8 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=args.dry_run,
         operation=operation,
     )
-    print(json.dumps(asdict(summary), sort_keys=True))
-    return 0 if summary.result not in {"inactive_host_refused"} else 75
+    print(json.dumps(_condensed_receipt_payload(asdict(summary)), sort_keys=True))
+    return 0
 
 
 if __name__ == "__main__":

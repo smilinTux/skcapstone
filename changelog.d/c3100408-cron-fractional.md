@@ -1,0 +1,1 @@
+- Card `c3100408`: accept fractional UTC timestamps emitted by SKCounter in Fleet CronJob next-run and missed-run calculations.

@@ -1,0 +1,1 @@
+- Service health sweep: the timeout retry now gets its own longer budget (`RETRY_TIMEOUT=10`, first attempt keeps `CHECK_TIMEOUT`), so a swapped-out idle service is no longer filed down while the host is under heavy swap pressure (incident `inc-fe2c6910`). Probes without a `timeout` kwarg are called bare on the retry.

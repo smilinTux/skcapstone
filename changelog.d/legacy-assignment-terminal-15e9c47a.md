@@ -1,0 +1,1 @@
+- Card `15e9c47a`: legacy dispatcher starts consume the exact claim-fenced reservation; collected native assignments release admission capacity only with bound native launch and unique systemd start/terminal evidence, preserving producer claims and source candidates.

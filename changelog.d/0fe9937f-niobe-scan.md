@@ -1,0 +1,1 @@
+- Card `0fe9937f`: reuse the POOL_V2 event fold for post-selection review observation; previously a 1,565-review scan repeated per-card probes until Niobe's 270-second child deadline expired without a terminal receipt.

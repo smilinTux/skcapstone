@@ -1,0 +1,9 @@
+[Unit]
+Description=SKCapstone sync-conflict guard: flag new Syncthing conflict copies in agent homes
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/sync-conflict-guard
+Nice=15
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin

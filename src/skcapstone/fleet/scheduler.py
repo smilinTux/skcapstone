@@ -133,7 +133,14 @@ def select(views: list[NodeView], workload: Workload) -> Decision:
         else:
             excluded[view.name] = why
     if not candidates:
-        detail = "; ".join(f"{n}: {w}" for n, w in sorted(excluded.items()))
+        # An EMPTY candidate list leaves `excluded` empty too, which used to
+        # render as the uninformative "unschedulable ()" in the dispatcher's
+        # BUILDER_DISPATCH_IDLE line. No node was filtered out because no node
+        # was offered in the first place; say that instead of an empty paren.
+        detail = (
+            "; ".join(f"{n}: {w}" for n, w in sorted(excluded.items()))
+            or "no candidate nodes were offered"
+        )
         return Decision(node=None, reason=f"unschedulable ({detail})", excluded=excluded)
     chosen = sorted(candidates, key=lambda v: _score_key(v, workload))[0]
     reason = (

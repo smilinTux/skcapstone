@@ -1,0 +1,1 @@
+- Retire an expired archived review offer when its exact producer PASS was superseded for a fresh run.

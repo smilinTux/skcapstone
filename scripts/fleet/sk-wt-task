@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# One task, several repos: a worktrunk worktree per repo plus a task folder that links them.
+#
+#   sk-wt-task add <task> <repo>...   create branch <task> in each repo (wt switch -c), then
+#                                     ~/skworld-worktrees/_tasks/<task>/<repo> -> that worktree.
+#                                     Run the agent from the task folder.
+#   sk-wt-task list                   tasks and the wt state of each member.
+#   sk-wt-task rm <task>              wt remove in each repo (refuses dirty or unmerged work),
+#                                     then drop the task folder once every member is gone.
+#
+# A <repo> is a name under $SK_REPOS (default ~/clawd/skcapstone-repos) or a path.
+# Each worktree gets its repo's own .config/wt.toml hooks (fresh deps, hash_port ports).
+set -euo pipefail
+WT=${WT:-wt}
+REPOS=${SK_REPOS:-$HOME/clawd/skcapstone-repos}
+TASKS=$HOME/skworld-worktrees/_tasks
+
+die() { echo "sk-wt-task: $*" >&2; exit 1; }
+repo_path() { if [ -d "$1/.git" ]; then (cd "$1" && pwd); elif [ -d "$REPOS/$1/.git" ]; then echo "$REPOS/$1"; else die "no repo '$1' (looked in $REPOS)"; fi; }
+
+cmd=${1:-}; shift || true
+case "$cmd" in
+  add)
+    task=${1:?usage: sk-wt-task add <task> <repo>...}; shift
+    [ $# -gt 0 ] || die "name at least one repo"
+    case "$task" in */*|.*|*..*) die "task name must be a plain branch-safe word: $task" ;; esac
+    mkdir -p "$TASKS/$task"
+    for r in "$@"; do
+      rp=$(repo_path "$r"); name=$(basename "$rp")
+      if git -C "$rp" rev-parse -q --verify "refs/heads/$task" >/dev/null; then
+        path=$("$WT" -C "$rp" switch "$task" --no-cd --format=json | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["path"])')
+      else
+        path=$("$WT" -C "$rp" switch -c "$task" --no-cd --format=json | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["path"])')
+      fi
+      ln -sfn "$path" "$TASKS/$task/$name"
+      echo "  $name -> $path"
+    done
+    echo "task folder: $TASKS/$task"
+    ;;
+  list)
+    [ -d "$TASKS" ] || exit 0
+    for t in "$TASKS"/*/; do
+      [ -d "$t" ] || continue; echo "$(basename "$t")"
+      for m in "$t"*; do
+        [ -L "$m" ] || continue
+        tgt=$(readlink "$m"); st=gone
+        [ -d "$tgt" ] && st=$(git -C "$tgt" status --porcelain | wc -l | awk '{print ($1? $1" dirty":"clean")}')
+        echo "  $(basename "$m") [$st] $tgt"
+      done
+    done
+    ;;
+  rm)
+    task=${1:?usage: sk-wt-task rm <task>}
+    [ -d "$TASKS/$task" ] || die "no task $task"
+    left=0
+    for m in "$TASKS/$task"/*; do
+      [ -L "$m" ] || continue
+      tgt=$(readlink "$m")
+      if [ ! -d "$tgt" ]; then rm -f "$m"; continue; fi
+      if "$WT" -C "$tgt" remove --foreground -y; then rm -f "$m"; else left=$((left + 1)); fi
+    done
+    if [ $left = 0 ]; then rmdir "$TASKS/$task" && echo "removed task $task"; else echo "kept $left member(s): commit/merge or remove by hand (wt refuses dirty or unmerged work)"; exit 1; fi
+    ;;
+  *) sed -n '2,13p' "$0"; exit 2 ;;
+esac

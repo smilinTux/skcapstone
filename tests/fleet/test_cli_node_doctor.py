@@ -79,7 +79,7 @@ def fleet_tree(paths, operator, monkeypatch):
 # ------------------------------------------------------------------ json ---
 
 
-def test_json_carries_all_six_categories(fleet_tree) -> None:
+def test_json_carries_all_categories(fleet_tree) -> None:
     result = CliRunner().invoke(fleet, ["node", "doctor", "--json"], env=_env(fleet_tree))
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
@@ -92,6 +92,9 @@ def test_json_carries_all_six_categories(fleet_tree) -> None:
         "missing_required_packages",
         "forbidden_packages",
         "unexpected_packages",
+        "missing_required_binaries",
+        "forbidden_binaries",
+        "unexpected_binaries",
     ):
         assert category in report
     assert report["node"] == "node-under-test"

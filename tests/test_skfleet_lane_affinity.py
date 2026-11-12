@@ -18,8 +18,10 @@ def _load_lane_helpers() -> dict[str, object]:
         "_fold_claimability",
         "semantic_stage_completed",
         "qwen_first_exclusive",
+        "qwen_suitable",
         "lane_compatibility",
         "select_compatible_lane",
+        "select_elastic_review_lane",
     }
     body = [
         node
@@ -32,6 +34,7 @@ def _load_lane_helpers() -> dict[str, object]:
                 in {
                     "_LANE_ONLY_LABELS",
                     "_SEMANTIC_COMPLETE_ACTION",
+                    "_QWEN_UNSUITABLE",
                 }
                 for target in node.targets
             )
@@ -45,6 +48,9 @@ def _load_lane_helpers() -> dict[str, object]:
         "event_rows": lambda cid: [],
         "_load_evidence_events": lambda: {},
         "_fold_key": lambda value: str(value),
+        "eligible_review_launch_lanes": __import__(
+            "skcapstone.fleet.review_capacity", fromlist=["eligible_review_launch_lanes"]
+        ).eligible_review_launch_lanes,
     }
     exec(compile(ast.Module(body=body, type_ignores=[]), str(ROTATE), "exec"), namespace)
     assert names <= namespace.keys()
@@ -69,6 +75,12 @@ def _core(card_id: str, labels: list[str]) -> dict[str, object]:
         (["glm-only"], False, (("glm",), "required-lane:glm")),
         (["escalation-only"], False, (("escalate",), "required-lane:escalate")),
         ([], True, (("escalate",), "required-lane:escalate")),
+        # A codex pin plus an escalation is NOT a conflict. The escalate lane
+        # serves gpt-5.6-sol, which the gateway advertises as provider=codex,
+        # so escalating a codex-only card keeps it on the codex provider. When
+        # this pair failed closed, the card matched no lane and was dropped
+        # from every cycle forever while the host sat idle with free slots.
+        (["codex-only"], True, (("escalate",), "required-lane:escalate")),
         ([], False, (("qwen", "glm", "codex"), "ordinary")),
     ],
 )
@@ -83,7 +95,6 @@ def test_exact_lane_compatibility(
     ("labels", "escalation_required", "reason"),
     [
         (["codex-only", "glm-only"], False, "conflicting-lane-only:codex,glm"),
-        (["codex-only"], True, "conflicting-lane-only:codex,escalate"),
         (["glm-only", "escalation-only"], False, "conflicting-lane-only:escalate,glm"),
     ],
 )
@@ -120,6 +131,48 @@ def test_no_compatible_slot_does_not_consume_another_lane() -> None:
     assert remaining == {"codex": 0, "glm": 3, "escalate": 2}
 
 
+def test_niobe_review_uses_every_healthy_compatible_domain_without_overwrite() -> None:
+    namespace = _load_lane_helpers()
+    lanes = [
+        {
+            "name": "codex",
+            "target": 3,
+            "busy": ["existing"],
+            "free": 2,
+            "capacity_domains": ["review-domain"],
+        },
+        {
+            "name": "escalate",
+            "target": 2,
+            "busy": [],
+            "free": 2,
+            "capacity_domains": ["review-domain"],
+        },
+    ]
+    route = {"logical_route": "sk-m", "capacity_domain": "review-domain", "free": 1}
+    remaining = {"codex": 2, "escalate": 2}
+    health = {"codex": (True, "healthy"), "escalate": (True, "healthy")}
+
+    selected, reason = namespace["select_elastic_review_lane"](
+        lanes,
+        [route],
+        remaining,
+        {},
+        physical_free=2,
+        health=health,
+    )
+
+    assert selected == "codex"
+    assert reason == "eligible"
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "if not ONLY_SEAT:\n    _gateway_routes=" not in source
+    selector = source[
+        source.index("def select_elastic_review_lane") : source.index("def needs_escalation")
+    ]
+    assert 'name == "codex"' not in selector
+    assert 'name == "escalate"' not in selector
+
+
 def test_ordinary_card_reassigns_only_to_compatible_healthy_lane() -> None:
     namespace = _load_lane_helpers()
     health = {
@@ -133,6 +186,18 @@ def test_ordinary_card_reassigns_only_to_compatible_healthy_lane() -> None:
     assert namespace["select_compatible_lane"](
         ["qwen-first"], False, ["qwen", "codex"], {"qwen": 1, "codex": 1}, True, True, health
     ) == (None, "no-compatible-healthy-lane:qwen")
+
+
+def test_elastic_review_capacity_masks_free_producer_lanes() -> None:
+    namespace = _load_lane_helpers()
+    remaining = {"qwen": 2, "glm": 2, "codex": 1, "kimi": 2, "escalate": 2}
+    elastic_remaining = {
+        name: slots if name == "codex" else 0 for name, slots in remaining.items()
+    }
+
+    assert namespace["select_compatible_lane"](
+        [], False, ["qwen", "glm", "codex", "kimi", "escalate"], elastic_remaining
+    ) == ("codex", "compatible")
 
 
 def test_qwen_first_is_exclusive_until_hash_bound_semantic_completion() -> None:
@@ -177,6 +242,34 @@ def test_qwen_suitable_is_nonexclusive() -> None:
         ("qwen", "glm", "codex"),
         "ordinary",
     )
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "[SKGW-KIMI-QUEUE] Expose Kimi capacity",
+        "[SKGW] Repair provider routing",
+        "Update model registry backend",
+    ],
+)
+def test_gateway_and_kimi_cards_are_not_qwen_suitable_by_default(title: str) -> None:
+    namespace = _load_lane_helpers()
+    assert namespace["qwen_suitable"]({"title": title}, []) is False
+
+
+def test_gateway_card_can_opt_in_to_qwen_explicitly() -> None:
+    namespace = _load_lane_helpers()
+    assert (
+        namespace["qwen_suitable"](
+            {"title": "[SKGW-KIMI-QUEUE] Expose Kimi capacity"}, ["qwen-suitable"]
+        )
+        is True
+    )
+
+
+def test_ordinary_card_remains_qwen_suitable() -> None:
+    namespace = _load_lane_helpers()
+    assert namespace["qwen_suitable"]({"title": "Document parser cleanup"}, []) is True
 
 
 @pytest.mark.parametrize(
@@ -308,12 +401,39 @@ def test_pool_and_immediate_preclaim_use_the_same_affinity_predicate() -> None:
     assert 'fresh_claimability["labels"]' in source
     assert "SKIPPED_LANE_RACE|" in source
     assert "LANE_DEFER|" in source
-    assert "qwen_suitable(_card[3]),_qwen_exclusive" in source
-    assert 'qwen_suitable(fresh_claimability["core"]),' in source
+    assert "qwen_suitable(_card[3],_labels),_qwen_exclusive" in source
+    assert 'qwen_suitable(fresh_claimability["core"],fresh_claimability["labels"]),' in source
+    # All four call sites must pass labels through, not just the two this
+    # file happened to have when the qwen-routing fix landed. A patch that
+    # only updates two of four looks done but silently under-enforces the
+    # rest, so this counts every call site rather than sampling.
+    assert source.count("qwen_suitable(") == 5  # def plus 4 call sites
+    assert "qwen_suitable(core, labels)," in source
+    assert "qwen_suitable(core,_labels)," in source
     assert 'qwen_first_exclusive(cid,fresh_claimability["labels"])' in source
-    assert source.count("QWEN_TARGET>0,GLM_TARGET>0") == 3
+    assert source.count("QWEN_TARGET>0,GLM_TARGET>0") == 4
     assert "DRY_SELECTION|" in source
     health_check = source.index("admitted,health_reason=_health_for(")
     claim = source.index('claim=subprocess.run([SKC,"coord","claim"')
     assert health_check < claim
     assert "SKIPPED_LANE_HEALTH|" in source[health_check:claim]
+
+
+def test_production_pin_to_a_disabled_family_falls_back_to_ordinary_lanes() -> None:
+    """Same rule as production route resolution: a dead pin never strands a card."""
+    namespace = _load_lane_helpers()
+    namespace["PRODUCTION_POLICY"] = {
+        "lanes": {
+            "codex": {"enabled": False},
+            "glm": {"enabled": True},
+            "deepseek": {"enabled": True},
+            "kimi": {"enabled": False},
+        }
+    }
+    compatible, reason = namespace["lane_compatibility"](["codex-only", "sk-m"], False)
+    assert reason == "ordinary" and "glm" in compatible
+    assert namespace["lane_compatibility"](["glm-only"], False) == (("glm",), "required-lane:glm")
+    assert namespace["lane_compatibility"](["kimi-only"], False) == (
+        ("kimi",),
+        "required-lane:kimi",
+    )

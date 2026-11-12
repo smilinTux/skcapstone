@@ -1,0 +1,1 @@
+- Ignore candidate bindings from an earlier claim when a guarded outcome link proves the active claim, so a rebuilt source can pass review publication without stale commit links causing a false conflict.

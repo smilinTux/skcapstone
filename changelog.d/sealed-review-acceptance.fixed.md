@@ -1,0 +1,1 @@
+Accept completed independent reviews against the exact sealed producer generation and review launch policy after an unclaimed producer card is released. Guarded source completion still requires the current source candidate and completed review to match.

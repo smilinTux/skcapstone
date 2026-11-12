@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+import io
+import json
+import urllib.error
+from pathlib import Path
+
+import pytest
+
+from skcapstone.fleet_route_preflight import preflight_failure_expired, resolve_and_preflight
+
+ROTATE = Path(__file__).resolve().parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
+
+
+class Response:
+    def __init__(self, body: dict, headers: dict[str, str] | None = None):
+        self.body = io.BytesIO(json.dumps(body).encode())
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self, size: int) -> bytes:
+        return self.body.read(size)
+
+
+def opener(catalog: list[dict], *, reject: bool = False):
+    calls = []
+
+    def open_(request, timeout):
+        calls.append((request, timeout))
+        if isinstance(request, str):
+            return Response({"data": catalog})
+        if reject:
+            raise urllib.error.HTTPError(request.full_url, 502, "bad gateway", {}, None)
+        payload = json.loads(request.data)
+        assert payload["model"] == "sk-qwen"
+        return Response(
+            {"model": "backend-from-body", "choices": [{"message": {"content": "OK"}}]},
+            {"x-sk-model-served": "qwen-current", "x-sk-backend": "local-qwen"},
+        )
+
+    return calls, open_
+
+
+def test_alias_change_uses_current_logical_route_and_records_identities():
+    calls, open_ = opener([{"id": "sk-qwen", "provider": "old-catalog-value"}])
+    result = resolve_and_preflight("http://gateway", "sk-qwen", opener=open_)
+    assert result.to_dict() == {
+        "requested_identity": "sk-qwen",
+        "served_identity": "qwen-current",
+        "provider": "local-qwen",
+    }
+    assert len(calls) == 2
+    assert calls[1][0].get_header("X-sk-context") == "public"
+    assert calls[1][0].get_header("X-sk-probe") == "synthetic"
+
+
+def test_default_preflight_timeout_allows_normal_upstream_tail_latency():
+    calls, open_ = opener([{"id": "sk-qwen"}])
+
+    resolve_and_preflight("http://gateway", "sk-qwen", opener=open_)
+
+    assert [timeout for _request, timeout in calls] == [30.0, 30.0]
+
+
+@pytest.mark.parametrize(
+    "catalog",
+    [
+        [{"id": "qwen3.8-stale", "stale": False}],
+        [{"id": "sk-qwen", "stale": True}],
+        [{"id": "sk-qwen", "advertised": False}],
+    ],
+)
+def test_stale_or_unadvertised_catalog_entry_fails_before_dispatch(catalog):
+    calls, open_ = opener(catalog)
+    with pytest.raises(ValueError, match="not currently advertised"):
+        resolve_and_preflight("http://gateway", "sk-qwen", opener=open_)
+    assert len(calls) == 1
+
+
+def test_backend_rejection_is_concise_and_non_secret():
+    _calls, open_ = opener([{"id": "sk-qwen"}], reject=True)
+    with pytest.raises(ValueError, match="HTTP 502") as error:
+        resolve_and_preflight("http://gateway", "sk-qwen", opener=open_)
+    assert "Reply OK" not in str(error.value)
+
+
+def test_preflight_shares_remaining_deadline_across_both_requests():
+    calls, open_ = opener([{"id": "sk-qwen"}])
+    ticks = iter([100.0, 103.0])
+
+    resolve_and_preflight(
+        "http://gateway",
+        "sk-qwen",
+        timeout=12.0,
+        deadline=110.0,
+        clock=lambda: next(ticks),
+        opener=open_,
+    )
+
+    assert [timeout for _request, timeout in calls] == [10.0, 7.0]
+
+
+def test_preflight_exhausted_deadline_fails_closed_before_dispatch():
+    calls, open_ = opener([{"id": "sk-qwen"}])
+    ticks = iter([100.0, 110.0])
+
+    with pytest.raises(ValueError, match="gateway preflight unavailable: TimeoutError"):
+        resolve_and_preflight(
+            "http://gateway",
+            "sk-qwen",
+            timeout=12.0,
+            deadline=110.0,
+            clock=lambda: next(ticks),
+            opener=open_,
+        )
+
+    assert len(calls) == 1
+
+
+def test_cached_preflight_failure_expires_after_sixty_seconds():
+    assert not preflight_failure_expired(100.0, 159.9)
+    assert preflight_failure_expired(100.0, 160.0)
+
+
+def test_automatic_preflight_precedes_workspace_and_claim():
+    source = ROTATE.read_text(encoding="utf-8")
+    probe = source.index("_route_preflight,_pf_reason,_pf_cached=preflight_through_ledger")
+    workspace = source.index("default_workspace=os.path.join", probe)
+    claim = source.index('claim=subprocess.run([SKC,"coord","claim"', workspace)
+    assert probe < workspace < claim

@@ -25,9 +25,9 @@ def functions():
     return namespace
 
 
-def test_default_routing_preserves_named_recipients_without_broadcast() -> None:
+def test_default_routing_uses_jarvis_without_broadcast() -> None:
     route = functions()["_worker_mail_routing"]
-    assert route({}) == ("jarvis", "lumina")
+    assert route({}) == ("jarvis",)
     assert "all" not in route({})
 
 
@@ -54,3 +54,15 @@ def test_empty_allowed_set_fails_closed() -> None:
                 "SKFLEET_EXCLUDED_MAIL_RECIPIENTS": "JARVIS",
             }
         )
+
+
+def test_c32a1007_routes_to_jarvis_and_owning_agent_never_lumina() -> None:
+    values = functions()
+    recipients = values["_worker_mail_routing"](
+        {"SKFLEET_MAIL_RECIPIENTS": "jarvis,lumina"},
+        "codex-chiap08-c32a1002",
+    )
+    brief = values["_worker_mail_instructions"](recipients)
+    assert recipients == ("jarvis", "codex-chiap08-c32a1002")
+    assert "lumina" not in brief.lower()
+    assert "coordination, review, evidence, or help" in brief

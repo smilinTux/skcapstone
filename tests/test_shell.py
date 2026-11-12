@@ -183,6 +183,35 @@ class TestCoordCommand:
             with patch("skcapstone.shell._agent_name", return_value="shell-test"):
                 _handle_coord(["create", "Test", "task", "from", "shell"])
 
+    def test_coord_complete_gated_card_does_not_report_flat_completed(
+        self, tmp_agent_home: Path, capsys
+    ):
+        """A card with outstanding exit_gates must not print a false success.
+
+        Fix 3: complete_coord_task's return value used to be discarded here,
+        so a GatesPending outcome still printed "Completed: <id>" unconditionally.
+        """
+        import json as jsonlib
+
+        from skcapstone.coordination import Board, Task
+
+        board = Board(tmp_agent_home)
+        board.ensure_dirs()
+        board.create_task(Task(id="deadbeef", title="gated shell task"))
+        board.claim_task("shell-test", "deadbeef")
+        core_path = tmp_agent_home / "cards" / "deadbeef" / "core.json"
+        core = jsonlib.loads(core_path.read_text())
+        core["exit_gates"] = [{"gate": "independent-review", "owner": "seraph"}]
+        core_path.write_text(jsonlib.dumps(core))
+
+        with patch("skcapstone.shell._home", return_value=tmp_agent_home):
+            with patch("skcapstone.shell._agent_name", return_value="shell-test"):
+                _handle_coord(["complete", "deadbeef"])
+
+        out = capsys.readouterr().out
+        assert "Completed: deadbeef" not in out
+        assert "awaiting" in out.lower() or "gate" in out.lower()
+
 
 class TestSyncCommand:
     """Tests for sync subcommands."""

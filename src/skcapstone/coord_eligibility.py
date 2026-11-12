@@ -8,6 +8,7 @@ from typing import Collection
 
 from .card import Column, Kind
 from .card_store import CardStore
+from .fleet.pool_fold_cache import sibling_cards
 
 _EXCLUDED_LABELS = frozenset({"do-not-claim", "human-gate", "not-claimable", "superseded"})
 _CONTAINER_LABELS = frozenset({"parent-container", "sprint-container"})
@@ -54,7 +55,7 @@ def leaf_eligibility_counts(
         Separate counts for backlog leaves, review work requiring a reviewer,
         and malformed candidate records. Missing dependencies fail closed.
     """
-    cards = CardStore(home).list_cards()
+    cards = sibling_cards(CardStore(home), degrade_unreadable=True)
     by_id = {card.id: card for card in cards}
     parent_ids = {
         label.removeprefix("parent-")
@@ -68,6 +69,9 @@ def leaf_eligibility_counts(
     for card in cards:
         labels = {label.lower() for label in card.labels}
         if selected is not None and card.id not in selected:
+            continue
+        if card.meta.get("unreadable") is True:
+            malformed += 1
             continue
         if card.kind not in {Kind.TASK, Kind.EPIC}:
             continue

@@ -78,8 +78,8 @@ FIRST_WAVE_HANDOFFS = {
     "registry-to-collector": _contract("registry", "collector", "atlas", "target_revision"),
     "collector-to-evaluator": _contract("collector", "evaluator", "atlas", "cohort_hash"),
     "evaluator-to-controller": _contract("evaluator", "controller", "atlas", "evaluation_hash"),
-    "controller-to-dashboard": _contract("controller", "dashboard-projection", "tank"),
-    "dashboard-query-delivery": _contract("dashboard-projection", "query-delivery", "tank"),
+    "controller-to-dashboard": _contract("controller", "dashboard-projection", "atlas"),
+    "dashboard-query-delivery": _contract("dashboard-projection", "query-delivery", "atlas"),
     "canary-to-review": _contract("canary", "Link", "link", "evaluation_hash"),
     "evidence-to-review": _contract("Link", "Seraph", "link", "source_card+head_revision"),
 }

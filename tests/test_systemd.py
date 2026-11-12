@@ -18,6 +18,8 @@ from skcapstone.systemd import (
     HEARTBEAT_TIMER,
     QUEUE_DRAIN_SERVICE,
     QUEUE_DRAIN_TIMER,
+    READINESS_GATE_SERVICE,
+    READINESS_GATE_TIMER,
     SERVICE_NAME,
     SOCKET_NAME,
     TIMER_UNITS,
@@ -277,18 +279,31 @@ class TestUnitConstants:
         assert QUEUE_DRAIN_SERVICE in ALL_UNITS
 
     def test_timer_units_list(self) -> None:
-        """TIMER_UNITS contains exactly the two timers."""
-        assert len(TIMER_UNITS) == 2
+        """TIMER_UNITS contains exactly the three timers."""
+        assert len(TIMER_UNITS) == 3
         assert HEARTBEAT_TIMER in TIMER_UNITS
         assert QUEUE_DRAIN_TIMER in TIMER_UNITS
+        assert READINESS_GATE_TIMER in TIMER_UNITS
 
     def test_all_units_count(self) -> None:
-        """ALL_UNITS has the expected number of units (socket retired, card 36d11ec3)."""
-        assert len(ALL_UNITS) == 5
+        """ALL_UNITS has the expected number of units (socket retired, card 36d11ec3;
+        readiness gate service+timer added, task-3-fix2)."""
+        assert len(ALL_UNITS) == 7
 
     def test_retired_socket_not_installed(self) -> None:
         """The retired skcapstone-api.socket is no longer part of ALL_UNITS."""
         assert SOCKET_NAME not in ALL_UNITS
+
+    def test_all_units_includes_readiness_gate(self) -> None:
+        """The readiness gate (scripts/fleet/skfleet_readiness.py's caller)
+        must actually be installed by the one mechanism that places core
+        units on a real host -- see the module docstring above ALL_UNITS.
+        Without this, the gate exists in the repository and on no machine
+        (confirmed absent on chiap01), which is exactly the pattern this
+        whole rollout-observability effort exists to break.
+        """
+        assert READINESS_GATE_SERVICE in ALL_UNITS
+        assert READINESS_GATE_TIMER in ALL_UNITS
 
     def test_bundled_service_file_exists(self) -> None:
         """The bundled skcapstone.service file exists."""

@@ -1,9 +1,12 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S -u BASH_ENV bash
 # ci-check.sh — Run the same checks as GitHub Actions CI locally.
 # Usage: bash scripts/ci-check.sh
 # Run this before committing/pushing to catch failures early.
 
 set -euo pipefail
+
+python "$(dirname "$0")/ci/test_environment.py"
+unset BASH_ENV ENV
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -57,14 +60,13 @@ else
 fi
 
 # 5. Version consistency
+# The project uses setuptools-scm, so there is intentionally no static version
+# (or root package.json) to compare in a source checkout.
 echo ""
 echo -e "${YELLOW}[5/5] Version consistency...${NC}"
-PY_VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])" 2>/dev/null || python3 -c "import tomli; print(tomli.load(open('pyproject.toml','rb'))['project']['version'])")
-JS_VER=$(python -c "import json; print(json.load(open('package.json'))['version'])")
-if [ "$PY_VER" = "$JS_VER" ]; then
-    echo -e "${GREEN}OK: pyproject.toml ($PY_VER) == package.json ($JS_VER)${NC}"
+if bash scripts/check-version-consistency.sh; then
+    :
 else
-    echo -e "${RED}FAIL: Version mismatch — pyproject.toml=$PY_VER package.json=$JS_VER${NC}"
     FAIL=1
 fi
 

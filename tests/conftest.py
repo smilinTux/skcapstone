@@ -14,13 +14,156 @@ Coverage audit (task 945325c8, 2026-03-02):
 
 from __future__ import annotations
 
+import functools
+import ipaddress
 import json
+import runpy
 import shutil
+import socket
 import subprocess
+import sys
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import pytest
+
+pytest_plugins = ("tests.skmail_installation",)
+
+
+@pytest.fixture(autouse=True)
+def _packaging_install_boundary(request):
+    """Build subprocesses must use the same safe environment as test installers."""
+    if request.path.name in {"test_package_data.py"}:
+        guard = Path(__file__).resolve().parents[1] / "scripts/ci/test_environment.py"
+        runpy.run_path(str(guard))["check_environment"]()
+
+
+@pytest.fixture(autouse=True)
+def _reset_dreaming_job_loop_registry():
+    """Never let one test's registered consciousness loop leak into another.
+
+    ``dreaming_job.set_consciousness_loop`` writes a process-global that daemon
+    tests set to a mock. Serial ordering happened to hide the leak; once the
+    suite is sharded/xdist-split the same worker can run a leaker before
+    ``test_dreaming_reflection_job_fires_end_to_end`` (CI, 2026-10-13).
+    """
+    yield
+    module = sys.modules.get("skcapstone.dreaming_job")
+    if module is not None:
+        module.set_consciousness_loop(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_skmemory_intentions(monkeypatch):
+    """GTD intentions default to unavailable so no test opens the live agent store.
+
+    A test that exercises intentions injects a fake via ``gtd_intentions._load_api``.
+    """
+    from skcapstone import gtd_intentions
+
+    monkeypatch.setattr(gtd_intentions, "_load_api", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_skmail(monkeypatch):
+    """Never deliver test fixtures to a real mailbox.
+
+    Fleet code resolves skmail from $SKMAIL_BIN, then beside the interpreter,
+    then PATH. On a chi host that is the live helper, so tests run there mailed
+    fixture dispatch events (card 1234abcd, owner-g1/24b00003) to jarvis as
+    urgent mail (2026-10-11). A test that exercises resolution or delivery sets
+    or deletes SKMAIL_BIN itself, which overrides this default.
+    """
+    monkeypatch.setenv("SKMAIL_BIN", "/bin/true")
+
+
+@pytest.fixture(autouse=True)
+def _no_external_network(monkeypatch, request):
+    """Fail at the socket boundary if a unit test misses an endpoint stub.
+
+    Loopback remains available for in-process HTTP server contract tests.
+    A pytest failure cannot be swallowed by production's network-error fallback.
+    """
+    if any(request.node.get_closest_marker(mark) for mark in ("integration", "e2e")):
+        return
+    resolve = socket.getaddrinfo
+    connect = socket.socket.connect
+
+    def check(host):
+        if isinstance(host, bytes):
+            host = host.decode("ascii")
+        if host in (None, "", "localhost", "0.0.0.0", "::"):
+            return
+        try:
+            if ipaddress.ip_address(host).is_loopback:
+                return
+        except ValueError:
+            pass
+        pytest.fail(f"Unit test attempted a real endpoint: {host}; stub its transport")
+
+    def resolve_local(host, *args, **kwargs):
+        check(host)
+        return resolve(host, *args, **kwargs)
+
+    def connect_local(connection, address):
+        if connection.family in (socket.AF_INET, socket.AF_INET6):
+            check(address[0])
+        return connect(connection, address)
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve_local)
+    monkeypatch.setattr(socket.socket, "connect", connect_local)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_host_config(monkeypatch, request, tmp_path_factory):
+    """Keep doctor/dashboard unit tests off the host's live stack config.
+
+    ``run_diagnostics`` builds ``SKComms.from_config()``, which reads the real
+    ``~/.skcapstone/skcomms/config.yml`` and health-checks every enabled rail:
+    on an operator host that dials the nostr relay (9 doctor tests failed on
+    noroc2027, 2026-10-27, while CI, which has no config, passed). Point the
+    config home at an empty dir, exactly what CI sees. The dashboard's
+    ollama probe likewise honours a host ``OLLAMA_HOST`` pointing off-box.
+    A test that needs either sets it itself, which overrides this default.
+    """
+    if any(request.node.get_closest_marker(mark) for mark in ("integration", "e2e")):
+        return
+    module = request.module.__name__.rsplit(".", 1)[-1]
+    if not module.startswith(("test_doctor", "test_dashboard")):
+        return
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    try:
+        import skcomms.config as skcomms_config
+    except ImportError:
+        return
+    empty_home = tmp_path_factory.mktemp("skcomms-home")
+    monkeypatch.setattr(skcomms_config, "SKCOMMS_HOME", str(empty_home))
+    monkeypatch.setenv("SKCOMMS_HOME", str(empty_home))
+
+
+@pytest.fixture(autouse=True)
+def _offline_unit_services(monkeypatch, request):
+    """Default discovery to offline services; HTTP contract tests supply responses.
+
+    Context generation probes the skills registry with a 30-second timeout;
+    doctor probes PyPI once per package. Neither may consult the real services
+    during a unit test. Tests patching urlopen in their body override this stub.
+    """
+    if any(request.node.get_closest_marker(mark) for mark in ("integration", "e2e")):
+        return
+    original = urllib.request.urlopen
+
+    def offline_services(url, *args, **kwargs):
+        address = url.full_url if isinstance(url, urllib.request.Request) else url
+        if urllib.parse.urlsplit(address).hostname in {"skskills.skworld.io", "pypi.org"}:
+            raise urllib.error.URLError("synthetic offline service in unit fixture")
+        return original(url, *args, **kwargs)
+
+    monkeypatch.setattr(urllib.request, "urlopen", offline_services)
+
 
 # ---------------------------------------------------------------------------
 # Token signing fixtures
@@ -182,6 +325,19 @@ def _silence_desktop_notifications(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_profile_defaults(monkeypatch):
+    """Keep register_all from writing the operator's real profile.
+
+    register_all applies host profile defaults (telemetry opt-out in
+    environment.d and ~/.hyperframes, skskills agent-framework skill links).
+    Tests that exercise them opt back in with SKCAPSTONE_PROFILE_DEFAULTS=1
+    and stub the writers or point them at tmp paths.
+    """
+    monkeypatch.setenv("SKCAPSTONE_PROFILE_DEFAULTS", "0")
+    monkeypatch.setenv("SKSKILLS_AGENT_LINKS", "0")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_agent_env(monkeypatch):
     """Prevent host SKCAPSTONE_AGENT / SKMEMORY_AGENT from leaking into unit tests.
 
@@ -260,3 +416,129 @@ def initialized_agent_home(tmp_agent_home: Path) -> Path:
     )
 
     return tmp_agent_home
+
+
+# --------------------------------------------------------------------------
+# Skip ledger: a skipped test must be DECLARED, never silent.
+#
+# THE INVARIANT (CONTRIBUTING.md): a green that can be produced by absence is
+# not a green. A skip is exactly that -- it reads as coverage in every summary
+# a human or an agent looks at, while being structurally unable to fail the
+# build. On 2026-09-19 this suite held 72 tests that can only ever skip on a
+# runner, including one that has been RED for months on the single machine
+# capable of executing it, invisibly, because CI always skipped it.
+#
+# So: any skip whose nodeid is not declared in tests/skip_ledger.txt fails the
+# run. Enforcement is one-directional on purpose -- "observed skip must be
+# declared", never "declared skip must be observed" -- so that running a subset
+# of the suite is still correct, and so that FIXING a skip never reds the build.
+# --------------------------------------------------------------------------
+
+_LEDGER_PATH = Path(__file__).parent / "skip_ledger.txt"
+_UNDECLARED_SKIPS: dict[str, str] = {}
+
+
+@functools.lru_cache(maxsize=1)
+def _ledger_prefixes() -> tuple[str, ...]:
+    """Declared prefixes, read once. An ABSENT ledger yields none, so deleting
+    the file makes every skip undeclared rather than making every skip allowed.
+    The failure mode of the guard has to point the same way as the guard."""
+    if not _LEDGER_PATH.exists():
+        return ()
+    return tuple(
+        line.strip()
+        for line in _LEDGER_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+
+
+def _matches(nodeid: str, entry: str) -> bool:
+    """Prefix match, plus a single `*` wildcard.
+
+    A parametrized gate puts its discriminator at the END of the nodeid
+    (`...::test_x[skvoice]`), which no prefix can reach without also
+    whitelisting every other param of the same test.
+
+    Deliberately NOT fnmatch: a nodeid's param suffix is `[skvoice]`, which
+    fnmatch reads as a character class meaning "one of s,k,v,o,i,c,e". It
+    matched nothing and would have silently let 16 skvoice skips through as
+    "declared". A matcher that quietly matches nothing is the same defect as a
+    gate that quietly observes nothing, so this stays boring on purpose."""
+    if "*" not in entry:
+        return nodeid.startswith(entry)
+    pre, _, post = entry.partition("*")
+    return nodeid.startswith(pre) and nodeid.endswith(post)
+
+
+def _record_skip(nodeid: str, reason: str) -> None:
+    if any(_matches(nodeid, e) for e in _ledger_prefixes()):
+        return
+    _UNDECLARED_SKIPS[nodeid] = reason
+
+
+def _reason_of(report) -> str:
+    lr = getattr(report, "longrepr", None)
+    if isinstance(lr, tuple) and len(lr) == 3:
+        return str(lr[2])
+    return str(lr) if lr else "(no reason given)"
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_logreport(report):
+    """Record a skip from ANY phase, not just setup.
+
+    The first version of this hook watched `when == "setup"` only, and CI
+    proved it blind to exactly the worst case: `pytest.importorskip` called
+    INSIDE a test body reports at the `call` phase, so
+    test_human_wait.py::test_sync_gtd_is_idempotent_on_source_and_card_id
+    skipped in CI and this guard said nothing. A mid-test skip is the most
+    dangerous kind there is, because it can fire AFTER some assertions have
+    passed and BEFORE the rest ever run, so a PARTIAL pass is reported as a
+    clean skip. A guard blind to that is the defect it was written to catch.
+
+    An xfail also reports as `skipped` but carries `wasxfail`. That is a
+    declared expectation, not a silent absence, and the ledger must not cry
+    wolf about it: a gate that reds on legitimate things gets disabled, and a
+    disabled gate is the absence this whole exercise is about.
+    """
+    if report.skipped and not hasattr(report, "wasxfail"):
+        _record_skip(report.nodeid, _reason_of(report))
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collectreport(report):
+    # Module-level skips (pytest.skip(..., allow_module_level=True)) never
+    # produce a test report at all. They are the most invisible kind and so the
+    # most important to catch: tests/test_cli_completions.py silences 35 tests
+    # this way.
+    if report.skipped:
+        _record_skip(report.nodeid, _reason_of(report))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if not _LEDGER_PATH.exists():
+        print(
+            f"\nSKIP LEDGER MISSING at {_LEDGER_PATH}. Every skip is undeclared "
+            "until it is restored; this run cannot certify anything about skips."
+        )
+        session.exitstatus = 1
+        return
+    if not _UNDECLARED_SKIPS:
+        return
+    lines = [
+        "",
+        "=" * 72,
+        f"UNDECLARED SKIP ({len(_UNDECLARED_SKIPS)}): a test skipped without being in the ledger.",
+        "",
+        "A skip reads as coverage while being unable to fail the build, so every",
+        "one must be declared with a disposition. If this skip is legitimate, add",
+        "the line(s) below to tests/skip_ledger.txt under the right heading. If it",
+        "is not, fix the gate so the test actually runs.",
+        "",
+    ]
+    for nodeid, reason in sorted(_UNDECLARED_SKIPS.items()):
+        lines.append(f"  # reason: {reason}")
+        lines.append(f"  {nodeid}")
+    lines.append("=" * 72)
+    print("\n".join(lines))
+    session.exitstatus = 1

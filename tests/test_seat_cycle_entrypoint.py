@@ -4,73 +4,41 @@ from __future__ import annotations
 
 import hashlib
 import json
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 import skcapstone.seat_cycle_entrypoint as seat_entrypoint
-from skcapstone.card import Column
-from skcapstone.card_store import CardCore, CardStore
-from skcapstone.link_review_work import card_generation, reconcile_review_work
-from skcapstone.seat_cycle_entrypoint import (
-    link_operation,
-    load_control_plane,
-    role_dispatch_operation,
-    run_cycle,
-    seraph_operation,
-)
+from skcapstone.seat_cycle_entrypoint import link_operation, load_control_plane, run_cycle
 
 
 @pytest.fixture(autouse=True)
-def installed_dispatcher(tmp_path, monkeypatch):
-    """Provide the wheel-owned launcher expected by Seraph unit tests."""
+def user_home(tmp_path, monkeypatch):
+    """A USER home that is NOT the estate home these operations are passed.
 
-    bindir = tmp_path / "skenv-bin"
-    bindir.mkdir()
-    interpreter = bindir / "python3"
-    interpreter.touch(mode=0o755)
-    dispatcher = bindir / "skfleet-rotate.py"
-    dispatcher.touch(mode=0o755)
-    monkeypatch.setattr(seat_entrypoint.sys, "executable", str(interpreter))
-    return dispatcher
+    This separation is the whole point. On every live host the two are
+    different directories -- the estate home is a subdirectory of the user
+    home -- and ``.local/bin`` hangs off the USER home. This module used to
+    pass ``tmp_path`` as the estate home AND deploy the dispatcher to
+    ``tmp_path/.local/bin``, collapsing the two into one directory. Under
+    that collapse both the correct and the incorrect base resolved to the
+    same file, so 30 tests here passed while production had been resolving
+    the dispatcher to a path under the estate home that has never existed,
+    reporting ``seraph_dispatcher_missing`` and suppressing every
+    independent-review batch for 19 hours.
 
+    Keeping them distinct is what gives these tests the ability to fail if
+    the estate home is ever passed as the artifact base again: that base
+    resolves under ``tmp_path``, where no dispatcher is deployed.
 
-def review_events(
-    owner: str,
-    revision: str,
-    *,
-    author: str = "builder",
-    launched: bool = True,
-    release_revision: str | None = None,
-) -> list[dict[str, object]]:
-    events = [
-        {
-            "action": "review_assignment_recommendation",
-            "writer": "link",
-            "recommendation_id": "recommendation-1",
-            "author": author,
-            "reviewer": owner,
-        },
-        {"action": "claim", "owner": owner, "claim_revision": revision},
-        {
-            "action": "review_assignment_launch",
-            "recommendation_id": "recommendation-1",
-            "reviewer": owner,
-            "claim_revision": revision,
-            "launched": launched,
-        },
-    ]
-    if not launched:
-        events.append(
-            {
-                "action": "release_claim",
-                "released_owner": owner,
-                "expected_claim_revision": release_revision or revision,
-            }
-        )
-    return events
+    ``HOME`` is set rather than ``Path.home`` patched so the child
+    processes these operations spawn see the same home the parent resolved.
+    """
+
+    home = tmp_path / "user"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
 
 
 def control(path: Path) -> None:
@@ -80,10 +48,7 @@ def control(path: Path) -> None:
                 "schema_version": 1,
                 "revision": "r1",
                 "active_host": "chiap08",
-                "seats": {
-                    seat: ["chiap08"]
-                    for seat in ("link", "mero", "seraph", "niobe", "tank", "atlas")
-                },
+                "seats": {seat: ["chiap08"] for seat in ("link", "mero")},
             }
         ),
         encoding="utf-8",
@@ -105,6 +70,19 @@ def test_inactive_host_refuses_before_operation(tmp_path: Path) -> None:
     assert called == []
     health = (tmp_path / "home/coordination/seat-cycles/link.health.jsonl").read_text()
     assert "inactive_host_refused" in health
+
+
+def test_inactive_host_entrypoint_exits_successfully(tmp_path: Path, monkeypatch, capsys) -> None:
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setattr(seat_entrypoint.socket, "gethostname", lambda: "chiap03")
+
+    result = seat_entrypoint.main(
+        ["--seat", "mero", "--home", str(tmp_path / "home"), "--control-plane", str(control_path)]
+    )
+
+    assert result == 0
+    assert json.loads(capsys.readouterr().out)["result"] == "inactive_host_refused"
 
 
 def test_dry_run_is_fenced_and_bounded(tmp_path: Path) -> None:
@@ -196,626 +174,6 @@ def test_cycle_without_operation_is_explicit_noop(tmp_path: Path) -> None:
     assert result.reason == "operation_not_configured"
 
 
-def test_seraph_accepts_typed_launch_receipts_on_stderr(tmp_path, monkeypatch) -> None:
-    calls = []
-
-    def run(command, **kwargs):
-        calls.append(command)
-        if len(calls) == 1:
-            return SimpleNamespace(
-                returncode=0,
-                stdout="dispatcher diagnostics\n",
-                stderr=(
-                    "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|"
-                    "model=sk-codex-mid|owner=pi-seraph-chiap08-review01|"
-                    "claim_revision=revision-1\n"
-                ),
-            )
-        return SimpleNamespace(returncode=0)
-
-    card = SimpleNamespace(
-        labels=["review", "seat-seraph"],
-        status=SimpleNamespace(value="doing"),
-        owner="pi-seraph-chiap08-review01",
-        meta={
-            "_claim_revision": "revision-1",
-            "link_source_card": "source01",
-            "link_head_revision": "a" * 40,
-        },
-        links={"producer_identity": "builder"},
-    )
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
-        lambda *_: review_events("pi-seraph-chiap08-review01", "revision-1"),
-    )
-    assert seraph_operation(tmp_path)["reason"] == "seraph_dispatch_complete"
-
-
-def test_seraph_dispatch_is_bounded_claimed_live_and_seat_scoped(
-    tmp_path, monkeypatch, installed_dispatcher
-) -> None:
-    captured = {}
-    calls = []
-
-    def run(command, **kwargs):
-        calls.append(command)
-        if len(calls) == 1:
-            captured.update(kwargs["env"])
-            return SimpleNamespace(
-                returncode=0,
-                stdout=(
-                    "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|"
-                    "model=sk-codex-mid|owner=pi-seraph-chiap08-review01|"
-                    "claim_revision=revision-1\n"
-                ),
-            )
-        return SimpleNamespace(returncode=0)
-
-    card = SimpleNamespace(
-        labels=["review", "seat-seraph"],
-        status=SimpleNamespace(value="doing"),
-        owner="pi-seraph-chiap08-review01",
-        meta={
-            "_claim_revision": "revision-1",
-            "link_source_card": "source01",
-            "link_head_revision": "a" * 40,
-        },
-        links={"producer_identity": "builder"},
-    )
-
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
-        lambda *_: review_events("pi-seraph-chiap08-review01", "revision-1"),
-    )
-    result = seraph_operation(tmp_path)
-    assert result["reason"] == "seraph_dispatch_complete"
-    assert calls[0][0] == str(installed_dispatcher)
-    assert captured["SKFLEET_ONLY_SEAT"] == "seraph"
-    assert captured["SKFLEET_MAX_LAUNCH"] == "2"
-    assert captured["SKFLEET_SEAT_TARGET"] == "2"
-    assert "SKFLEET_TARGET" not in captured
-    assert captured["SKFLEET_CODEX_MODEL_S"] == "sk-codex-mid"
-    assert calls[1][-1] == "skfleet-worker-codex-review01.service"
-
-
-def test_seraph_rejects_missing_wheel_owned_dispatcher(tmp_path, installed_dispatcher) -> None:
-    installed_dispatcher.unlink()
-
-    assert seraph_operation(tmp_path)["reason"] == "seraph_dispatcher_missing"
-
-
-def test_seraph_preserves_invoked_venv_when_python_is_a_symlink(tmp_path, monkeypatch) -> None:
-    bindir = tmp_path / "venv" / "bin"
-    bindir.mkdir(parents=True)
-    interpreter = bindir / "python3"
-    interpreter.symlink_to("/usr/bin/python3")
-    dispatcher = bindir / "skfleet-rotate.py"
-    dispatcher.touch(mode=0o755)
-    captured = {}
-
-    def run(command, **_kwargs):
-        captured["command"] = command
-        return SimpleNamespace(
-            returncode=0,
-            stdout="NOOP_RECEIPT|chiap08|reason=no_eligible_work|seat=seraph\n",
-            stderr="",
-        )
-
-    monkeypatch.setattr(seat_entrypoint.sys, "executable", str(interpreter))
-    monkeypatch.setattr(seat_entrypoint.subprocess, "run", run)
-
-    assert seraph_operation(tmp_path)["reason"] == "seraph_no_eligible_work"
-    assert captured["command"][0] == str(dispatcher)
-
-
-def test_seraph_zero_eligible_work_is_truthful_noop(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0,
-            stdout="NOOP_RECEIPT|chiap08|reason=no_eligible_work|seat=seraph\n",
-        ),
-    )
-    result = seraph_operation(tmp_path)
-    assert result == {
-        "cards_examined": 0,
-        "recommendations": 0,
-        "suppressed": 0,
-        "reason": "seraph_no_eligible_work",
-    }
-
-
-def test_seraph_zero_available_capacity_is_truthful_noop(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0,
-            stdout="NOOP_RECEIPT|chiap08|reason=no_available_capacity|seat=seraph\n",
-        ),
-    )
-    result = seraph_operation(tmp_path)
-    assert result["reason"] == "seraph_no_available_capacity"
-    assert result["suppressed"] == 0
-
-
-def test_seraph_rotation_overlap_is_truthful_noop(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0,
-            stdout="NOOP_RECEIPT|chiap08|reason=rotation_overlap|seat=seraph\n",
-        ),
-    )
-    result = seraph_operation(tmp_path)
-    assert result["reason"] == "seraph_rotation_overlap"
-    assert result["suppressed"] == 0
-
-
-def test_seraph_all_suppressed_noop_is_accepted_from_stderr(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0,
-            stdout="REVIEW_ASSIGNMENT_BLOCKED|chiap08|review01|incomplete producer evidence\n",
-            stderr="NOOP_RECEIPT|chiap08|reason=all_candidates_suppressed|seat=seraph\n",
-        ),
-    )
-    result = seraph_operation(tmp_path)
-    assert result["reason"] == "seraph_all_candidates_suppressed"
-    assert result["suppressed"] == 0
-
-
-def test_seraph_rejects_duplicate_noop_receipts(tmp_path, monkeypatch) -> None:
-    receipt = "NOOP_RECEIPT|chiap08|reason=all_candidates_suppressed|seat=seraph\n"
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0, stdout=receipt + receipt, stderr=""
-        ),
-    )
-    result = seraph_operation(tmp_path)
-    assert result["reason"] == "seraph_launch_receipt_missing"
-    assert result["suppressed"] == 1
-
-
-def test_seraph_rejects_duplicate_launch_receipts(tmp_path, monkeypatch) -> None:
-    receipt = (
-        "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|model=model|"
-        "owner=pi-seraph-chiap08-review01|claim_revision=revision-1\n"
-    )
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=receipt + receipt),
-    )
-    result = seraph_operation(tmp_path)
-    assert result["reason"] == "seraph_dispatch_failed"
-    assert result["recommendations"] == 0
-
-
-def test_seraph_rejects_wrong_model_receipt(tmp_path, monkeypatch) -> None:
-    receipt = (
-        "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|"
-        "model=sk-codex-fast|owner=pi-seraph-chiap08-review01|"
-        "claim_revision=revision-1\n"
-    )
-    card = SimpleNamespace(
-        labels=["review", "seat-seraph"],
-        status=SimpleNamespace(value="doing"),
-        owner="pi-seraph-chiap08-review01",
-        meta={
-            "_claim_revision": "revision-1",
-            "link_source_card": "source01",
-            "link_head_revision": "a" * 40,
-        },
-        links={"producer_identity": "builder"},
-    )
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=receipt),
-    )
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
-        lambda *_: review_events("pi-seraph-chiap08-review01", "revision-1"),
-    )
-    result = seraph_operation(tmp_path)
-    assert result["reason"] == "seraph_dispatch_failed"
-
-
-def test_seraph_reports_partial_batch_and_leaves_failed_item_retryable(
-    tmp_path, monkeypatch
-) -> None:
-    owners = {
-        "review01": "pi-seraph-chiap08-review01",
-        "review02": "pi-seraph-chiap08-review02",
-    }
-    cards = {
-        card_id: SimpleNamespace(
-            labels=["review", "seat-seraph"],
-            status=(SimpleNamespace(value="doing") if card_id == "review01" else Column.BACKLOG),
-            owner=owner if card_id == "review01" else None,
-            archived=False,
-            dependencies=[],
-            meta={
-                "_claim_revision": "revision-1" if card_id == "review01" else None,
-                "link_source_card": "source" + card_id[-2:],
-                "link_head_revision": card_id[-1] * 40,
-            },
-            links={"producer_identity": "builder" + card_id[-2:]},
-        )
-        for card_id, owner in owners.items()
-    }
-    output = "".join(
-        [
-            (
-                f"LAUNCHED|chiap08|codex-auto-{card_id}|{card_id}|lane=codex|"
-                f"model=sk-codex-mid|owner={owner}|claim_revision=revision-1\n"
-                if card_id == "review01"
-                else f"LAUNCH_FAILED|chiap08|codex-auto-{card_id}|{card_id}|lane=codex|"
-                f"model=sk-codex-mid|owner={owner}|claim_revision=revision-2\n"
-            )
-            for card_id, owner in owners.items()
-        ]
-    )
-
-    def run(command, **_kwargs):
-        if command[0] == "systemctl":
-            return SimpleNamespace(returncode=0)
-        return SimpleNamespace(returncode=0, stdout=output)
-
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.CardStore.fold",
-        lambda _store, card_id: cards[card_id],
-    )
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
-        lambda _store, card_id: review_events(
-            owners[card_id],
-            "revision-1" if card_id == "review01" else "revision-2",
-            author="builder" + card_id[-2:],
-            launched=card_id == "review01",
-        ),
-    )
-
-    result = seraph_operation(tmp_path)
-
-    assert result == {
-        "cards_examined": 2,
-        "recommendations": 1,
-        "suppressed": 1,
-        "dispatch_succeeded": 1,
-        "dispatch_failed": 1,
-        "dispatch_retryable": 1,
-        "reason": "seraph_dispatch_partial",
-    }
-    assert cards["review02"].owner is None
-
-
-def _failed_seraph_result(
-    tmp_path,
-    monkeypatch,
-    *,
-    status="backlog",
-    owner=None,
-    labels=None,
-    release_revision=None,
-    events=None,
-):
-    reviewer = "pi-seraph-chiap08-review01"
-    output = (
-        "LAUNCH_FAILED|chiap08|codex-auto-review01|review01|lane=codex|"
-        f"model=sk-codex-mid|owner={reviewer}|claim_revision=revision-1\n"
-    )
-    card = SimpleNamespace(
-        labels=labels or ["review", "seat-seraph"],
-        status=Column(status),
-        owner=owner,
-        archived=False,
-        dependencies=[],
-        meta={"link_source_card": "source01", "link_head_revision": "a" * 40},
-        links={"producer_identity": "builder"},
-    )
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=output),
-    )
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
-        lambda *_: (
-            events
-            or review_events(
-                reviewer,
-                "revision-1",
-                launched=False,
-                release_revision=release_revision,
-            )
-        ),
-    )
-    return seraph_operation(tmp_path)
-
-
-def test_seraph_failed_launch_rejects_claim_release_generation_mismatch(
-    tmp_path, monkeypatch
-) -> None:
-    result = _failed_seraph_result(tmp_path, monkeypatch, release_revision="revision-old")
-    assert result["reason"] == "seraph_dispatch_failed"
-    assert result["dispatch_failed"] == 1
-    assert result["dispatch_retryable"] == 0
-
-
-def test_seraph_failed_launch_rejects_stale_release_order(tmp_path, monkeypatch) -> None:
-    events = review_events("pi-seraph-chiap08-review01", "revision-1", launched=False)
-    events[-1], events[-2] = events[-2], events[-1]
-    result = _failed_seraph_result(tmp_path, monkeypatch, events=events)
-    assert result["reason"] == "seraph_dispatch_failed"
-    assert result["dispatch_retryable"] == 0
-
-
-@pytest.mark.parametrize(
-    ("status", "owner", "labels"),
-    [
-        ("backlog", "another-worker", ["review", "seat-seraph"]),
-        ("done", None, ["review", "seat-seraph"]),
-        ("backlog", None, ["review", "seat-seraph", "not-claimable"]),
-    ],
-)
-def test_seraph_failed_launch_rejects_owned_or_nonclaimable_state(
-    tmp_path, monkeypatch, status, owner, labels
-) -> None:
-    result = _failed_seraph_result(
-        tmp_path, monkeypatch, status=status, owner=owner, labels=labels
-    )
-    assert result["reason"] == "seraph_dispatch_failed"
-    assert result["dispatch_retryable"] == 0
-
-
-def test_seraph_failed_launch_accepts_exact_released_claimable_generation(
-    tmp_path, monkeypatch
-) -> None:
-    result = _failed_seraph_result(tmp_path, monkeypatch)
-    assert result["reason"] == "seraph_dispatch_failed"
-    assert result["dispatch_failed"] == 1
-    assert result["dispatch_retryable"] == 1
-
-
-def test_seraph_preserves_valid_launch_when_selector_exits_nonzero(tmp_path, monkeypatch) -> None:
-    owner = "pi-seraph-chiap08-review01"
-    card = SimpleNamespace(
-        labels=["review", "seat-seraph"],
-        status=SimpleNamespace(value="doing"),
-        owner=owner,
-        meta={
-            "_claim_revision": "revision-1",
-            "link_source_card": "source01",
-            "link_head_revision": "a" * 40,
-        },
-        links={"producer_identity": "builder"},
-    )
-    output = (
-        "LAUNCHED|chiap08|codex-auto-review01|review01|lane=codex|"
-        f"model=sk-codex-mid|owner={owner}|claim_revision=revision-1\n"
-    )
-
-    def run(command, **_kwargs):
-        if command[0] == "systemctl":
-            return SimpleNamespace(returncode=0)
-        return SimpleNamespace(returncode=1, stdout=output)
-
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
-        lambda *_: review_events(owner, "revision-1"),
-    )
-
-    result = seraph_operation(tmp_path)
-
-    assert result["reason"] == "seraph_dispatch_partial"
-    assert result["dispatch_succeeded"] == 1
-    assert result["dispatch_failed"] == 1
-
-
-def test_seraph_rejects_duplicate_source_head_and_producer_reviewer(tmp_path, monkeypatch) -> None:
-    owners = {
-        "review01": "pi-seraph-chiap08-review01",
-        "review02": "pi-seraph-chiap08-review02",
-    }
-    cards = {
-        card_id: SimpleNamespace(
-            labels=["review", "seat-seraph"],
-            status=SimpleNamespace(value="doing"),
-            owner=owner,
-            meta={
-                "_claim_revision": "revision-1",
-                "link_source_card": "same-source",
-                "link_head_revision": "a" * 40,
-            },
-            links={"producer_identity": owner if card_id == "review01" else "builder"},
-        )
-        for card_id, owner in owners.items()
-    }
-    output = "".join(
-        f"LAUNCHED|chiap08|codex-auto-{card_id}|{card_id}|lane=codex|"
-        f"model=sk-codex-mid|owner={owner}|claim_revision=revision-1\n"
-        for card_id, owner in owners.items()
-    )
-
-    def run(command, **_kwargs):
-        if command[0] == "systemctl":
-            return SimpleNamespace(returncode=0)
-        return SimpleNamespace(returncode=0, stdout=output)
-
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.CardStore.fold",
-        lambda _store, card_id: cards[card_id],
-    )
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
-        lambda _store, card_id: review_events(
-            owners[card_id], "revision-1", author=cards[card_id].links["producer_identity"]
-        ),
-    )
-
-    result = seraph_operation(tmp_path)
-
-    assert result["reason"] == "seraph_dispatch_failed"
-    assert result["dispatch_succeeded"] == 0
-    assert result["dispatch_failed"] == 2
-
-
-def test_seraph_batch_size_is_bounded(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("SKFLEET_SERAPH_BATCH_SIZE", "9")
-    assert seraph_operation(tmp_path)["reason"] == "seraph_batch_size_invalid"
-
-
-def test_seraph_accepts_only_explicit_escalation_lane_model(tmp_path, monkeypatch) -> None:
-    owner = "pi-seraph-chiap08-review01"
-    card = SimpleNamespace(
-        labels=["review", "seat-seraph"],
-        status=SimpleNamespace(value="doing"),
-        owner=owner,
-        meta={
-            "_claim_revision": "revision-1",
-            "link_source_card": "source01",
-            "link_head_revision": "a" * 40,
-        },
-        links={"producer_identity": "builder"},
-    )
-    output = (
-        "LAUNCHED|chiap08|esc-auto-review01|review01|lane=escalate|"
-        f"model=sk-codex|owner={owner}|claim_revision=revision-1\n"
-    )
-
-    def run(command, **_kwargs):
-        if command[0] == "systemctl":
-            return SimpleNamespace(returncode=0)
-        return SimpleNamespace(returncode=0, stdout=output)
-
-    monkeypatch.setenv("SKFLEET_ESC_MODEL", "sk-codex")
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.CardStore._read_events",
-        lambda *_: review_events(owner, "revision-1"),
-    )
-
-    assert seraph_operation(tmp_path)["reason"] == "seraph_dispatch_complete"
-
-
-def test_link_materialization_race_launches_once_and_replay_is_denied(
-    tmp_path, monkeypatch
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    store = CardStore(home)
-    store.create(
-        CardCore(
-            id="source01",
-            title="Source candidate",
-            created_by="builder",
-            created_at="2026-09-08T00:00:00+00:00",
-        )
-    )
-    store.append_event(
-        "source01",
-        "link",
-        "builder",
-        link_key="repository",
-        link_value="https://github.com/org/repo",
-    )
-    store.append_event("source01", "link", "builder", link_key="base_ref", link_value="main")
-    item = {
-        "source_card": "source01",
-        "head_revision": "a" * 40,
-        "workspace_repository": "https://github.com/org/repo",
-        "base_ref": "main",
-        "base_revision": "b" * 40,
-        "card_generation": card_generation(store.fold("source01")),
-        "source_owner": "builder",
-        "reviewer_candidates": [{"name": "Seraph", "seat": "seraph", "identity": "seraph"}],
-    }
-    launched = False
-
-    def run(command, **_kwargs):
-        nonlocal launched
-        if command[0] == "systemctl":
-            return SimpleNamespace(returncode=0)
-        if launched:
-            return SimpleNamespace(
-                returncode=0,
-                stdout="NOOP_RECEIPT|chiap08|reason=no_eligible_work|seat=seraph\n",
-            )
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            results = list(
-                pool.map(
-                    lambda _: reconcile_review_work(home, item, evidence_sha256="f" * 64),
-                    range(8),
-                )
-            )
-        assert len({result.review_card_id for result in results}) == 1
-        assert sum(result.created for result in results) == 1
-        card_id = results[0].review_card_id
-        owner = f"pi-seraph-chiap08-{card_id}"
-        revision = "revision-1"
-        store.append_event(
-            card_id,
-            "claim",
-            owner,
-            owner=owner,
-            claim_revision=revision,
-        )
-        store.append_event(
-            card_id,
-            "review_assignment_recommendation",
-            "link",
-            recommendation_id="batch-test",
-            author="builder",
-            reviewer=owner,
-        )
-        store.append_event(
-            card_id,
-            "review_assignment_launch",
-            owner,
-            recommendation_id="batch-test",
-            reviewer=owner,
-            claim_revision=revision,
-            launched=True,
-        )
-        launched = True
-        return SimpleNamespace(
-            returncode=0,
-            stdout=(
-                f"LAUNCHED|chiap08|codex-auto-{card_id}|{card_id}|lane=codex|"
-                f"model=sk-codex-mid|owner={owner}|claim_revision={revision}\n"
-            ),
-        )
-
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
-    first = seraph_operation(home)
-    second = seraph_operation(home)
-
-    assert first["reason"] == "seraph_dispatch_complete"
-    assert second["reason"] == "seraph_no_eligible_work"
-    review_cards = [card for card in store.list_cards() if "parent-source01" in card.labels]
-    assert len(review_cards) == 1
-    assert review_cards[0].owner.startswith("pi-seraph-")
-    claim_events = []
-    for path in (home / "cards" / review_cards[0].id / "events").glob("*.jsonl"):
-        claim_events.extend(
-            event
-            for line in path.read_text().splitlines()
-            if (event := json.loads(line)).get("action") == "claim"
-        )
-    assert len(claim_events) == 1
-
-
 def test_control_plane_requires_all_six_seats(tmp_path: Path) -> None:
     path = tmp_path / "control.json"
     path.write_text(
@@ -845,13 +203,6 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     mero = (root / "systemd/skfleet-mero.service").read_text()
     link_timer = (root / "systemd/skfleet-link.timer").read_text()
     mero_timer = (root / "systemd/skfleet-mero.timer").read_text()
-    seraph = (root / "systemd/skfleet-seraph.service").read_text()
-    seraph_timer = (root / "systemd/skfleet-seraph.timer").read_text()
-    tank = (root / "systemd/skfleet-tank.service").read_text()
-    tank_timer = (root / "systemd/skfleet-tank.timer").read_text()
-    atlas = (root / "systemd/skfleet-atlas.service").read_text()
-    atlas_timer = (root / "systemd/skfleet-atlas.timer").read_text()
-    niobe = (root / "systemd/skfleet-niobe-live.service").read_text()
     assert "TimeoutStartSec=120" in link
     assert "SKAGENT=link-producer" in producer
     assert (
@@ -867,126 +218,96 @@ def test_unit_templates_preserve_limits_and_disabled_install_contract() -> None:
     assert "OnUnitActiveSec=5min" in link_timer
     assert "OnUnitActiveSec=5min" in mero_timer
     assert "skfleet-mero.service" in mero_timer
-    assert "TimeoutStartSec=300" in seraph
-    assert "--seat seraph" in seraph
-    assert "SKFLEET_MAX_LAUNCH" not in seraph
-    assert "Environment=SKFLEET_TARGET=2" in seraph
-    assert "Environment=SKFLEET_SERAPH_BATCH_SIZE=2" in seraph
-    assert "Environment=SKFLEET_CODEX_PHYSICAL_LIMIT=3" in seraph
-    assert "Environment=SKFLEET_TARGET=3" in niobe
-    assert "Environment=SKFLEET_GLM_TARGET=0" in niobe
-    assert "Environment=SKFLEET_KIMI_TARGET=0" in niobe
-    assert "skfleet-seraph.service" in seraph_timer
-    assert "--seat tank" in tank and "TimeoutStartSec=300" in tank
-    assert "SKFLEET_TANK_BATCH_SIZE=2" in tank
-    assert "ProtectHome=read-only" in tank
-    assert "ReadWritePaths=%h/.skcapstone/evidence %h/.skcapstone/fleet" in tank
-    assert "OnUnitActiveSec=5min" in tank_timer
-    assert "--seat atlas" in atlas and "TimeoutStartSec=300" in atlas
-    assert "SKFLEET_ATLAS_BATCH_SIZE=2" in atlas
-    assert "ProtectHome=read-only" in atlas
-    assert "ReadWritePaths=%h/.skcapstone/evidence %h/.skcapstone/fleet" in atlas
-    assert "bounded postcondition verifier" in atlas
-    assert "OnUnitActiveSec=5min" in atlas_timer
-    for seat in ("tank", "atlas"):
-        assert (root / "systemd" / f"skfleet-{seat}.service").read_bytes() == (
-            root / "src" / "skcapstone" / "data" / "systemd" / f"skfleet-{seat}.service"
-        ).read_bytes()
+    for retired in ("seat-cycle", "atlas", "seraph", "niobe", "niobe-live"):
+        for suffix in ("service", "timer"):
+            assert not (root / "systemd" / f"skfleet-{retired}.{suffix}").exists()
+            assert not (
+                root / "src" / "skcapstone" / "data" / "systemd" / f"skfleet-{retired}.{suffix}"
+            ).exists()
+    assert not (root / "systemd/skfleet-tank.service").exists()
+    assert not (root / "systemd/skfleet-tank.timer").exists()
+    assert not (root / "src/skcapstone/data/systemd/skfleet-tank.service").exists()
+    assert not (root / "src/skcapstone/data/systemd/skfleet-tank.timer").exists()
 
 
-def test_tank_and_atlas_presence_cycles_do_not_run_link_work(tmp_path: Path) -> None:
+def _claim(config_home: Path, host: str) -> None:
+    """Write this machine's host-local lifecycle claim."""
+    path = config_home / "skcapstone/lifecycle-host.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"schema": "sk.lifecycle-host/v1", "active_host": host}), encoding="utf-8"
+    )
+
+
+def test_a_second_estate_may_elect_its_own_active_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same six seats run on noroc2027, with that host's own claim agreeing."""
+    control_path = tmp_path / "control.json"
+    control_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "revision": "nor-r1",
+                "active_host": "noroc2027",
+                "seats": {seat: ["noroc2027"] for seat in ("link", "mero")},
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_home = tmp_path / "config"
+    _claim(config_home, "noroc2027")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    assert load_control_plane(control_path, host="noroc2027")["active_host"] == "noroc2027"
+
+
+def test_synced_record_cannot_activate_a_host_that_never_claimed_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A chi record arriving on a nor machine is refused by that machine's claim."""
     control_path = tmp_path / "control.json"
     control(control_path)
-    for seat in ("tank", "atlas"):
-        result = run_cycle(
+    config_home = tmp_path / "config"
+    _claim(config_home, "noroc2027")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    with pytest.raises(ValueError, match="this machine claims noroc2027"):
+        load_control_plane(control_path, host="noroc2027")
+
+
+def test_a_claim_copied_to_another_node_refuses_rather_than_promoting_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    config_home = tmp_path / "config"
+    _claim(config_home, "noroc2027")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    with pytest.raises(ValueError, match="this machine is chiap08"):
+        load_control_plane(control_path, host="chiap08")
+
+
+def test_a_machine_with_no_claim_still_follows_the_estate_election(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The claim only ever refuses: absent, the synced election stands."""
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-config"))
+    assert load_control_plane(control_path, host="chiap08")["active_host"] == "chiap08"
+
+
+@pytest.mark.parametrize("seat", ["atlas", "seraph", "niobe", "tank"])
+def test_retired_dispatcher_seats_are_refused(tmp_path: Path, seat: str) -> None:
+    control_path = tmp_path / "control.json"
+    control(control_path)
+    with pytest.raises(ValueError, match="unsupported recurring seat"):
+        run_cycle(
             seat=seat,
             home=tmp_path / "home",
             control_plane=control_path,
             local_host="chiap08",
-            operation=lambda: {
-                "cards_examined": 0,
-                "recommendations": 0,
-                "suppressed": 0,
-                "reason": "presence_complete",
-            },
         )
-        assert result.result == "presence_complete"
-        assert result.cards_examined == 0
-
-
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
-def test_role_dispatch_is_bounded_and_seat_scoped(tmp_path, monkeypatch, seat) -> None:
-    captured = {}
-    card_id = "a8100007"
-    owner = f"pi-{seat}-chiap08-{card_id}"
-    card = SimpleNamespace(
-        labels=[f"seat-{seat}", "dispatch-approved"],
-        status=SimpleNamespace(value="doing"),
-        owner=owner,
-        meta={"_claim_revision": "revision-1"},
-    )
-
-    def run(command, **kwargs):
-        if command[0] == "systemctl":
-            return SimpleNamespace(returncode=0)
-        captured["command"] = command
-        captured.update(kwargs["env"])
-        return SimpleNamespace(
-            returncode=0,
-            stdout=(
-                f"LAUNCHED|chiap08|codex-auto-{card_id}|{card_id}|lane=codex|"
-                f"model=sk-codex-mid|owner={owner}|claim_revision=revision-1\n"
-            ),
+    with pytest.raises(SystemExit):
+        seat_entrypoint.main(
+            ["--seat", seat, "--home", str(tmp_path), "--control-plane", str(control_path)]
         )
-
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.subprocess.run", run)
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore.fold", lambda *_: card)
-    monkeypatch.setattr("skcapstone.seat_cycle_entrypoint.CardStore._read_events", lambda *_: [])
-
-    result = role_dispatch_operation(tmp_path, seat)
-
-    assert result["reason"] == f"{seat}_dispatch_complete"
-    assert captured["command"][0] == str(
-        Path(seat_entrypoint.sys.executable).parent / "skfleet-rotate.py"
-    )
-    assert captured["SKFLEET_ONLY_SEAT"] == seat
-    assert captured["SKFLEET_SEAT_TARGET"] == "2"
-    assert captured["SKFLEET_MAX_LAUNCH"] == "2"
-    assert captured["SKFLEET_GLM_TARGET"] == "0"
-    assert {captured[f"SKFLEET_CODEX_MODEL_{size}"] for size in ("S", "M", "L", "XL")} == {
-        "sk-codex-mid"
-    }
-
-
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
-def test_role_dispatch_rotation_overlap_is_truthful_noop(tmp_path, monkeypatch, seat) -> None:
-    monkeypatch.setattr(
-        "skcapstone.seat_cycle_entrypoint.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0,
-            stdout=f"NOOP_RECEIPT|chiap08|reason=rotation_overlap|seat={seat}\n",
-        ),
-    )
-
-    result = role_dispatch_operation(tmp_path, seat)
-
-    assert result["reason"] == f"{seat}_rotation_overlap"
-    assert result["suppressed"] == 0
-
-
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
-@pytest.mark.parametrize("batch", ["0", "-1", "9", "invalid"])
-def test_role_dispatch_rejects_invalid_batch(tmp_path, monkeypatch, seat, batch) -> None:
-    monkeypatch.setenv(f"SKFLEET_{seat.upper()}_BATCH_SIZE", batch)
-    assert role_dispatch_operation(tmp_path, seat)["reason"] == f"{seat}_batch_size_invalid"
-
-
-@pytest.mark.parametrize("seat", ["tank", "atlas"])
-def test_role_dispatch_rejects_missing_wheel_owned_dispatcher(tmp_path, monkeypatch, seat) -> None:
-    bindir = tmp_path / "venv" / "bin"
-    bindir.mkdir(parents=True)
-    monkeypatch.setattr(seat_entrypoint.sys, "executable", str(bindir / "python3"))
-
-    result = role_dispatch_operation(tmp_path, seat)
-
-    assert result["reason"] == f"{seat}_dispatcher_missing"

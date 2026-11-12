@@ -15,8 +15,8 @@ reconfigured by this source change. Dashboard HTTP integration is card
 | Target registration | registry | collector | atlas | register |
 | Cohort evaluation | collector | evaluator | atlas | evaluate |
 | Evaluation handoff | evaluator | controller | atlas | transition |
-| Controller projection | controller | dashboard-projection | tank | project |
-| Query delivery | dashboard-projection | query-delivery | tank | deliver |
+| Controller projection | controller | dashboard-projection | atlas | project |
+| Query delivery | dashboard-projection | query-delivery | atlas | deliver |
 | Canary review request | canary | Link | link | canary_review |
 | Canonical review materialization | Link | Seraph | link | review |
 

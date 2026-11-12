@@ -123,19 +123,29 @@ class TestSkillsList:
 
         assert result.exit_code == 0
 
-    def test_list_registry_error_exits_1(self):
-        """Registry connection error should print an error and exit 1."""
+    def test_list_registry_error_uses_github_fallback(self):
+        """A registry error uses a fixture catalog without contacting GitHub."""
         runner = CliRunner()
         client = MagicMock()
         client.list_skills.side_effect = ConnectionError("offline")
 
-        with patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client):
+        with (
+            patch("skcapstone.cli.skills_cmd.get_registry_client", return_value=client),
+            patch(
+                "skcapstone.cli.skills_cmd._fetch_github_catalog",
+                return_value=[
+                    {"name": "fixture-skill", "description": "Synthetic catalog", "tags": []}
+                ],
+            ) as fallback,
+        ):
             result = runner.invoke(
                 main, ["skills", "list", "--registry", "https://registry.example"]
             )
 
         assert result.exit_code == 0
         assert "offline" not in result.output
+        assert "fixture-skill" in result.output
+        fallback.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

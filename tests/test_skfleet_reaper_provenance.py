@@ -44,6 +44,14 @@ def _claim_event(
     return event
 
 
+#: Module-level constants the extracted functions close over. Extracted from
+#: the launcher's own AST rather than restated here, the way
+#: test_skfleet_claim_ceiling and test_skfleet_backoff_wake already do it: a
+#: literal copied into the harness would keep passing after the real constant
+#: changed, which is exactly the fidelity this seam exists to preserve.
+CONSTANTS = {"_REAP_WRITER"}
+
+
 def _load_functions(*names: str) -> dict[str, object]:
     """Load selected functions without executing the fleet launcher."""
     tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
@@ -53,7 +61,16 @@ def _load_functions(*names: str) -> dict[str, object]:
         if isinstance(node, ast.FunctionDef) and node.name in names
     }
     assert set(wanted) == set(names)
-    module = ast.Module(body=[wanted[name] for name in names], type_ignores=[])
+    constants = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and {t.id for t in node.targets if isinstance(t, ast.Name)} & CONSTANTS
+    ]
+    assert {
+        t.id for node in constants for t in node.targets if isinstance(t, ast.Name)
+    } == CONSTANTS
+    module = ast.Module(body=constants + [wanted[name] for name in names], type_ignores=[])
     namespace: dict[str, object] = {
         "collections": collections,
         "datetime": datetime,
@@ -63,7 +80,9 @@ def _load_functions(*names: str) -> dict[str, object]:
         "json": json,
         "os": os,
         "re": re,
+        "FLEET_WORKER_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
         "ROTATION_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
+        "DISPATCH_AGENT": "niobe",
     }
     exec(compile(module, str(ROTATE), "exec"), namespace)
     return namespace
@@ -139,6 +158,7 @@ def _reaper_fixture(
         "_fleet_launch_provenance",
         "_ineffective_suppresses",
         "_record_reap_outcome",
+        "_append_reaper_evidence",
         "reap_dead_claims",
     )
     released: list[list[str]] = []
@@ -182,6 +202,16 @@ def _reaper_fixture(
                 "mismatched": 0,
                 "duplicates": 0,
             },
+            # The progress pass runs inside reap_dead_claims but is not under
+            # test here; it has its own coverage in
+            # test_worker_progress_report.py and test_wedge_reaper.py. Stubbed
+            # exactly like _worker_health_snapshot above. The reporter stub
+            # records nothing because the reporter must still actuate nothing,
+            # and the wedge actuator is stubbed to return 0 so the absence
+            # path's own release accounting stays the only thing measured.
+            "_report_worker_progress": lambda *_args, **_kwargs: None,
+            "_reap_wedged_workers": lambda *_args, **_kwargs: 0,
+            "active_worker_units": lambda: [],
             "sh": lambda *_args: "",
             "seat_for": lambda card_id, _core: "link" if card_id == "deadbeef" else None,
             "subprocess": SimpleNamespace(run=fake_run),
@@ -476,10 +506,23 @@ def test_worker_owner_parser_rejects_broad_or_mismatched_names(owner: str) -> No
     parser.__globals__.update(
         {
             "ROTATION_HOSTS": ("chiap01", "chiap02"),
+            "FLEET_WORKER_HOSTS": ("chiap01", "chiap02"),
             "_SEAT_RE": re.compile(r"^[a-z][a-z0-9-]{0,31}$"),
         }
     )
     assert parser(owner, "deadbeef", "link") is None
+
+
+def test_worker_owner_parser_recognizes_remote_host_with_single_authority() -> None:
+    parser = _load_functions("_parse_worker_owner")["_parse_worker_owner"]
+    parser.__globals__.update(
+        {
+            "ROTATION_HOSTS": ("chiap08",),
+            "FLEET_WORKER_HOSTS": ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08"),
+            "_SEAT_RE": re.compile(r"^[a-z][a-z0-9-]{0,31}$"),
+        }
+    )
+    assert parser("pi-glm-chiap02-deadbeef", "deadbeef") == ("lane", "glm", "chiap02")
 
 
 def test_launch_provenance_resolves_seat_for_each_card(tmp_path: Path) -> None:
@@ -500,6 +543,8 @@ def test_launch_provenance_resolves_seat_for_each_card(tmp_path: Path) -> None:
     other = tmp_path / "cards" / "feedface"
     other.mkdir()
     (other / "core.json").write_text('{"initial_labels": []}\n', encoding="utf-8")
+    namespace["ROTATION_HOSTS"] = ("chiap08",)
+    namespace["FLEET_WORKER_HOSTS"] = ("chiap01", "chiap02", "chiap03", "chiap04", "chiap08")
 
     assert namespace["_fleet_launch_provenance"](
         "deadbeef", "pi-link-chiap02-deadbeef", "link-revision"
@@ -526,13 +571,18 @@ def test_reap_outcome_is_machine_readable_and_idempotent(tmp_path: Path) -> None
     assert namespace["_record_reap_outcome"]("deadbeef", owner, revision, claim_ts)
     path = tmp_path / "card_events" / "fleet-liveness-reaper.jsonl"
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    assert len(rows) == 2
-    verdict = next(row for row in rows if row["action"] == "verdict")
-    evidence = next(row for row in rows if row["action"] == "link")
-    assert verdict["verdict"] == "WORKER_DIED"
+    # One schema-valid link row. The old action=verdict row carried a field
+    # CardEvent forbids and was rejected by the fold on every read.
+    assert len(rows) == 1
+    assert not [row for row in rows if row["action"] == "verdict"]
+    evidence = rows[0]
+    assert evidence["action"] == "link"
     assert evidence["link_key"] == "worker_died"
     assert evidence["link_value"] == f"owner={owner} claim_revision={revision}"
-    assert len({row["event_id"] for row in rows}) == 2
+    from skcoord.card import CardEvent, validate_overlay_event
+
+    for row in rows:
+        validate_overlay_event(CardEvent.model_validate(row))
 
 
 @pytest.mark.parametrize(
@@ -556,16 +606,14 @@ def test_preexisting_outcome_requires_exact_canonical_lf_bytes(
     assert namespace["_record_reap_outcome"]("deadbeef", owner, revision, claim_ts)
     path = tmp_path / "card_events" / "fleet-liveness-reaper.jsonl"
     canonical = path.read_bytes()
-    first, second = canonical.splitlines(keepends=True)
+    (first,) = canonical.splitlines(keepends=True)
     mutations = {
         "crlf": canonical.replace(b"\n", b"\r\n"),
         "missing-lf": canonical[:-1],
         "duplicate": canonical + first,
         "extra": canonical + b"extra",
-        "malformed": b"not-json\n" + second,
-        "noncanonical": json.dumps(json.loads(first), sort_keys=True).encode("utf-8")
-        + b"\n"
-        + second,
+        "malformed": b"not-json\n" + first,
+        "noncanonical": json.dumps(json.loads(first), sort_keys=True).encode("utf-8") + b"\n",
     }
     path.write_bytes(mutations[mutation])
 
@@ -608,6 +656,7 @@ def test_invalid_live_report_timestamp_cannot_bypass_claim_grace(
             "LIVE_FRESH": 1800,
             "LIVE_TIMER_CYCLE": 360,
             "ROTATION_HOSTS": ("chiap01", "chiap02", "chiap03"),
+            "FLEET_WORKER_HOSTS": ("chiap01", "chiap02", "chiap03"),
             "time": time,
         }
     )
@@ -623,6 +672,37 @@ def test_invalid_live_report_timestamp_cannot_bypass_claim_grace(
     assert released == []
 
 
+def test_live_report_health_names_missing_and_stale_reporters(tmp_path: Path) -> None:
+    """Fixed quorum diagnostics retain the all-known-host safety fence."""
+    live = tmp_path / "live"
+    live.mkdir()
+    now = time.time()
+    (live / "chiap02.json").write_text(
+        json.dumps({"host": "chiap02", "ts": now - 3600, "cards": []}) + "\n",
+        encoding="utf-8",
+    )
+    namespace = _load_functions("live_report_health")
+    namespace.update(
+        {
+            "LIVE": str(live),
+            "LIVE_FRESH": 1800,
+            "LIVE_TIMER_CYCLE": 360,
+            "ROTATION_HOSTS": ("chiap01", "chiap02"),
+            "FLEET_WORKER_HOSTS": ("chiap01", "chiap02"),
+            "time": time,
+        }
+    )
+
+    health = namespace["live_report_health"](now=now)
+
+    assert health["authoritative"] is False
+    assert health["reporting"] == set()
+    assert {(fault["host"], fault["reason"]) for fault in health["faults"]} == {
+        ("chiap01", "missing"),
+        ("chiap02", "stale"),
+    }
+
+
 def test_conflicting_existing_outcome_id_prevents_release(tmp_path: Path) -> None:
     """An event ID collision cannot stand in for the canonical worker verdict."""
     owner = "pi-codex-chiap02-deadbeef"
@@ -635,14 +715,15 @@ def test_conflicting_existing_outcome_id_prevents_release(tmp_path: Path) -> Non
         launch_revision=revision,
     )
     identity = f"deadbeef\0{owner}\0{revision}"
-    verdict_id = hashlib.sha256(("fleet-reap-verdict-v1\0" + identity).encode()).hexdigest()
+    verdict_id = hashlib.sha256(("fleet-reap-evidence-v1\0" + identity).encode()).hexdigest()
     event_dir = tmp_path / "card_events"
     event_dir.mkdir()
     conflicting = {
         "event_id": verdict_id,
         "card_id": "deadbeef",
-        "action": "verdict",
-        "verdict": "PASS",
+        "action": "link",
+        "link_key": "worker_died",
+        "link_value": "owner=somebody-else claim_revision=other",
         "writer": "fleet-liveness-reaper",
         "ts": "2026-08-31T00:00:00+00:00",
     }
@@ -803,6 +884,8 @@ def test_launch_failure_releases_the_exact_claimed_revision() -> None:
             "exact-revision",
             "--agent",
             "worker-owner",
+            "--abandon-reason",
+            "error",
         ]
     ]
 
@@ -845,7 +928,9 @@ def test_genuine_dead_fleet_claim_with_exact_generation_is_released(
             "--expected-claim-revision",
             revision,
             "--agent",
-            "jarvis",
+            "niobe",
+            "--abandon-reason",
+            "error",
         ]
     ]
 
@@ -1086,3 +1171,142 @@ def test_future_fresh_timestamp_fails_closed_on_clock_skew(tmp_path: Path) -> No
     assert namespace["reap_dead_claims"]() == 0
     assert released == []
     assert any(message.startswith("REAP_CLOCK_SKEW|") for message in messages)
+
+
+@pytest.mark.parametrize("lane", ("codex", "glm", "deepseek", "qwen", "kimi", "gateway"))
+def test_builder_node_owner_requires_exact_lane_host_card(lane: str) -> None:
+    """Production builder identities map to their actual reporting host."""
+    parser = _load_functions("_parse_worker_owner")["_parse_worker_owner"]
+    assert parser(f"pi-{lane}-builder-node-chiap02-deadbeef", "deadbeef") == (
+        "builder",
+        lane,
+        "chiap02",
+    )
+
+
+@pytest.mark.parametrize(
+    "owner",
+    (
+        "pi-deepseek-builder-node-unknown-deadbeef",
+        "pi-unknown-builder-node-chiap02-deadbeef",
+        "pi-deepseek-builder-node-chiap02-feedface",
+        "pi-deepseek-builder-node-chiap02-deadbeef-extra",
+        "codex-typed-claim-deadbeef",
+        "codex-development-browser-qa-deadbeef",
+    ),
+)
+def test_builder_node_recognition_does_not_admit_manual_or_mismatched_owners(owner):
+    """A known card suffix alone is never release authority."""
+    parser = _load_functions("_parse_worker_owner")["_parse_worker_owner"]
+    assert parser(owner, "deadbeef") is None
+
+
+def test_dead_builder_node_claim_uses_existing_exact_release(tmp_path):
+    """An absent unprotected builder now reaches the same CAS release path."""
+    owner = "pi-deepseek-builder-node-chiap02-deadbeef"
+    namespace, released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision="builder-claim",
+        launch_revision=None,
+    )
+    assert namespace["reap_dead_claims"]() == 1
+    assert len(released) == 1
+    assert released[0][released[0].index("--owner") + 1] == owner
+    assert released[0][released[0].index("--expected-claim-revision") + 1] == "builder-claim"
+
+
+@pytest.mark.parametrize("gate", ("live", "missing-host", "grace", "changed-claim"))
+def test_builder_node_recognition_preserves_dead_worker_proofs(tmp_path, gate):
+    """Recognizing a new identity cannot waive any existing death proof."""
+    owner = "pi-deepseek-builder-node-chiap02-deadbeef"
+    namespace, released, _messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision="builder-claim",
+        launch_revision=None,
+    )
+    if gate == "live":
+        namespace["live_report"] = lambda: (time.time(), {"deadbeef"}, 3)
+    elif gate == "missing-host":
+        namespace["live_report"] = lambda: {
+            "oldest": time.time(),
+            "running": set(),
+            "reporting": {"chiap01", "chiap02", "chiap03"},
+            "expected": {"chiap01", "chiap02", "chiap03", "chiap04"},
+            "faults": [],
+            "authoritative": False,
+        }
+    elif gate == "grace":
+        namespace["CLAIM_GRACE"] = 1800
+    else:
+        namespace["_current_claim_identity_fresh"] = lambda _cid: (
+            owner,
+            time.time() - 900,
+            "new-builder-claim",
+        )
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+
+
+@pytest.mark.parametrize("verdict", ("PASS", "PASS_FOR_REVIEW", "PASS_FOR_REREVIEW"))
+@pytest.mark.parametrize("legacy", (False, True))
+def test_dead_builder_pass_is_preserved_before_reaper_evidence(tmp_path, verdict, legacy):
+    """A stopped builder's finished work is not overwritten with WORKER_DIED."""
+    from skcoord.card_store import CardCore, CardStore
+
+    from skcapstone.card import CardEvent, CardEventLog
+
+    owner = "pi-deepseek-builder-node-chiap02-deadbeef"
+    revision = "builder-claim"
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner=owner,
+        claim_revision=revision,
+        launch_revision=None,
+    )
+    home = tmp_path / ".skcapstone"
+    home.mkdir()
+    store = CardStore(home)
+    store.create(CardCore(id="deadbeef", kind="task", title="finished builder", created_by="test"))
+    store.append_event("deadbeef", "claim", owner, owner=owner, claim_revision=revision)
+    if legacy:
+        CardEventLog(home).append(
+            CardEvent(
+                card_id="deadbeef",
+                action="link",
+                link_key="verdict",
+                link_value=verdict,
+                writer=owner,
+            )
+        )
+    else:
+        store.append_event("deadbeef", "verdict", owner, verdict=verdict)
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert not (tmp_path / "card_events" / "fleet-liveness-reaper.jsonl").exists()
+    assert any("REAP_PRESERVED_FINISHED_WORK" in message for message in messages)
+
+
+@pytest.mark.parametrize("failure", (OSError("unreadable"), ValueError("invalid events")))
+def test_dead_builder_refuses_when_finished_work_cannot_be_read(tmp_path, monkeypatch, failure):
+    """Unavailable outcome evidence cannot turn a stopped builder into a release."""
+    from skcapstone import release_guard
+
+    def unavailable(*_args):
+        raise failure
+
+    namespace, released, messages = _reaper_fixture(
+        tmp_path,
+        card_id="deadbeef",
+        owner="pi-glm-builder-node-chiap02-deadbeef",
+        claim_revision="builder-claim",
+        launch_revision=None,
+    )
+    monkeypatch.setattr(release_guard, "finished_work_verdict", unavailable)
+    assert namespace["reap_dead_claims"]() == 0
+    assert released == []
+    assert any("REAP_FINISHED_WORK_UNAVAILABLE" in message for message in messages)

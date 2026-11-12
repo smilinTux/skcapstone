@@ -1,0 +1,1 @@
+- Reuse the exact claim-bound legacy/native PASS projection proof before the acceptance pair refresh gate. Preserved legacy W7 review 587ec6eb can reach trusted tests without requiring newer ancillary metadata; changed review facts and claims still refuse.

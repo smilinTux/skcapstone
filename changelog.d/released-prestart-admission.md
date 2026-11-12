@@ -1,0 +1,1 @@
+- Release a production worker slot when a reservation was never started, its exact native claim was subsequently released, and systemd confirms no service exists. Preserve a bound receipt and keep consumed or uncertain starts charged.

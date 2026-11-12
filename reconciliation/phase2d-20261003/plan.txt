@@ -1,0 +1,10 @@
+Phase 2d implementation plan
+User specification: classify all 83 candidate-only failures A/B/C/D; preserve deployed SKCoord; green draft PRs; protected docs unchanged.
+1. Snapshot every installed skcoord file on chiap08, verify host/local git blobs, scan, commit and push immutable snapshot first.
+2. Create skcoord reconciliation worktree from current main; overlay deployed package without bytecode; preserve main improvements after comparison; run full sibling suite and open draft PR.
+3. Inventory exact 83 failing test IDs from Phase 2c JUnit. Record one bucket, evidence, fix commit and result per ID in reconciliation/phase2d-20261003/failure-classification.json.
+4. C: repair isolated AST globals, systemd argv stub and overlapping crew fixture scopes in individual labelled commits with relevant tests.
+5. A/B: compare deployed rotator, wrapper, units and package paths against main history; update genuinely superseded tests, port main fixes for regressions, preserve main docs byte-for-byte. Each independently verified fix gets its own labelled commit.
+6. D: trace captured scripts and transitive callers. Only existing deployed calls authorize connection wiring. List absent callers explicitly; keep their disposition pending user answer rather than inventing connections.
+7. Pin hosted CI sibling overlay to the reviewed skcoord candidate SHA while retaining registry checks. Run clean dependency tests, targeted failures, full suite and hosted checks.
+8. Record exact counts, baseline comparison, source provenance and PR state. Keep drafts; no merges, deployments or restarts. Stop after Phase 2d report.

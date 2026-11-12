@@ -11,8 +11,10 @@ from skcapstone.seat_boundaries import Action, BoundaryError, require_authority
 from skcapstone.seat_runtime import (
     MeroObservation,
     ReviewAssignmentRecommendation,
+    _launch_route_identity,
     append_review_launch_receipt,
     authorize_review_launch,
+    governed_review_assignment_ready,
     recommend_reviewer,
     review_state_revision,
 )
@@ -34,6 +36,42 @@ def card(home: Path) -> None:
             initial_labels=["review", "parent-deadbeef"],
         )
     )
+    CardStore(home).append_event("feedface", "move", "producer", column="review")
+
+
+def test_backlog_review_label_is_not_admitted(tmp_path: Path) -> None:
+    """A label cannot override the authoritative lifecycle column."""
+
+    card(tmp_path)
+    CardStore(tmp_path).append_event("feedface", "move", "producer", column="backlog")
+
+    with pytest.raises(BoundaryError, match="governed review"):
+        recommend_reviewer(
+            tmp_path,
+            card_id="feedface",
+            recommendation_id="assignment-1",
+            author="producer",
+            candidates=["reviewer-one"],
+            observed_process={"sessions": []},
+            evidence_sha256=HASH,
+        )
+
+
+def test_governed_review_assignment_ready_matches_downstream_contract(
+    tmp_path: Path,
+) -> None:
+    """Preselection and downstream authorization share one lifecycle contract."""
+
+    card(tmp_path)
+    store = CardStore(tmp_path)
+    assert governed_review_assignment_ready(store.fold("feedface")) is True
+
+    store.append_event("feedface", "add_label", "producer", label="do-not-claim")
+    assert governed_review_assignment_ready(store.fold("feedface")) is False
+
+    store.append_event("feedface", "remove_label", "producer", label="do-not-claim")
+    store.append_event("feedface", "move", "producer", column="backlog")
+    assert governed_review_assignment_ready(store.fold("feedface")) is False
 
 
 def test_link_recommends_and_exact_reviewer_authorizes_fresh_assignment(
@@ -74,9 +112,94 @@ def test_link_recommends_and_exact_reviewer_authorizes_fresh_assignment(
         actor="reviewer-one",
         claim_revision="claim-revision-1",
         launched=True,
+        route_identity={
+            "logical_route": "review-medium",
+            "provider": "provider-a",
+            "capacity_domains": ["domain-a"],
+            "model_or_bucket": "review-medium",
+        },
     )
     assert receipt["claim_revision"] == "claim-revision-1"
     assert receipt["launched"] is True
+    assert receipt["schema"] == "skfleet.review-assignment-launch/v2"
+    assert receipt["route_identity"]["capacity_domains"] == ["domain-a"]
+
+
+def test_launch_receipt_rejects_incomplete_route_identity(tmp_path: Path) -> None:
+    card(tmp_path)
+    recommendation = recommend_reviewer(
+        tmp_path,
+        card_id="feedface",
+        recommendation_id="assignment-1",
+        author="producer",
+        candidates=["reviewer-one"],
+        observed_process={"sessions": []},
+        evidence_sha256=HASH,
+    )
+    handoff = authorize_review_launch(
+        tmp_path,
+        recommendation,
+        actor="reviewer-one",
+        current_process={"sessions": []},
+        used_recommendation_ids=set(),
+    )
+    CardStore(tmp_path).append_event(
+        "feedface",
+        "claim",
+        "reviewer-one",
+        owner="reviewer-one",
+        claim_revision="claim-revision-1",
+    )
+    with pytest.raises(BoundaryError, match="route identity is incomplete"):
+        append_review_launch_receipt(
+            tmp_path,
+            handoff,
+            actor="reviewer-one",
+            claim_revision="claim-revision-1",
+            launched=True,
+            route_identity={"provider": "provider-a"},
+        )
+
+
+def test_review_launch_seals_and_validates_its_policy_snapshot(tmp_path):
+    from skcapstone.fleet.production_builder import digest
+
+    hosts = ["chiap01", "chiap02", "chiap03", "chiap04", "chiap08"]
+    limits = dict(
+        cpu_quota_percent=200,
+        memory_max_bytes=3 * 1024**3,
+        tasks_max=256,
+        runtime_max_seconds=3600,
+    )
+    policy = dict(
+        schema="skfleet.production/v1",
+        authority_host="chiap08",
+        capacity_authority="skgateway",
+        gateway_url="http://gateway.test",
+        lanes={
+            lane: dict(enabled=True, provider="skgateway")
+            for lane in ("codex", "glm", "deepseek", "qwen")
+        },
+        node_quotas={host: dict(limits) for host in hosts},
+        worker_destinations=hosts,
+        remote_review=dict(enabled=True, destinations=["chiap03"], card_ids=["b4594faa"]),
+        node_admission={"chiap08": dict(max_concurrent_workers=1, memory_floor_bytes=8 * 1024**3)},
+    )
+    policy["lanes"]["kimi"] = dict(enabled=False)
+    route = {
+        "logical_route": "review-medium",
+        "provider": "skgateway",
+        "capacity_domains": ["zai"],
+        "model_or_bucket": "glm-5",
+        "policy_snapshot": policy,
+        "policy_sha256": digest(policy),
+    }
+
+    assert _launch_route_identity(tmp_path, route) == route
+
+    route["policy_sha256"] = "0" * 64
+    with pytest.raises(BoundaryError, match="policy snapshot is invalid"):
+        _launch_route_identity(tmp_path, route)
 
 
 @pytest.mark.parametrize("candidate", ["", " ", "producer", "link"])
@@ -93,6 +216,65 @@ def test_link_rejects_non_distinct_reviewer(tmp_path: Path, candidate: str) -> N
             candidates=[candidate],
             observed_process={"sessions": []},
             evidence_sha256=HASH,
+        )
+
+
+@pytest.mark.parametrize("column", ["backlog", "ready"])
+def test_link_rejects_non_review_lifecycle(tmp_path: Path, column: str) -> None:
+    """Only the review column is executable governed review work."""
+
+    card(tmp_path)
+    CardStore(tmp_path).append_event("feedface", "move", "producer", column=column)
+    with pytest.raises(BoundaryError, match="governed review"):
+        recommend_reviewer(
+            tmp_path,
+            card_id="feedface",
+            recommendation_id="assignment-1",
+            author="producer",
+            candidates=["reviewer-one"],
+            observed_process={"sessions": []},
+            evidence_sha256=HASH,
+        )
+
+
+def test_link_rejects_missing_exact_review_label(tmp_path: Path) -> None:
+    """A review column alone cannot enter the governed launch path."""
+
+    card(tmp_path)
+    CardStore(tmp_path).append_event("feedface", "remove_label", "producer", label="review")
+    with pytest.raises(BoundaryError, match="governed review"):
+        recommend_reviewer(
+            tmp_path,
+            card_id="feedface",
+            recommendation_id="assignment-1",
+            author="producer",
+            candidates=["reviewer-one"],
+            observed_process={"sessions": []},
+            evidence_sha256=HASH,
+        )
+
+
+def test_authorization_rejects_owner_after_recommendation(tmp_path: Path) -> None:
+    """An intervening owner claim fails closed before launch."""
+
+    card(tmp_path)
+    recommendation = recommend_reviewer(
+        tmp_path,
+        card_id="feedface",
+        recommendation_id="assignment-1",
+        author="producer",
+        candidates=["reviewer-one"],
+        observed_process={"sessions": []},
+        evidence_sha256=HASH,
+    )
+    CardStore(tmp_path).append_event("feedface", "assign", "other", owner="other")
+    with pytest.raises(BoundaryError, match="governed review"):
+        authorize_review_launch(
+            tmp_path,
+            recommendation,
+            actor="reviewer-one",
+            current_process={"sessions": []},
+            used_recommendation_ids=set(),
         )
 
 
@@ -119,6 +301,31 @@ def test_reviewer_rejects_replay_and_state_drift(tmp_path: Path) -> None:
         )
     CardStore(tmp_path).append_event("feedface", "add_label", "other", label="changed")
     with pytest.raises(BoundaryError, match="state changed"):
+        authorize_review_launch(
+            tmp_path,
+            recommendation,
+            actor="reviewer-one",
+            current_process={"sessions": []},
+            used_recommendation_ids=set(),
+        )
+
+
+def test_launch_rejects_later_backlog_move(tmp_path: Path) -> None:
+    """Authorization rechecks the authoritative review column."""
+
+    card(tmp_path)
+    recommendation = recommend_reviewer(
+        tmp_path,
+        card_id="feedface",
+        recommendation_id="assignment-1",
+        author="producer",
+        candidates=["reviewer-one"],
+        observed_process={"sessions": []},
+        evidence_sha256=HASH,
+    )
+    CardStore(tmp_path).append_event("feedface", "move", "producer", column="backlog")
+
+    with pytest.raises(BoundaryError, match="governed review"):
         authorize_review_launch(
             tmp_path,
             recommendation,
@@ -319,7 +526,7 @@ def test_assignment_denies_owned_review_card(tmp_path: Path) -> None:
         owner="other-reviewer",
         claim_revision="claim-revision-1",
     )
-    with pytest.raises(BoundaryError, match="unclaimed review work"):
+    with pytest.raises(BoundaryError, match="governed review"):
         recommend_reviewer(
             tmp_path,
             card_id="feedface",

@@ -1,0 +1,1 @@
+- Retire an expired review offer after a card is voided and archived, when its last claim is proven inert by absent status, unit, process, and admission reservation evidence.

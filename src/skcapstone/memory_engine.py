@@ -112,7 +112,15 @@ def _load_entry(path: Path) -> Optional[MemoryEntry]:
         # constructing a legacy entry with the old model's blank default; the
         # latter used to feed thousands of valid unified records into the
         # legacy promoter as the unsafe ``.json`` candidate.
-        if isinstance(data, dict) and "id" in data and "memory_id" not in data:
+        #
+        # The presence of ``id`` is the whole test. This used to also require
+        # ``memory_id`` to be ABSENT, which let a record carrying BOTH keys
+        # through, and `MemoryEntry` has no ``title`` field, so round-tripping
+        # such a record silently dropped both ``id`` and ``title``. A repaired
+        # file carries both keys by construction, so the narrower guard turned
+        # every repair into a file that the next compress pass stripped again.
+        # Observed 2026-10-20 on a memory rewritten title-less every hour.
+        if isinstance(data, dict) and "id" in data:
             logger.debug("Skipping unified SKMemory record in legacy loader: %s", path)
             return None
         entry = MemoryEntry(**data)
@@ -267,6 +275,48 @@ def recall(home: Path, memory_id: str) -> Optional[MemoryEntry]:
     return entry
 
 
+def _search_as_reader(
+    home: Path,
+    query: str,
+    layer: Optional[MemoryLayer],
+    tags: Optional[list[str]],
+    limit: int,
+    soul_context: Optional[str],
+    reader: Optional[str],
+) -> list[MemoryEntry]:
+    """Search for a declared (non-owner) reader through skmemory, failing closed."""
+    import inspect
+
+    from . import AGENT_HOME
+
+    # Same isolation rule as the unfiltered path: the unified store belongs to
+    # the global agent home only.
+    if Path(home).resolve() != Path(AGENT_HOME).expanduser().resolve():
+        return []
+    unified = _get_unified()
+    if unified is None:
+        return []
+    try:
+        if "reader" not in inspect.signature(unified.search).parameters:
+            logger.warning(
+                "skmemory has no search(reader=...); returning nothing (need >=0.11.94)"
+            )
+            return []
+        from .memory_adapter import memory_to_entry
+
+        entries = [memory_to_entry(m) for m in unified.search(query, limit=limit, reader=reader)]
+    except Exception as exc:
+        logger.warning("reader-scoped search failed (%s); returning nothing", exc)
+        return []
+    if layer:
+        entries = [e for e in entries if e.layer == layer]
+    if tags:
+        entries = [e for e in entries if all(t in e.tags for t in tags)]
+    if soul_context is not None:
+        entries = [e for e in entries if e.soul_context == soul_context]
+    return entries[:limit]
+
+
 def search(
     home: Path,
     query: str,
@@ -274,6 +324,7 @@ def search(
     tags: Optional[list[str]] = None,
     limit: int = 20,
     soul_context: Optional[str] = None,
+    reader: Optional[str] = None,
 ) -> list[MemoryEntry]:
     """Search memories by content and/or tags.
 
@@ -287,10 +338,20 @@ def search(
         tags: Filter to entries containing ALL of these tags.
         limit: Maximum number of results.
         soul_context: Filter to memories formed under a specific soul.
+        reader: Audience the results are for (``@public``, ``channel:<id>``,
+            ...; see ``skmemory.audience.resolve_reader``). ``None`` is the
+            owner, unless ``SKMEMORY_READER`` declares a process ceiling. A
+            declared reader is enforced by skmemory only, so the regex file
+            fallback (which has no audience metadata) is never used for it, and
+            an skmemory without ``search(reader=...)`` yields nothing rather
+            than an unfiltered search (SKMEM-P0-18).
 
     Returns:
         List of matching MemoryEntry objects, ranked by relevance.
     """
+    if reader is not None or (os.environ.get("SKMEMORY_READER") or "").strip():
+        return _search_as_reader(home, query, layer, tags, limit, soul_context, reader)
+
     # Try unified backend first (semantic search), but only when home matches
     # the global agent home so tests with temporary directories stay isolated.
     from . import AGENT_HOME

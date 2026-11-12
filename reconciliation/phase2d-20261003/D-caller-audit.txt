@@ -1,0 +1,8 @@
+Bucket D: 32 recovered integration tests; no new wiring authorized.
+Immutable package snapshot: 3f556cb818568956fd2946448d2ba182fd7eae63.
+Extended runtime snapshot: d0974223edfcf27198d3f1277d13354d176188eb.
+Captured bin and user-unit files contain no crew/request-help/herdr_handoff call sites.
+Transitive production_brief/production_acceptance/production_dispatch/production_exit/builder_continue paths contain handoff wording and native acceptance recipes, but do not call the recovered crew or herdr-handoff CLI.
+Captured fleet/cli.py lacks crew and handoff registration; cli/coord.py lacks request-help registration. Captured fleet/sknoded.py and builder_dispatch.py do not import crew modules. The captured dispatcher lacks validate_helper_generation; the reporter lacks publish_progress.
+Missing connections by test module: crew_admission 8, crew_controller 3, crew_progress 1, herdr_handoff_cli 14, coord_helpers 6.
+No inferred connections were restored. The independent helper/crew/handoff library tests remain runnable. Exact failing test IDs and one-bucket classification are in failure-classification.json.

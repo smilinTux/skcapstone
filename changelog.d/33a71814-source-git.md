@@ -1,0 +1,1 @@
+- Card `33a71814`: verify and reconstruct exact builder source in a clean Git environment so host URL rewrites cannot reject a correctly preseeded candidate or redirect its source.

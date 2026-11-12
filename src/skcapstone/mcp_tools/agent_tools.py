@@ -78,14 +78,14 @@ TOOLS: list[Tool] = [
             "coordination board, recent memories, soul overlay, and "
             "MCP status. Returns everything an AI needs to understand "
             "the sovereign agent's current state. Supports text, JSON, "
-            "and claude-md output formats."
+            "claude-md, agents-md and cursor-rules output formats."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "format": {
                     "type": "string",
-                    "enum": ["text", "json", "claude-md", "cursor-rules"],
+                    "enum": ["text", "json", "claude-md", "agents-md", "cursor-rules"],
                     "description": "Output format (default: json)",
                 },
                 "memories": {

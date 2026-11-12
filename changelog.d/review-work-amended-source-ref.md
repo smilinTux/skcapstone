@@ -1,0 +1,1 @@
+- Allow governed review creation to inherit a source ref amendment only after the existing operator provenance, immutable source pin and fetch/ancestry proofs pass. Resolve partial workspace links against birth metadata so a ref-only preservation link does not strand published W7 candidates.

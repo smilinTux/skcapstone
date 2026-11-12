@@ -1,0 +1,1 @@
+- fleet: rotate treats candidate and evidence paths on an unreachable network mount as missing, instead of hanging the cycle in a hard NFS open.

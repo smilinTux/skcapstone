@@ -1,0 +1,29 @@
+{
+  "wheel": "skcapstone-0.15.189.dev27+g9bdc4cf8f-py3-none-any.whl",
+  "bytecode_count": 0,
+  "source_checked": [
+    "fleet/builder_continue.py",
+    "fleet/builder_dispatch.py",
+    "fleet/production_brief.py",
+    "fleet/production_acceptance.py",
+    "daemon_pid.py",
+    "daemon.py",
+    "cli/daemon.py"
+  ],
+  "script_body_checked": [
+    "skfleet-rotate.py",
+    "skfleet-worker-wrapper.py",
+    "skfleet_readiness.py",
+    "skfleet-link-producer.py",
+    "skfleet-pi-model-catalog.py",
+    "skmail",
+    "skmail_work.py",
+    "skmail_writer.py"
+  ],
+  "unit_checked": [
+    "skfleet-live-publisher.service",
+    "skfleet-live-publisher.timer",
+    "skfleet-niobe-live.timer",
+    "skfleet-seraph.timer"
+  ]
+}

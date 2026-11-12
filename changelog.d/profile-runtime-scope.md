@@ -1,0 +1,1 @@
+- Scope qualified test runtime fingerprints to the test toolchain and trusted executor so unrelated main rollouts do not invalidate producer profiles.

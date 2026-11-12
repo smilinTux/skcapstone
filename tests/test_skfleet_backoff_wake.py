@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import bisect
 import collections
 import datetime
 import glob
@@ -21,23 +22,37 @@ FUNCTIONS = {
     "_load_evidence_events",
     "_native_outcome_value",
     "_load_outcomes",
+    "_superseding_outcome_event",
     "_ts_epoch",
     "_label_value",
     "_blocked_reason",
+    "_parse_blocked_on_link",
     "_latest_blocked_reason",
     "_completion_epoch",
     "_material_label",
     "_authored_change_epoch",
     "_human_gate",
     "_human_resolution_epoch",
+    "_dependency_state_change_epoch",
     "_blocker_change_epoch",
     "_wake_retry_available",
+    "_claim_amnesty_epoch",
+    "_countable_claims",
+    "_work_epochs",
+    "_work_between",
+    "_claim_ceiling_hit",
+    "_explicit_ready_requeue_after",
+    "acts",
     "blocked_backoff",
     "_material_change_since",
     "awaiting_review",
     "needs_escalation",
 }
 CONSTANTS = {
+    "_CLAIM_BOOKKEEPING",
+    "_BOOKKEEPING_LINK_KEYS",
+    "_CLAIM_CLOSING",
+    "_REAP_WRITER",
     "_OUTCOME_KEYS",
     "_OUTCOME_VALUE_RE",
     "_PIPE_OUTCOME_RE",
@@ -50,10 +65,14 @@ CONSTANTS = {
     "_CARD_REFERENT_RE",
     "_AC_REFERENT_RE",
     "_AC_MENTION_RE",
+    "_COMBINED_BLOCKED_ON_RE",
     "_WAKE_RETRY_LIMIT",
     "_PASS_RE",
     "_ESCALATE_LABEL",
     "_CAPABILITY_VERDICT_RE",
+    "_WORKSPACE_BLOCKER_RE",
+    "_MAX_CLAIMS",
+    "_AMNESTY_VALUE_RE",
 }
 
 
@@ -69,6 +88,7 @@ def _load_backoff_namespace() -> dict[str, object]:
             if names & CONSTANTS:
                 nodes.append(node)
     namespace = {
+        "bisect": bisect,
         "collections": collections,
         "datetime": datetime,
         "glob": glob,
@@ -231,6 +251,52 @@ def test_regression_c4ef2a90_native_blocked_event_is_authoritative(
         "BLOCKED blocked_on=dependency referent=card:8137c2f5"
     )
     assert namespace["blocked_backoff"](card) is True
+
+
+@pytest.mark.parametrize("legacy_supersession", [False, True])
+def test_outcome_supersession_releases_stale_pass_for_fresh_ready_run(
+    tmp_path: Path, legacy_supersession: bool
+) -> None:
+    card = "c60a542f"
+    prior = {
+        "event_id": "a" * 32,
+        "ts": "2026-10-08T12:00:00+00:00",
+        "writer": "glm-worker",
+        "action": "verdict",
+        "verdict": "PASS_FOR_REVIEW",
+    }
+    ready = {
+        "event_id": "b" * 32,
+        "ts": "2026-10-08T12:02:00+00:00",
+        "writer": "jarvis",
+        "action": "move",
+        "column": "ready",
+    }
+    superseded = {
+        "event_id": "c" * 32,
+        "card_id": card,
+        "ts": "2026-10-08T12:01:00+00:00",
+        "writer": "jarvis",
+        "action": "link",
+        "link_key": "verdict_superseded",
+        "link_value": "SUPERSEDED prior_event=" + "a" * 32 + " reason=custody lost",
+    }
+    native_events = [prior, ready] if legacy_supersession else [prior, ready, superseded]
+    legacy_events = [superseded] if legacy_supersession else None
+    namespace = _native_namespace(tmp_path, {card: native_events}, legacy_events)
+    namespace.update(
+        {
+            "_launched_at": {card: 1.0},
+            "launch_attempts": lambda cid: 3,
+            "_transport_retry_held": lambda cid: False,
+            "_completion_retry_held": lambda cid: False,
+        }
+    )
+
+    assert namespace["_load_outcomes"]()[card][1].startswith("SUPERSEDED")
+    assert namespace["awaiting_review"](card) is False
+    assert namespace["_explicit_ready_requeue_after"](card, 1.0) is True
+    assert namespace["blocked_backoff"](card) is False
 
 
 def test_regression_cd4f9506_split_blocked_evidence_and_reopen(tmp_path: Path) -> None:
@@ -461,6 +527,61 @@ def test_native_pass_remains_awaiting_review(tmp_path: Path) -> None:
     namespace = _native_namespace(tmp_path, native)
     assert namespace["awaiting_review"](card) is True
     assert namespace["blocked_backoff"](card) is True
+
+
+def test_governed_ready_move_after_pass_requeues_fresh_producer(tmp_path: Path) -> None:
+    card = "dddddddd"
+    native = {
+        card: [
+            {
+                "ts": "2026-08-29T01:00:00+00:00",
+                "action": "verdict",
+                "payload": {"verdict": "PASS_FOR_REVIEW"},
+            },
+            {
+                "ts": "2026-08-29T02:00:00+00:00",
+                "action": "move",
+                "column": "ready",
+            },
+        ]
+    }
+    namespace = _native_namespace(tmp_path, native)
+    assert namespace["_explicit_ready_requeue_after"](card, "2026-08-29T01:00:00+00:00") is True
+    assert namespace["awaiting_review"](card) is False
+    assert namespace["blocked_backoff"](card) is False
+
+
+def test_ready_move_before_pass_does_not_requeue(tmp_path: Path) -> None:
+    card = "eeeeeeee"
+    native = {
+        card: [
+            {
+                "ts": "2026-08-29T01:00:00+00:00",
+                "action": "move",
+                "column": "ready",
+            },
+            {
+                "ts": "2026-08-29T02:00:00+00:00",
+                "action": "verdict",
+                "payload": {"verdict": "PASS_FOR_REVIEW"},
+            },
+        ]
+    }
+    namespace = _native_namespace(tmp_path, native)
+    assert namespace["awaiting_review"](card) is True
+    assert namespace["blocked_backoff"](card) is True
+
+
+def test_governed_ready_move_retries_silent_infrastructure_attempts(
+    board: BackoffHarness,
+) -> None:
+    card = "ffffffff"
+    board.attempts[card] = 3
+    board.ns["_launched_at"][card] = board.epoch("2026-08-29T01:00:00Z")
+    board.ns["_transport_retry_held"] = lambda _cid: False
+    board.ns["_completion_retry_held"] = lambda _cid: False
+    board.event(card, "2026-08-29T02:00:00Z", "move", column="ready")
+    assert board.blocked(card) is False
 
 
 def test_consumer_review_verdict_is_dependency_metadata(tmp_path: Path) -> None:
@@ -715,21 +836,24 @@ def test_exact_567_timeline_wakes_then_exhausts_one_generation(board: BackoffHar
     assert board.blocked(card) is True
 
 
-def test_dependency_requires_exact_edge_and_satisfied_referent(board: BackoffHarness) -> None:
+def test_dependency_wake_requires_referent_state_change(board: BackoffHarness) -> None:
+    """Unresolved dependency blockers stay parked until the referent changes."""
     card = "83e04cf1"
     dep = "2076c423"
     board.core(dep)
-    board.states[dep] = "complete"
-    board.satisfied[dep] = True
-    board.event(dep, "2026-08-28T02:00:00Z", "complete")
     board.outcome(card, "2026-08-28T01:00:00Z", f"BLOCKED|dependency|card:{dep}")
     assert board.blocked(card) is True
 
     board.dependencies[card] = [dep]
     board.event(card, "2026-08-28T01:30:00Z", "add_dependency", dependency=dep)
+    assert board.blocked(card) is True
+
+    board.states[dep] = "complete"
+    board.satisfied[dep] = True
+    board.event(dep, "2026-08-28T02:00:00Z", "complete")
     assert board.blocked(card) is False
 
-    board.satisfied[dep] = False
+    board.ns["_wake_launch_times"][card] = [board.epoch("2026-08-28T02:05:00Z")]
     assert board.blocked(card) is True
 
 
@@ -821,5 +945,181 @@ def test_no_change_and_unrelated_traffic_do_not_wake(board: BackoffHarness) -> N
     board.event("66666666", "2026-08-28T02:00:00Z", "amend_criteria")
     board.evidence_event(
         "66666666", "2026-08-28T03:00:00Z", "add_label", label="needs-stronger-model"
+    )
+    assert board.blocked(card) is True
+
+
+def test_regression_4cd4dd62_combined_dependency_blocker_suppresses_redispatch(
+    tmp_path: Path,
+) -> None:
+    """Combined blocked_on values park the exact review until the dependency changes.
+
+    Live generations that redispatched despite an unchanged blocker:
+    - 5f28f62031cd4212a721c8b7fa51ad1b (10h estate SHA256 scan)
+    - 47e420668e074c8098f1cc0688f489c3 (Seraph redispatch 2026-09-12T20:19Z;
+      Jarvis stopped exact unit, released exact claim, temporary do-not-claim)
+    """
+    card = "4cd4dd62"
+    dep = "383a7834"
+    legacy = [
+        {
+            "card_id": card,
+            "action": "link",
+            "writer": "pi-seraph-chiap08-4cd4dd62",
+            "ts": "2026-09-12T09:27:47+00:00",
+            "link_key": "blocked_on",
+            "link_value": f"dependency card:{dep}",
+        },
+        {
+            "card_id": card,
+            "action": "link",
+            "writer": "pi-seraph-chiap08-4cd4dd62",
+            "ts": "2026-09-12T09:28:30+00:00",
+            "link_key": "evidence",
+            "link_value": f"/home/skuser01/.skcapstone/evidence/work/{card}/BLOCKED-report.json",
+        },
+        {
+            "card_id": card,
+            "action": "link",
+            "writer": "pi-seraph-chiap08-4cd4dd62",
+            "ts": "2026-09-12T09:28:31+00:00",
+            "link_key": "evidence_sha256",
+            "link_value": "5658c6eed5fae206138d6adfc7daf45602899ee78f78e8e34ac1716059f3c2f1",
+        },
+    ]
+    namespace = _native_namespace(tmp_path, {card: [], dep: []}, legacy)
+    namespace.update(
+        {
+            "folded_dependencies": lambda cid, core=None: [],
+            "_dep_satisfied": lambda cid: False,
+            "_wake_launch_times": __import__("collections").defaultdict(list),
+        }
+    )
+    assert namespace["_load_outcomes"]()[card][1] == (
+        f"BLOCKED blocked_on=dependency referent=card:{dep}"
+    )
+    assert namespace["blocked_backoff"](card) is True
+
+    # Unrelated noise must not restore eligibility.
+    namespace["_evidence_events"] = None
+    namespace["_outcomes"] = None
+    legacy.append(
+        {
+            "card_id": "deadbeef",
+            "action": "link",
+            "writer": "noise",
+            "ts": "2026-09-12T10:00:00+00:00",
+            "link_key": "evidence",
+            "link_value": "/tmp/noise.json",
+        }
+    )
+    (tmp_path / "coordination-events" / "writer.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in legacy), encoding="utf-8"
+    )
+    assert namespace["blocked_backoff"](card) is True
+
+    # Generation 47e42066: Link recommended and Seraph claimed while blocker unchanged.
+    # Exact claim/release fence must still leave the hold in place.
+    namespace["_evidence_events"] = None
+    namespace["_outcomes"] = None
+    for stamp, action, revision in (
+        ("2026-09-12T20:19:29+00:00", "claim", "47e420668e074c8098f1cc0688f489c3"),
+        ("2026-09-12T20:21:06+00:00", "release_claim", "47e420668e074c8098f1cc0688f489c3"),
+    ):
+        namespace["event_rows"] = lambda cid, _rows={
+            card: [
+                {
+                    "action": action,
+                    "ts": stamp,
+                    "claim_revision": revision,
+                    "owner": "pi-seraph-chiap08-4cd4dd62",
+                }
+            ]
+        }: _rows.get(cid, [])
+    assert namespace["blocked_backoff"](card) is True
+
+    # Publishing reachable dependency evidence restores one wake generation.
+    namespace["_evidence_events"] = None
+    namespace["_outcomes"] = None
+    legacy.append(
+        {
+            "card_id": dep,
+            "action": "link",
+            "writer": "codex-resume-383a7834",
+            "ts": "2026-09-12T21:00:00+00:00",
+            "link_key": "candidate_evidence_sha256",
+            "link_value": "a" * 64,
+        }
+    )
+    (tmp_path / "coordination-events" / "writer.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in legacy), encoding="utf-8"
+    )
+    assert namespace["blocked_backoff"](card) is False
+
+
+def test_unreadable_gate_core_fails_closed(board: BackoffHarness) -> None:
+    """A corrupt core.json must not turn a human gate into plain completion."""
+    gate = "44444444"
+    path = board.cards / gate
+    path.mkdir()
+    (path / "core.json").write_text("{not json", encoding="utf-8")
+    assert board.ns["_human_gate"](gate) is True
+
+
+@pytest.mark.parametrize("writer", ["lumina-nor", "casey", "capauth:lumina-nor@chi"])
+def test_authorized_operator_resolves_exact_human_blocker(board, writer):
+    card = "91680b72"
+    referent = "approval:source-ownership-91680b72"
+    board.outcome(card, "2026-10-12T01:00:00Z", f"BLOCKED|human|{referent}")
+    board.evidence_event(
+        card,
+        "2026-10-13T01:00:00Z",
+        "link",
+        writer=writer,
+        link_key="human_approval",
+        link_value=f"APPROVED by Chef via operator {referent}",
+    )
+    assert board.blocked(card) is False
+
+
+@pytest.mark.parametrize(
+    "writer",
+    [
+        "pi-glm-chiap08-91680b72",
+        "link",
+        "niobe",
+        "unknown",
+        "",
+        "pi-human-decision-recorder-chiap08",
+    ],
+)
+def test_worker_cannot_resolve_human_blocker(board, writer):
+    card = "91680b72"
+    referent = "approval:source-ownership-91680b72"
+    board.outcome(card, "2026-10-12T01:00:00Z", f"BLOCKED|human|{referent}")
+    board.evidence_event(
+        card,
+        "2026-10-13T01:00:00Z",
+        "link",
+        writer=writer,
+        link_key="human_approval",
+        link_value=f"APPROVED {referent}",
+    )
+    assert board.blocked(card) is True
+
+
+@pytest.mark.parametrize(
+    "stamp,value",
+    [
+        ("2026-10-11T01:00:00Z", "APPROVED approval:source-ownership-91680b72"),
+        ("2026-10-13T01:00:00Z", "APPROVED approval:other-card"),
+        ("2026-10-13T01:00:00Z", "no_approval approval:source-ownership-91680b72"),
+    ],
+)
+def test_operator_resolution_keeps_exact_referent_and_freshness(board, stamp, value):
+    card = "91680b72"
+    board.outcome(card, "2026-10-12T01:00:00Z", "BLOCKED|human|approval:source-ownership-91680b72")
+    board.evidence_event(
+        card, stamp, "link", writer="lumina-nor", link_key="human_approval", link_value=value
     )
     assert board.blocked(card) is True

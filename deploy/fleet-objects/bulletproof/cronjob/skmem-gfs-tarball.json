@@ -16,6 +16,8 @@
     "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
     "schedule": "@daily",
     "source": "skmemory/docs/deploy-plan/skmemory-bulletproof-deploy.md",
-    "window": "02:45"
+    "window": "02:45",
+    "deleted": true,
+    "retired": "Retired 2026-11-11 (SKBrain CmdbDriftBounded triage): no such script ever existed in skmemory; the 02:45 GFS tarball is skcapstone-backup-gfs, per-agent flat backups are skos jobs.yaml memory-backup."
   }
 }

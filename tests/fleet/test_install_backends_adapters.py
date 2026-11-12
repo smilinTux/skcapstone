@@ -1,5 +1,8 @@
 """Tests for the default backend adapters that shell out to per-repo installers."""
 
+import subprocess
+
+from skcapstone.fleet import install_backends
 from skcapstone.fleet.install_backends import default_backends
 
 
@@ -123,12 +126,128 @@ def test_core_backend_enables_each_unit_via_systemctl_when_enable_set():
     assert ["systemctl", "--user", "enable", "skgateway.service"] in runner.calls
 
 
+def test_core_backend_starts_each_non_timer_unit_when_start_set():
+    runner = _FakeRunner()
+    backend = default_backends(runner=runner)["core"]
+    status, _ = backend(["skgateway.service"], dry_run=False, enable=True, start=True)
+    assert status == "ok"
+    assert ["systemctl", "--user", "enable", "skgateway.service"] in runner.calls
+    assert ["systemctl", "--user", "start", "skgateway.service"] in runner.calls
+
+
+def test_core_backend_copies_the_timer_service_pair_then_reloads_then_enables(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("SKCAPSTONE_REPOS", "/opt/custom-repos")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    runner = _FakeRunner()
+    backend = default_backends(runner=runner)["core"]
+
+    status, detail = backend(["skfleet-link.timer"], dry_run=False, enable=True, start=True)
+
+    assert (status, detail) == ("ok", "")
+    service_install = [
+        "install",
+        "-D",
+        "-m",
+        "0644",
+        str(install_backends._packaged_core_unit("skfleet-link.service")),
+        str(tmp_path / "config/systemd/user/skfleet-link.service"),
+    ]
+    timer_install = [
+        "install",
+        "-D",
+        "-m",
+        "0644",
+        str(install_backends._packaged_core_unit("skfleet-link.timer")),
+        str(tmp_path / "config/systemd/user/skfleet-link.timer"),
+    ]
+    reload = ["systemctl", "--user", "daemon-reload"]
+    enable = ["systemctl", "--user", "enable", "skfleet-link.timer"]
+    assert runner.calls.index(service_install) < runner.calls.index(timer_install)
+    assert runner.calls.index(timer_install) < runner.calls.index(reload)
+    assert runner.calls.index(reload) < runner.calls.index(enable)
+    installed = {call[4] for call in runner.calls if call[:4] == ["install", "-D", "-m", "0644"]}
+    assert installed == {
+        str(install_backends._packaged_core_unit("skfleet-link.service")),
+        str(install_backends._packaged_core_unit("skfleet-link.timer")),
+    }
+
+
+def test_core_copy_uses_packaged_bytes_on_wheel_only_host(monkeypatch, tmp_path):
+    monkeypatch.setenv("SKCAPSTONE_REPOS", str(tmp_path / "absent-checkout"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+    def runner(command, **kwargs):
+        if command[0] == "install":
+            return subprocess.run(command, **kwargs)
+        return _FakeRunner()(command, **kwargs)
+
+    status, detail = default_backends(runner=runner)["core"](
+        ["skfleet-link.timer"], dry_run=False, enable=False, start=False
+    )
+    assert (status, detail) == ("ok", "")
+    installed = tmp_path / "config/systemd/user/skfleet-link.timer"
+    packaged_timer = install_backends._packaged_core_unit("skfleet-link.timer")
+    assert installed.read_bytes() == packaged_timer.read_bytes()
+
+
+def test_packaged_core_unit_copy_does_not_run_broad_install_script(monkeypatch, tmp_path):
+    monkeypatch.setenv("SKCAPSTONE_REPOS", "/opt/custom-repos")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    runner = _FakeRunner()
+
+    status, detail = default_backends(runner=runner)["core"](
+        ["skfleet-link.timer"], dry_run=False, enable=False, start=False
+    )
+
+    assert (status, detail) == ("ok", "")
+    assert not any(call and call[0] == "bash" for call in runner.calls)
+    assert any(call and call[0] == "install" for call in runner.calls)
+
+
 def test_core_backend_skips_systemctl_enable_in_dry_run():
     runner = _FakeRunner()
     b = default_backends(runner=runner)
     status, _ = b["core"](["skgateway.service"], dry_run=True, enable=True, start=False)
     assert status == "would-write"
     assert runner.calls == []
+
+
+def test_core_dry_run_reports_install_reload_enable_and_start_without_mutation(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    runner = _FakeRunner()
+    backend = default_backends(runner=runner)["core"]
+    status, detail = backend(["skcapstone.service"], dry_run=True, enable=True, start=True)
+    assert status == "would-write"
+    assert "scripts/install.sh --non-interactive" not in detail
+    assert "install -D -m 0644" in detail
+    assert "systemctl --user daemon-reload" in detail
+    assert "systemctl --user enable skcapstone.service" in detail
+    assert "systemctl --user start skcapstone.service" in detail
+    assert runner.calls == []
+
+
+def test_core_backend_never_direct_copies_external_required_units(monkeypatch):
+    monkeypatch.setenv("SKCAPSTONE_REPOS", "/opt/custom-repos")
+    runner = _FakeRunner()
+    backend = default_backends(runner=runner)["core"]
+
+    status, _ = backend(
+        ["skgateway.service", "skoperator.timer"],
+        dry_run=False,
+        enable=False,
+        start=False,
+    )
+
+    assert status == "ok"
+    assert not any(call and call[0] == "install" for call in runner.calls)
+    assert ["systemctl", "--user", "daemon-reload"] not in runner.calls
+    assert runner.calls == [
+        ["bash", "/opt/custom-repos/skcapstone/scripts/install.sh", "--non-interactive"]
+    ]
 
 
 def test_skcomms_backend_passes_only_no_service_flag():
@@ -147,6 +266,16 @@ def test_skcomms_backend_enables_units_via_systemctl_when_enable_set():
     status, _ = b["skcomms"](["skcomms.service"], dry_run=False, enable=True, start=False)
     assert status == "ok"
     assert ["systemctl", "--user", "enable", "skcomms.service"] in runner.calls
+
+
+def test_skcomms_backend_honors_enable_start_flag_matrix():
+    for enable, start in ((False, False), (True, False), (False, True), (True, True)):
+        runner = _FakeRunner()
+        backend = default_backends(runner=runner)["skcomms"]
+        status, _ = backend(["skcomms.service"], dry_run=False, enable=enable, start=start)
+        assert status == "ok"
+        assert (["systemctl", "--user", "enable", "skcomms.service"] in runner.calls) is enable
+        assert (["systemctl", "--user", "start", "skcomms.service"] in runner.calls) is start
 
 
 def test_capauth_authz_backend_shells_to_capauth_deploy_script_with_no_flags():
@@ -177,3 +306,43 @@ def test_repos_root_honors_skcapstone_repos_env_override(monkeypatch):
     b["packages"](["capauth"], dry_run=False, enable=False, start=False)
     cmd = " ".join(map(str, runner.calls[0]))
     assert "/opt/custom-repos/skcapstone/scripts/install.sh" in cmd
+
+
+def test_core_backend_never_overwrites_an_existing_unit(monkeypatch, tmp_path):
+    """A stale "missing" must not replace a unit the rollout already installed.
+
+    On production nodes the installed sknoded.service is the systemd/production
+    overlay; the packaged base copy lacks SKFLEET_PRODUCTION_POLICY.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config/systemd/user"
+    unit_dir.mkdir(parents=True)
+    overlay = b"[Service]\nEnvironment=SKFLEET_PRODUCTION_POLICY=x\n"
+    (unit_dir / "sknoded.service").write_bytes(overlay)
+    runner = _FakeRunner()
+
+    status, _ = default_backends(runner=runner)["core"](
+        ["sknoded.service"], dry_run=False, enable=True, start=True
+    )
+
+    assert status == "ok"
+    assert not [c for c in runner.calls if c[:1] == ["install"]]
+    assert ["systemctl", "--user", "daemon-reload"] not in runner.calls
+    assert ["systemctl", "--user", "enable", "sknoded.service"] in runner.calls
+    assert (unit_dir / "sknoded.service").read_bytes() == overlay
+
+
+def test_core_backend_still_installs_the_absent_half_of_a_timer_pair(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    unit_dir = tmp_path / "config/systemd/user"
+    unit_dir.mkdir(parents=True)
+    (unit_dir / "skfleet-link.service").write_text("[Service]\n")
+    runner = _FakeRunner()
+
+    default_backends(runner=runner)["core"](
+        ["skfleet-link.timer"], dry_run=False, enable=False, start=False
+    )
+
+    targets = [c[5] for c in runner.calls if c[:1] == ["install"]]
+    assert targets == [str(unit_dir / "skfleet-link.timer")]
+    assert ["systemctl", "--user", "daemon-reload"] in runner.calls

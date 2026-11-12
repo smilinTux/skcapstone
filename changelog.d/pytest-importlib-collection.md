@@ -1,0 +1,1 @@
+- Full-suite qualification uses importlib collection for duplicate test basenames and skips the host Docker inventory probe that cannot run in the sealed sandbox.

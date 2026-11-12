@@ -8,7 +8,9 @@ its own node's status subtree, scheduler (Phase 2) writes placements.
 
 from __future__ import annotations
 
+import fcntl
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -178,6 +180,25 @@ def _is_conflict_copy(path: Path) -> bool:
     return _CONFLICT_MARKER in path.name
 
 
+#: Spec keys appended by the operator seat as an audit trail, never authored
+#: in a manifest. A write that omits one keeps the existing value.
+_CARRIED_SPEC_KEYS = ("operatorActions",)
+
+
+def _carry_operator_actions(spec: dict, existing: dict) -> dict:
+    """Keep the operator seat's audit log across a manifest re-apply.
+
+    ``skfleet apply -f`` writes the manifest's spec whole. Manifests in git
+    do not (and should not) carry ``operatorActions``, so re-applying one,
+    which is the documented update and revert path, used to erase every
+    recorded ATLAS touch on that object. A spec that brings its own log (the
+    operator seat appending to it) is written as given.
+    """
+    previous = existing.get("spec") or {}
+    carried = {k: previous[k] for k in _CARRIED_SPEC_KEYS if k in previous and k not in spec}
+    return {**spec, **carried} if carried else spec
+
+
 def write_spec(
     paths: FleetPaths,
     kind: str,
@@ -204,6 +225,7 @@ def write_spec(
     path = paths.spec_path(kind, name)
     existing = _load(path) or {}
     _guard_human_only_fields(kind, spec, existing, writer)
+    spec = _carry_operator_actions(spec, existing)
     payload = {
         "kind": kind.capitalize(),
         "name": name,
@@ -482,6 +504,19 @@ def check_actuation_gate(paths: FleetPaths) -> ActuationGate:
     return ActuationGate(True, None)
 
 
+@contextmanager
+def actuation_exclusion(paths: FleetPaths):
+    """Serialize the human freeze transition with process creation."""
+    lock_path = paths.freeze_path().with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def set_frozen(paths: FleetPaths, frozen: bool, *, writer: Writer, reason: str = "") -> dict:
     """Toggle the kill-switch. HUMAN operator only (spec section 8).
 
@@ -500,7 +535,8 @@ def set_frozen(paths: FleetPaths, frozen: bool, *, writer: Writer, reason: str =
         "writer": _writer_block(writer),
         "updatedAt": _now_iso(),
     }
-    _dump(paths.freeze_path(), payload)
+    with actuation_exclusion(paths):
+        _dump(paths.freeze_path(), payload)
     return payload
 
 

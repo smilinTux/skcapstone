@@ -1,0 +1,21 @@
+[Unit]
+Description=Verify canonical production dispatcher imports
+After=network-online.target
+
+[Service]
+# Fleet authority/node service: files and dirs created here must be owner-only
+# (a 0002 umask made evidence dirs 0775 and the guarded reviewer handoff refused them).
+UMask=0077
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet_readiness.py --rotate-script %h/.skenv/bin/skfleet-rotate.py --units-dir %h/.config/systemd/user --python-bin %h/.skenv/bin/python3 --verdict-path %h/.skcapstone/fleet/status/node-%H/readiness/verdict.json
+TimeoutStartSec=120
+Nice=15
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.skcapstone/fleet
+
+[Install]
+WantedBy=default.target

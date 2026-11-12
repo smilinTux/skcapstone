@@ -1,0 +1,1 @@
+Niobe remembers each card's last builder-offer outcome, skips recently dead outcomes (ineligible, not ready, recent failure) for 30 minutes, serves the least recently tried card first, and logs when the cycle budget cuts the offer loop short.

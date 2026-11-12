@@ -1,0 +1,1 @@
+- Card `1c32c544`: bind Seraph admission and diagnostics to one revisioned route-capacity truth, and select every healthy size-compatible logical domain without erasing physical review headroom when a route probe is ambiguous.

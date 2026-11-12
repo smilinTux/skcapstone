@@ -1,0 +1,1 @@
+- Require skcoord 0.1.89 so ITIL resolve completes linked GTD items under the shared store lock instead of overwriting concurrent archive.json writes (skcoord #137).

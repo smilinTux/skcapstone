@@ -5,6 +5,17 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
+def test_link_prompt_requires_protected_merge_policy_and_exact_head() -> None:
+    """Link receives the same fail-closed contract as the pure resolver."""
+    source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
+
+    assert "LINK INTEGRATION PREFLIGHT:" in source
+    assert "resolve_protected_merge_method" in source
+    assert "squash, then rebase, then merge" in source
+    assert "--match-head-commit" in source
+    assert "If protected policy is unreadable" in source
+
+
 def test_rotation_wires_link_reviewer_and_mero_in_order() -> None:
     """Review launches use all three governed runtime stages."""
 
@@ -29,7 +40,7 @@ def test_dry_run_exits_before_link_writes() -> None:
     """A selector dry run never appends a recommendation or observation."""
 
     source = (ROOT / "scripts/fleet/skfleet-rotate.py").read_text()
-    loop = source.index("for _LANE,")
+    loop = source.index("for _pick_index,")
     dry = source.index("if DRY:", loop)
     assignment = source.index("_pool_v2_preclaim_handoff(", dry)
     assert dry < assignment
@@ -43,7 +54,7 @@ def test_link_and_jarvis_use_distinct_fresh_process_reads() -> None:
         source.index("def _review_assignment(") : source.index("# Load this dependency-free")
     ]
     assert assignment.count("_card_process_snapshot(cid)") == 2
-    assert 'if observed_process["sessions"]:' in assignment
+    assert "if any(observed_process.values()):" in assignment
 
 
 def test_mero_tracks_review_lifecycle_without_mutation() -> None:
@@ -86,19 +97,48 @@ def test_mero_blocked_and_stale_states_fail_closed() -> None:
     assert complete < blocked < active < stale < waiting
 
 
-def test_rotation_uses_the_packaged_runtime_interpreter() -> None:
-    """The drop-in uses the wheel-owned interpreter and launcher."""
-
-    dropin = ROOT / "scripts/fleet/systemd/skfleet-rotate.service.d/seat-runtime-python.conf"
-    assert dropin.read_bytes() == (
-        b"[Service]\n"
-        b"ExecStart=\n"
-        b"ExecStart=%h/.skenv/bin/python3 %h/.skenv/bin/skfleet-rotate.py --go\n"
-    )
+# ---------------------------------------------------------------------------
+# WHERE THE ACTIVE DISPATCHER LIVES: this reverses PR #591 (2026-09-09).
+#
+# #591 moved every reference from ~/.local/bin to ~/.skenv/bin and locked it
+# with the two tests below, on the rationale "a package upgrade cannot leave
+# the active dispatcher outside the wheel". That goal is right. The premise
+# turned out not to be: the migration never reached the hosts.
+#
+# Measured on chiap01/02/03/04/08 on 2026-09-19, ten days later, via
+# `systemctl --user show skfleet-rotate.service -p ExecStart`: every one of
+# them executes ~/.local/bin/skfleet-rotate.py. The deployed drop-in on every
+# host had been hand-patched back, and the tracked template was the copy that
+# had drifted. So for ten days the repo asserted one path while the fleet ran
+# another, and two of the three consumers (the readiness gate and the
+# niobe-live unit) were grading and launching a file that nothing runs.
+#
+# The operator's ruling (2026-09-19) is that ~/.local/bin is correct and the
+# host hotfix stands. PR #808 brings the readiness gate and the drop-in
+# template in line; this test pair is the last thing still asserting #591.
+#
+# #591's actual GOAL is not abandoned, it is met a different way. What #591
+# wanted was that no upgrade can leave the active dispatcher stale. That is
+# now enforced directly rather than by hoping pip's side effect covers it:
+# deployment_manifest.PER_HOST_ARTIFACTS declares every per-host artifact
+# once, staged_rollout generates a copy step per entry on BOTH the forward
+# and the rollback path, and rollout_drift grades each deployed copy against
+# the repo by content digest. A stale ~/.local/bin copy is now a reported
+# finding; under #591 it was merely assumed not to exist.
+#
+# If the fleet is ever genuinely migrated to ~/.skenv/bin, the change is to
+# PER_HOST_BIN_RELATIVE_DIR plus the hosts' units, and these assertions flip
+# back with it.
+# ---------------------------------------------------------------------------
 
 
 def test_rotation_launcher_is_installed_by_the_wheel() -> None:
-    """A package upgrade cannot leave the active dispatcher outside the wheel."""
+    """Every runtime file is still a script-files entry.
+
+    Unchanged from #591 and still load-bearing: a file in no package is
+    invisible to every version check, which is the skmail incident. What
+    changed is only which COPY the units execute, asserted separately below.
+    """
 
     pyproject = (ROOT / "pyproject.toml").read_text()
     for runtime_file in (
@@ -112,13 +152,22 @@ def test_rotation_launcher_is_installed_by_the_wheel() -> None:
     ):
         assert f'"scripts/fleet/{runtime_file}"' in pyproject
 
+
+def test_every_dispatcher_consumer_names_the_copy_the_fleet_runs() -> None:
+    """One path, everywhere. Two dispatchers is the whole failure mode.
+
+    The readiness gate grades the dispatcher copy the deployment ships. The
+    rotate service and niobe-live unit that once launched it were retired, so
+    the readiness unit is the one remaining consumer to keep honest.
+    """
+
     for unit in (
-        ROOT / "systemd/skfleet-niobe-live.service",
-        ROOT / "src/skcapstone/data/systemd/skfleet-niobe-live.service",
+        ROOT / "systemd/skfleet-readiness.service",
+        ROOT / "src/skcapstone/data/systemd/skfleet-readiness.service",
     ):
         text = unit.read_text()
-        assert "%h/.skenv/bin/skfleet-rotate.py" in text
-        assert "%h/.local/bin/skfleet-rotate.py" not in text
+        assert "%h/.local/bin/skfleet-rotate.py" in text, unit.name
+        assert "%h/.skenv/bin/skfleet-rotate.py" not in text, unit.name
 
 
 def test_tank_and_atlas_prompts_preserve_role_fences() -> None:

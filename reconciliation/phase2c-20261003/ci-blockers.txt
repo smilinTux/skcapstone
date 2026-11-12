@@ -1,0 +1,15 @@
+OBSERVED HOSTED CI BLOCKERS
+
+Python 3.12 job 111249020842, source head ec30758f:
+Published skcoord 0.1.82 cannot import skcoord.owner_helpers (four test modules)
+or skcoord.review_replacement (one test module). Collection stops with five
+errors. The local distribution also reports 0.1.82 but contains both files;
+exact local blobs are recorded in external-dependency-gap.json.
+This is an external release/provenance gap, not a reason to vendor substitutes
+or bypass the source guards in this reconciliation.
+
+Docs job 111248989632:
+The protected SOP executable assertion requires literal unconditional TARGET
+and GLM_TARGET assignments. The captured deployed dispatcher makes those
+assignments conditional on PRODUCTION_POLICY. The docs remain unchanged as
+instructed. This must remain a visible failing gate for review.

@@ -7,6 +7,41 @@ import pytest
 from skcapstone.fleet.paths import FleetPaths
 
 
+@pytest.fixture
+def qualified_runtime(tmp_path, monkeypatch):
+    """Fingerprint synthetic installed bytes, never the operator's real .skenv.
+
+    These plan/dispatch tests inspect runtime custody without executing it.
+    Keep the real fingerprint implementation so changed bytes still invalidate
+    a qualified plan. Each test owns its tree and can mutate it independently.
+    """
+    from skcapstone.fleet import production_test_plan as plan
+    from skcapstone.fleet import production_test_worker as worker
+    from skcapstone.fleet import production_tests as native
+
+    prefix = tmp_path / "qualified-runtime"
+    (prefix / "bin").mkdir(parents=True)
+    for executable in ("python", "ruff"):
+        (prefix / "bin" / executable).write_bytes(b"synthetic runtime bytes\n")
+    # The clean qualification prefix always carries its build manifest.
+    (prefix / plan.STATE_NAME).write_text('{"schema":"synthetic"}\n')
+    from skcapstone.fleet.qualified_runtime import prefix_site
+
+    site = prefix_site(prefix)
+    for package in plan.TOOL_PACKAGES:
+        directory = site / package
+        directory.mkdir(parents=True)
+        (directory / "__init__.py").write_text("# Synthetic qualified dependency.\n")
+    harness = tmp_path / "harness"
+    harness.mkdir()
+    (harness / "production_pytest_selection.py").write_text("# Synthetic trusted executor.\n")
+    monkeypatch.setattr(plan, "HARNESS_ROOT", harness)
+    for module in (plan, native, worker):
+        monkeypatch.setattr(module, "PREFIX", prefix)
+    monkeypatch.setattr(plan, "_RUNTIME_CACHE", {})
+    return prefix
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_node_inventory(monkeypatch):
     """No fleet test observes the real host's systemd or site-packages.
@@ -57,3 +92,11 @@ def scheduler_writer():
     from skcapstone.fleet.store import Writer
 
     return Writer(role="scheduler", node="node-158", identity="")
+
+
+@pytest.fixture
+def sandbox_prerequisites(monkeypatch):
+    """Observer unit tests stub system prerequisites; sandbox tests exercise them."""
+    from skcapstone.fleet import sandbox_tools
+
+    monkeypatch.setattr(sandbox_tools, "readiness", lambda *args, **kwargs: [])

@@ -293,10 +293,18 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
         _installed=0
 
         # skcapstone services
+        # Bounded lifecycle seat units are installed but NOT enabled:
+        # without them on disk the whole workflow layer is simply absent on a
+        # fresh estate, which is how a new estate passed `fleet install --check`
+        # while running no seats at all. The paused Atlas, Seraph and Niobe
+        # dispatcher seats were retired and are no longer shipped.
         for _unit in skcapstone.service skcapstone@.service \
                      skcapstone-memory-compress.service skcapstone-memory-compress.timer \
                      skcomms-heartbeat.service skcomms-heartbeat.timer \
-                     skfleet-link-producer.service skfleet-link-producer.timer; do
+                     skfleet-link-producer.service skfleet-link-producer.timer \
+                     skfleet-link.service skfleet-link.timer \
+                     skfleet-mero.service skfleet-mero.timer \
+                     skfleet-readiness.service skfleet-readiness.timer; do
             _src="$REPO_ROOT/systemd/$_unit"
             if [[ -f "$_src" ]]; then
                 # Substitute agent name in non-template units
@@ -321,6 +329,26 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             fi
         done
 
+        # skmemory-sync@.{service,timer} (sibling repo, templated units).
+        # Card: skmemory sqlite-only-orphans, 2026-10-16 -- this template has
+        # shipped in skmemory since v0.9.8 with no installer calling it from
+        # here, so an agent home could exist with zero sync coverage for six
+        # months with nothing catching it (skcapstone doctor's memory:sync_timer
+        # check is the gate; this is the install step that check expects to
+        # have already run). Template units are copied as-is (no =lumina
+        # substitution; the instance name comes from the systemctl call below).
+        _SKMEMORY_SYSTEMD_DIR="$(dirname "$REPO_ROOT")/skmemory/systemd"
+        _skmemory_sync_installed=0
+        for _unit in skmemory-sync@.service skmemory-sync@.timer; do
+            _src="$_SKMEMORY_SYSTEMD_DIR/$_unit"
+            if [[ -f "$_src" ]]; then
+                cp "$_src" "$_UNIT_DIR/$_unit"
+                echo "  [OK] $_unit"
+                (( _installed++ ))
+                _skmemory_sync_installed=1
+            fi
+        done
+
         # Syncthing desktop-tuning drop-in (machine-wide, agent-agnostic):
         # keeps the mesh's continuous sync deprioritised so it never starves
         # the active desktop session. Applies to whatever agent was just set up.
@@ -330,6 +358,34 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             cp "$_SYNCTHING_DROPIN" "$_UNIT_DIR/syncthing.service.d/nice.conf"
             echo "  [OK] syncthing.service.d/nice.conf (desktop-courteous sync)"
             (( _installed++ ))
+        fi
+
+        # bfq on spinning disks (machine-wide, needs sudo). The syncthing
+        # drop-in above and skmemory-sync@ use IOSchedulingClass=idle, which the
+        # kernel ignores unless the disk runs bfq. Without it a background sync
+        # on an HDD saturates the disk (noroc2027, 2026-11-12). SSD/NVMe skipped.
+        _BFQ_RULE="$REPO_ROOT/systemd/udev/60-ioscheduler-bfq.rules"
+        _BFQ_DEST="/etc/udev/rules.d/60-ioscheduler-bfq.rules"
+        _rotational_disks=""
+        for _q in /sys/block/*/queue/rotational; do
+            _dev="$(basename "$(dirname "$(dirname "$_q")")")"
+            case "$_dev" in loop*|ram*|zram*|sr*|dm-*|md*) continue ;; esac
+            [[ "$(cat "$_q" 2>/dev/null)" == "1" ]] && _rotational_disks="$_rotational_disks $_dev"
+        done
+        if [[ -f "$_BFQ_RULE" && -n "$_rotational_disks" ]]; then
+            if cmp -s "$_BFQ_RULE" "$_BFQ_DEST"; then
+                echo "  [OK] bfq IO scheduler rule already installed ($_rotational_disks )"
+            elif command -v sudo >/dev/null 2>&1 \
+                && sudo install -m 0644 "$_BFQ_RULE" "$_BFQ_DEST" \
+                && echo bfq | sudo tee /etc/modules-load.d/bfq.conf >/dev/null; then
+                sudo modprobe bfq 2>/dev/null || true
+                sudo udevadm control --reload 2>/dev/null || true
+                sudo udevadm trigger --subsystem-match=block --action=change 2>/dev/null || true
+                echo "  [OK] bfq IO scheduler on spinning disks ($_rotational_disks ) so idle IO priority works"
+            else
+                echo "  [WARN] could not install $_BFQ_DEST (needs sudo); idle IO priority is ignored on:$_rotational_disks"
+                echo "         run: sudo install -m 0644 $_BFQ_RULE $_BFQ_DEST && sudo udevadm trigger --subsystem-match=block --action=change"
+            fi
         fi
 
         echo ""
@@ -344,6 +400,11 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             systemctl --user enable --now skcapstone.service 2>/dev/null && echo "  [STARTED] skcapstone" || true
             systemctl --user enable skcapstone-context.timer 2>/dev/null && echo "  [ENABLED] skcapstone-context.timer" || true
             systemctl --user enable skcomms-heartbeat.timer 2>/dev/null && echo "  [ENABLED] skcomms-heartbeat.timer" || true
+            if [[ "$_skmemory_sync_installed" == "1" ]]; then
+                systemctl --user enable --now "skmemory-sync@${_AGENT_NAME}.timer" 2>/dev/null \
+                    && echo "  [ENABLED] skmemory-sync@${_AGENT_NAME}.timer" \
+                    || echo "  [WARN] could not enable skmemory-sync@${_AGENT_NAME}.timer -- run: systemctl --user enable --now skmemory-sync@${_AGENT_NAME}.timer"
+            fi
         else
             echo "  Skipped. Enable later: systemctl --user enable --now skcapstone.service"
         fi

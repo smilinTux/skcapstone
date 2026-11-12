@@ -1,0 +1,1 @@
+- Preserve the failed check in composite qualification diagnostics instead of reporting missing JUnit for a phase that never ran; retain the completed phase report.

@@ -1,0 +1,1 @@
+- Preserve GLM-only routing and distinct-agent review requirements when opening a review for a GLM-only source card.

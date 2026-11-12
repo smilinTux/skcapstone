@@ -1,0 +1,1 @@
+Fleet builders release a typed BLOCKED generation that cites no candidate commit when the node sandbox proves its workspace unchanged at base. A worker blocked before changing anything previously stayed parked in awaiting-evidence forever.

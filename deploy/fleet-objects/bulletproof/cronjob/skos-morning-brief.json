@@ -16,6 +16,8 @@
     "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
     "schedule": "@daily",
     "source": "skos/docs/deploy-plan/skos-bulletproof-deploy.md",
-    "window": "07:15"
+    "window": "07:15",
+    "deleted": true,
+    "retired": "Retired 2026-11-11 (SKBrain CmdbDriftBounded triage): `skos brief` does not exist; the morning DM is skos jobs.yaml ops-report (`skos watchdog digest`, WD-4)."
   }
 }

@@ -6,12 +6,16 @@ import json
 import re
 from pathlib import Path
 
+from skcapstone.coord_completion import GATED_EXIT_CODE
+
 SCRIPT = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
 FUNCTIONS = {
     "_event_sort_key",
+    "_fold_key",
     "_event_identity",
     "_generation_invalidated",
     "_matching_outcome_events",
+    "_outcome_scan_rows",
     "_outcome_event_value",
     "_parent_review_generation",
     "_review_names_generation",
@@ -37,6 +41,8 @@ class Harness:
         self.reviews: dict[str, set[str]] = {}
         self.calls: list[list[str]] = []
         self.fail_complete_once = False
+        self.gate_complete_once = False
+        self.logs: list[str] = []
         tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
         nodes = [
             node
@@ -46,6 +52,7 @@ class Harness:
         self.ns = {
             "CARDS": str(self.cards),
             "HOST": "chiap08",
+            "AUTHORITY_HOST": "chiap08",
             "SKC": "skcapstone",
             "d": object(),
             "hashlib": hashlib,
@@ -60,13 +67,16 @@ class Harness:
                 r"^\s*(PASS_FOR_[A-Z_]+|PASS_READY_[A-Z_]+)\b", re.I
             ),
             "_PASS_ONLY_RE": re.compile(r"^\s*PASS(?!_FOR)", re.I),
-            "_fold_key": lambda value: str(value or "").lower(),
             "_native_outcome_value": lambda event: event.get("verdict"),
+            "GATED_EXIT_CODE": GATED_EXIT_CODE,
         }
         exec(compile(ast.Module(nodes, type_ignores=[]), str(SCRIPT), "exec"), self.ns)
         self.ns.update(
             {
                 "event_rows": lambda card_id: self.events.get(card_id, []),
+                # The closer's board models the structure store only; the
+                # legacy overlay is empty here.
+                "_load_evidence_events": dict,
                 "_load_outcomes": lambda: self.outcomes,
                 "_provisional_candidate": lambda *_args: (
                     "producer",
@@ -79,7 +89,10 @@ class Harness:
                 "_reviews_by_parent": lambda: self.reviews,
                 "lifecycle_state": lambda card_id: self.states.get(card_id, "open"),
                 "subprocess": type("Subprocess", (), {"run": self.run}),
-                "log": lambda *_args: None,
+                "log": lambda _directory, message: self.logs.append(message),
+                "_log_once_per_hour": lambda _directory, _event, _cid, message: (
+                    self.logs.append(message)
+                ),
                 "_rows": {},
             }
         )
@@ -101,6 +114,9 @@ class Harness:
             if self.fail_complete_once:
                 self.fail_complete_once = False
                 return Result(1, "transient completion failure")
+            if self.gate_complete_once:
+                self.gate_complete_once = False
+                return Result(GATED_EXIT_CODE, "")
             self.states[command[command.index("complete") + 1]] = "complete"
         return Result()
 
@@ -224,6 +240,31 @@ def test_exact_join_survives_transient_completion_failure(tmp_path: Path) -> Non
     assert harness.ns["close_reviewed_parents"]() == 0
     assert harness.ns["close_reviewed_parents"]() == 1
     assert sum("review_join" in call for call in harness.calls) == 1
+
+
+def test_gated_completion_is_not_counted_as_closed(tmp_path: Path) -> None:
+    """coord complete's gated exit code must not read as a close.
+
+    Fix 2: a card with outstanding exit_gates exits GATED_EXIT_CODE, never 0.
+    close_reviewed_parents must not count that as closed, must not mark the
+    card complete, and must log a marker that is not CLOSED_REVIEWED so an
+    operator reading the log cannot mistake a still-open gated card for a
+    real completion.
+    """
+    harness = Harness(tmp_path)
+    generation = harness.source()
+    harness.review(generation)
+    harness.gate_complete_once = True
+
+    assert harness.ns["close_reviewed_parents"]() == 0
+    assert harness.states["efa30b41"] == "open"
+    assert not any(entry.startswith("CLOSED_REVIEWED|") for entry in harness.logs)
+    assert any(entry.startswith("CLOSE_GATED|") for entry in harness.logs)
+
+    harness.states["efa30b41"] = "open"
+    assert harness.ns["close_reviewed_parents"]() == 1
+    assert harness.states["efa30b41"] == "complete"
+    assert any(entry.startswith("CLOSED_REVIEWED|") for entry in harness.logs)
     assert sum("complete" in call for call in harness.calls) == 2
 
 

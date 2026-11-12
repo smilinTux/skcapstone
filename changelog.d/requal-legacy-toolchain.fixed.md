@@ -1,0 +1,1 @@
+Requalification of a profile still bound to the pre-qualify-env ~/.skenv toolchain no longer fails on every executor as "candidate test profile changed"; the authority seals the legacy fingerprint it accepted.

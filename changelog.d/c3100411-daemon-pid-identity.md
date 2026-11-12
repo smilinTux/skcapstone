@@ -1,0 +1,1 @@
+- Fence daemon PID records to the agent home and Linux process incarnation, safely recognize legacy daemon CLI records, and use pidfds for stop so stale/recycled PIDs cannot block startup or signal unrelated processes.

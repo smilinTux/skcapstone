@@ -1,0 +1,1 @@
+- Card `58fa3ad0`: Release a collected worker reservation when systemd records the exact invocation's completed-runtime resource event; previously this terminal event held chiap08's sole worker slot after the unit was gone.

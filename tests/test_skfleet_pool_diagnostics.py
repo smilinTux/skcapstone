@@ -63,6 +63,97 @@ def test_pool_with_free_capacity_and_empty_local_partition_is_truthful() -> None
     assert "owner_free=" in detail
 
 
+def test_builder_withheld_slice_is_not_reported_as_foreign() -> None:
+    """A slice handed to the builder path must not read as a foreign partition.
+
+    Regression for the 2026-09-18 chi fleet logs: a host whose entire hash
+    slice was source-only builder work logged the self-contradicting line
+    ``owned=0 ... owners=<this host>:N`` under ``foreign-hash-partition``.
+    """
+    helpers = _load_helpers()
+    local = "chiap03"
+    owned_ids = []
+    candidate = 0
+    while len(owned_ids) < 3:
+        card_id = f"{candidate:08x}"
+        if helpers["_partition_owner"](card_id, HOSTS) == local:
+            owned_ids.append(card_id)
+        candidate += 1
+    pool = [_row(card_id) for card_id in owned_ids]
+
+    detail = helpers["_selection_diagnostic"](
+        pool,
+        [],
+        _lanes(target=4, free=4),
+        lambda card_id: helpers["_partition_owner"](card_id, HOSTS),
+        {host: 1 for host in HOSTS},
+        owned_ids,
+    )
+
+    assert "reason=builder-path-withheld" in detail
+    assert "builder_withheld=3" in detail
+    assert "foreign-hash-partition" not in detail
+    assert "ids=" + ",".join(sorted(owned_ids)) in detail
+
+
+def test_builder_withheld_count_is_always_reported() -> None:
+    helpers = _load_helpers()
+    detail = helpers["_selection_diagnostic"](
+        [_row("a")], [], _lanes(target=2, free=2), lambda _card_id: "chiap01"
+    )
+    assert "reason=foreign-hash-partition" in detail
+    assert "builder_withheld=0" in detail
+
+
+def test_retained_remote_review_is_not_reported_as_foreign() -> None:
+    """An exact native request retains review custody after the unit exits."""
+    helpers = _load_helpers()
+    card_id = "c60a542e"
+    detail = helpers["_selection_diagnostic"](
+        [_row(card_id)],
+        [],
+        _lanes(target=4, free=4),
+        lambda _card_id: "chiap08",
+        {"chiap08": 4},
+        remote_held=[card_id],
+    )
+    assert "reason=remote-review-held" in detail
+    assert "ids=c60a542e" in detail
+    assert "remote_held=1" in detail
+    assert "foreign-hash-partition" not in detail
+
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "REVIEW_REMOTE_HELD|%s|%s|reason=retained-custody" in source
+    assert source.index("_remote_held_ids = sorted(") < source.index(
+        'owned = [row for row in owned\n         if not ("review" in row[4]'
+    )
+    assert "_builder_returned_ids, _unrouted_candidates, _remote_held_ids)" in source
+
+
+@pytest.mark.parametrize(
+    ("capacity", "expected", "excluded"),
+    [
+        ({}, "owner_free=chiap04:unknown", "owner_free=chiap04:0"),
+        ({"chiap04": 0}, "owner_free=chiap04:0", "owner_free=chiap04:unknown"),
+    ],
+    ids=("missing-is-unknown", "reported-zero-remains-zero"),
+)
+def test_owner_capacity_diagnostic_distinguishes_absent_from_zero(
+    capacity: dict[str, int], expected: str, excluded: str
+) -> None:
+    helpers = _load_helpers()
+    detail = helpers["_selection_diagnostic"](
+        [_row("deadbeef")],
+        [],
+        _lanes(target=4, free=4),
+        lambda _card_id: "chiap04",
+        capacity,
+    )
+
+    assert expected in detail
+    assert excluded not in detail
+
+
 @pytest.mark.parametrize(
     ("pool", "owned", "lanes", "expected"),
     [
@@ -119,6 +210,67 @@ def test_source_preserves_admission_and_reports_selection_races() -> None:
     assert "_current_claim_identity_fresh(cid)" in source
     assert "claimed_owner," in source
     assert "name)" in source
-    assert "_bounded_candidate_sequence(owned, MAX_CANDIDATE_SCAN)" in source
+    assert "(candidate for candidate in owned" in source
+    assert "if _logical_route_for(candidate[3],candidate[4]) is not None)" in source
     assert "launched>=MAX_LAUNCH" in source
     assert "RACED|%s|count=%d ids=%s omitted=%d" in source
+
+
+def test_a_card_that_never_reached_lane_selection_is_not_a_lane_verdict() -> None:
+    """``no-compatible-lane`` must not absorb the unroutable case.
+
+    A candidate with no logical route is filtered out of the candidate scan
+    before any lane is consulted, so reporting a lane verdict for it is a false
+    statement about where it died. On chi 2026-09-19 every host logged
+    ``reason=no-compatible-lane`` while its whole owned slice had been dropped
+    for a missing size, and three consecutive diagnoses chased lane health,
+    lane targets and claim ceilings on the strength of that string.
+    """
+    helpers = _load_helpers()
+    owned_ids = ["a728f287", "c33a1004", "cf460fde"]
+    pool = [_row(card_id) for card_id in owned_ids]
+    owned = list(pool)
+
+    detail = helpers["_selection_diagnostic"](
+        pool,
+        owned,
+        _lanes(target=9, free=9),
+        lambda _card_id: "chiap04",
+        None,
+        (),
+        (),
+        owned_ids,
+    )
+    assert "reason=unroutable-size" in detail
+    assert "ids=a728f287,c33a1004,cf460fde" in detail
+
+    # A lane verdict is still a lane verdict when the cards DID reach selection.
+    detail = helpers["_selection_diagnostic"](
+        pool,
+        owned,
+        _lanes(target=9, free=9),
+        lambda _card_id: "chiap04",
+    )
+    assert "reason=no-compatible-lane" in detail
+
+    # A partial drop is a lane verdict too: something did reach selection.
+    detail = helpers["_selection_diagnostic"](
+        pool,
+        owned,
+        _lanes(target=9, free=9),
+        lambda _card_id: "chiap04",
+        None,
+        (),
+        (),
+        owned_ids[:1],
+    )
+    assert "reason=no-compatible-lane" in detail
+
+
+def test_the_unrouted_drop_is_logged_before_the_scan_consumes_it() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+    assert "UNROUTED_CANDIDATES|%s|count=%d|reason=missing-or-ambiguous-size|" in source
+    drop = source.index("_unrouted_candidates=[candidate[2] for candidate in owned")
+    scan = source.index("_candidate_scan = _bounded_candidate_sequence(")
+    assert drop < scan
+    assert "_builder_returned_ids, _unrouted_candidates, _remote_held_ids)" in source

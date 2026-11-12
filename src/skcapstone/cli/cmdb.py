@@ -11,8 +11,10 @@ that writes by default is a scan nobody can safely run twice.
 
 from __future__ import annotations
 
+import importlib
 import json as _json
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -35,13 +37,15 @@ def _manager():
 
 
 def _discovery():
-    """Import skcoord.discovery, or say plainly which package is too old.
+    """Import the SKCapstone discovery facade or report an old dependency.
 
-    The discovery collectors ship in skcoord. Without this the failure is a
-    bare ImportError naming a module the operator has never heard of.
+    The base collectors ship in skcoord while SKCapstone adds governed ingress
+    identity and address-set support. Without skcoord the failure should name
+    the package an operator must upgrade.
     """
     try:
-        import skcoord.discovery as mod
+        importlib.import_module("skcoord.discovery")
+        import skcapstone.cmdb_discovery as mod
     except ImportError as exc:  # pragma: no cover - depends on installed version
         raise click.ClickException(
             "skcoord.discovery is missing: this skcoord is too old for "
@@ -59,6 +63,10 @@ def _orchestration():
         raise click.ClickException(
             "skcoord.cmdb_reconcile is missing; upgrade skcoord for --network support"
         ) from exc
+    discovery = _discovery()
+    mod.DECLARED_COLLECTORS = discovery.DECLARED_COLLECTORS
+    mod.OBSERVED_COLLECTORS = discovery.OBSERVED_COLLECTORS
+    mod.scan_network = discovery.scan_network
     return mod
 
 
@@ -376,7 +384,8 @@ def register_cmdb_commands(main: click.Group) -> None:
             )
             if apply and not scan_result.complete:
                 raise click.ClickException(
-                    "refusing --apply: network scan is incomplete; inspect collector health"
+                    "refusing --apply: network scan is incomplete; "
+                    + _incomplete_scan_detail(scan_result)
                 )
             scope_fingerprint = scan_result.scope_fingerprint()
             discovered_ids = [item.ci_id for item in scan_result.discovered]
@@ -448,8 +457,13 @@ def register_cmdb_commands(main: click.Group) -> None:
             if apply or record_run:
                 ended = datetime.now(timezone.utc)
                 run_scan_id = next((item.scan_id for item in found if item.scan_id), None)
+                scan_id = run_scan_id or uuid.uuid4().hex
+                orch = _orchestration()
+                # SKBrain's CmdbDriftBounded reads drift only from this
+                # checksummed artifact, never from a live scan.
+                drift = orch.normalize_drift(disc.drift(found, mgr), scan_id, True, "local")
                 run_envelope = {
-                    "scan_id": run_scan_id or uuid.uuid4().hex,
+                    "scan_id": scan_id,
                     "started_at": started.isoformat(),
                     "ended_at": ended.isoformat(),
                     "duration_seconds": (ended - started).total_seconds(),
@@ -472,8 +486,15 @@ def register_cmdb_commands(main: click.Group) -> None:
                         "failure_budget_exceeded": False,
                     },
                     "reconcile": report_data,
+                    "drift": {
+                        "count": len(drift),
+                        "by_kind": dict(Counter(item.kind for item in drift)),
+                        "by_severity": {
+                            severity: sum(item.severity == severity for item in drift)
+                            for severity in ("high", "medium", "low")
+                        },
+                    },
                 }
-                orch = _orchestration()
                 artifact_path, checksum = orch.write_run_artifact(home, run_envelope)
                 report_data["artifact"] = {
                     "path": str(artifact_path),
@@ -794,3 +815,31 @@ def register_cmdb_commands(main: click.Group) -> None:
                 f"  {finding['kind']} {finding['source']} "
                 f"--{finding['relationship']}--> {finding['target']}"
             )
+
+
+def _incomplete_scan_detail(scan_result) -> str:
+    """Name what made a network scan incomplete, without commands or output.
+
+    The refusal writes no artifact, so this message (in the journal and the
+    cron ledger) is the only record of which target or collector failed.
+    """
+    parts: list[str] = []
+    if getattr(scan_result, "deadline_exceeded", False):
+        parts.append("scan deadline exceeded")
+    if getattr(scan_result, "failure_budget_exceeded", False):
+        parts.append("failure budget exceeded")
+    for failure in getattr(scan_result, "declared_failures", None) or []:
+        parts.append(f"declared: {failure}")
+    for target in getattr(scan_result, "targets", None) or []:
+        if getattr(target, "complete", True):
+            continue
+        reasons = list(getattr(target, "failures", None) or [])
+        reasons += [
+            f"{record.collector}:unavailable"
+            for record in getattr(target, "coverage", None) or []
+            if getattr(record, "status", "") == "unavailable"
+        ]
+        parts.append(f"{target.host}: {', '.join(reasons[:6]) or 'incomplete'}")
+        if len(reasons) > 6:
+            parts[-1] += f" (+{len(reasons) - 6} more)"
+    return "; ".join(parts) or "inspect collector health"

@@ -1,0 +1,1 @@
+- Card `c3100b17`: Add opt-in service registry readiness checks with exact top-level JSON assertions and an explicit User-Agent. Policy/auth responses remain unknown; redirects and malformed readiness responses cannot certify a healthy backend. Legacy reachability behavior remains unchanged.

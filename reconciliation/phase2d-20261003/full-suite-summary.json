@@ -1,0 +1,184 @@
+{
+  "tested_commit": "dc31b1a02076286ffa36062a2520aaf15e1df4cb",
+  "suite": {
+    "name": "pytest",
+    "errors": "0",
+    "failures": "33",
+    "skipped": "37",
+    "tests": "11777",
+    "time": "1314.751",
+    "timestamp": "2026-10-03T12:50:24.531496-05:00",
+    "hostname": "chiap08"
+  },
+  "remaining_buckets": {
+    "D": 32,
+    "not in original 83": 1
+  },
+  "issues": [
+    {
+      "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[claim]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError"
+    },
+    {
+      "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[contract]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError"
+    },
+    {
+      "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[source]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError"
+    },
+    {
+      "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[restrictions]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError"
+    },
+    {
+      "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[deps]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError"
+    },
+    {
+      "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[ownerless]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError"
+    },
+    {
+      "nodeid": "tests/fleet/test_crew_admission.py::test_remote_preclaim_refuses_stale_parent[terminal]",
+      "kind": "failure",
+      "message": "Failed: DID NOT RAISE BuilderDispatchError"
+    },
+    {
+      "nodeid": "tests/fleet/test_crew_admission.py::test_actual_rotation_authoritative_admission_uses_parent_guard[True]",
+      "kind": "failure",
+      "message": "assert True is not True"
+    },
+    {
+      "nodeid": "tests/fleet/test_crew_controller.py::test_real_node_hook_assigns_once_for_thirty_unchanged_cycles",
+      "kind": "failure",
+      "message": "KeyError: 'crew'"
+    },
+    {
+      "nodeid": "tests/fleet/test_crew_controller.py::test_actual_cli_register_reconcile_status",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'crew'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_crew_controller.py::test_malformed_request_does_not_stop_heartbeat",
+      "kind": "failure",
+      "message": "KeyError: 'crew'"
+    },
+    {
+      "nodeid": "tests/fleet/test_crew_progress.py::test_actual_reporter_publishes_only_exact_local_fresh_identity",
+      "kind": "failure",
+      "message": "AssertionError: assert 1 == 0\n +  where 1 = len([{'card': 'aabb0011', 'session': 'codex-auto-aabb0011', 'unit': '', 'owner': 'jarvis', ...}])\n +  and   0 = len([])"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_deliver_uses_existing_entry_points_and_explicit_roots[False]",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_deliver_uses_existing_entry_points_and_explicit_roots[True]",
+      "kind": "failure",
+      "message": "AssertionError: Usage: skcapstone fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'skcapstone fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_observe_uses_configured_coordination_home",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_receipt_delegates_exact_kind_and_payload[pickup]",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_receipt_delegates_exact_kind_and_payload[result]",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_help_does_not_import_manager_or_transport",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_expected_manager_errors_are_click_errors[error0]",
+      "kind": "failure",
+      "message": "assert 2 == 1\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_expected_manager_errors_are_click_errors[error1]",
+      "kind": "failure",
+      "message": "assert 2 == 1\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_bad_json_is_rejected_before_manager_creation",
+      "kind": "failure",
+      "message": "assert 2 == 1\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_actor_is_required_before_any_manager_call",
+      "kind": "failure",
+      "message": "assert (2 == 2 and '--agent' in \"Usage: fleet [OPTIONS] COMMAND [ARGS]...\\nTry 'fleet --help' for help.\\n\\nError: No such command 'handoff'.\\n\")\n +  where 2 = <Result SystemExit(2)>.exit_code\n +  and   \"Usage: fleet [OPTIONS] COMMAND [ARGS]...\\nTry 'fleet --help' for help.\\n\\nError: No such command 'handoff'.\\n\" = <Result SystemExit(2)>.output"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_real_manager_cli_deliver_observe_and_receipts_preserve_ownership",
+      "kind": "failure",
+      "message": "AssertionError: Usage: fleet [OPTIONS] COMMAND [ARGS]...\n  Try 'fleet --help' for help.\n  \n  Error: No such command 'handoff'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_cli_keeps_real_loader_bounds_without_manager_or_transport[{\"a\":1,\"a\":2}]",
+      "kind": "failure",
+      "message": "assert (2 == 1)\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_cli_keeps_real_loader_bounds_without_manager_or_transport[xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx [truncated; exact ID in classification / local JUnit]",
+      "kind": "failure",
+      "message": "assert (2 == 1)\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/fleet/test_herdr_handoff_cli.py::test_cli_keeps_real_loader_bounds_without_manager_or_transport[[]]",
+      "kind": "failure",
+      "message": "assert (2 == 1)\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/test_coord_helpers.py::test_missing_supported_api_is_clear_and_writes_nothing",
+      "kind": "failure",
+      "message": "assert 'lacks Board.create_helper_task' in \"Usage: main coord [OPTIONS] COMMAND [ARGS]...\\nTry 'main coord --help' for help.\\n\\nError: No such command 'request-help'.\\n\"\n +  where \"Usage: main coord [OPTIONS] COMMAND [ARGS]...\\nTry 'main coord --help' for help.\\n\\nError: No such command 'request-help'.\\n\" = <Result SystemExit(2)>.output"
+    },
+    {
+      "nodeid": "tests/test_coord_helpers.py::test_dry_run_never_calls_creation",
+      "kind": "failure",
+      "message": "AssertionError: Usage: main coord [OPTIONS] COMMAND [ARGS]...\n  Try 'main coord --help' for help.\n  \n  Error: No such command 'request-help'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/test_coord_helpers.py::test_cli_consults_normal_creation_authorization",
+      "kind": "failure",
+      "message": "AssertionError: assert 'synthetic authorization refusal' in '2'\n +  where '2' = str(SystemExit(2))\n +    where SystemExit(2) = <Result SystemExit(2)>.exception"
+    },
+    {
+      "nodeid": "tests/test_coord_helpers.py::test_cli_real_api_creates_then_replays_without_parent_change",
+      "kind": "failure",
+      "message": "AssertionError: Usage: main coord [OPTIONS] COMMAND [ARGS]...\n  Try 'main coord --help' for help.\n  \n  Error: No such command 'request-help'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/test_coord_helpers.py::test_cli_source_helpers_reject_overlapping_active_assignments",
+      "kind": "failure",
+      "message": "AssertionError: Usage: main coord [OPTIONS] COMMAND [ARGS]...\n  Try 'main coord --help' for help.\n  \n  Error: No such command 'request-help'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/test_coord_helpers.py::test_helper_uses_normal_claim_after_real_dependency_finishes",
+      "kind": "failure",
+      "message": "AssertionError: Usage: main coord [OPTIONS] COMMAND [ARGS]...\n  Try 'main coord --help' for help.\n  \n  Error: No such command 'request-help'.\n  \nassert 2 == 0\n +  where 2 = <Result SystemExit(2)>.exit_code"
+    },
+    {
+      "nodeid": "tests/test_skfleet_pi_tool_allowlist.py::test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes",
+      "kind": "failure",
+      "message": "AssertionError: assert 'skcapstone_coord_status' in ['bash', 'edit', 'mcp', 'mcpScript', 'mcp__skcapstone', 'mcp__skchat', ...]"
+    }
+  ]
+}

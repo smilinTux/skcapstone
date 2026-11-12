@@ -188,12 +188,33 @@ def test_the_two_path_classes_outside_fleetpaths_still_relocate() -> None:
 #: here is a deliberate act: it means "this path is not fleet state, and
 #: relocating SKFLEET_ROOT is not supposed to move it".
 _SKCAPSTONE_PATH_EXEMPT = {
+    # Installed snapshot 3f556cb8 adds coordination consumers, not fleet roots.
+    "builder_continue.py": "CardStore home; fleet state uses default_paths",
+    "builder_retire.py": "uses explicit CardStore home independently of FleetPaths",
+    "builder_retry.py": "reads native CardStore; retry dispatch state uses FleetPaths",
+    "cli.py": "passes coordination home to board operations; fleet paths remain explicit",
+    "production_brief.py": "names canonical card evidence and CardStore, not fleet state",
+    "production_exit.py": "reads CardStore custody under the sovereign home",
+    "production_hosted_review_brief.py": "binds card evidence and CardStore home",
+    "production_resources.py": "reads coordination authorization under an overridable home",
+    "source_bundle.py": "uses SKCAPSTONE_HOME for native card authority",
+    "source_transport.py": "uses CardStore home for transport custody",
     "paths.py": "owns the SKFLEET_ROOT default; the one place allowed to name it",
     "skmeter.py": "writes ~/.skcapstone/skmeter, a SIBLING of the fleet tree, not fleet state",
     "stignore_doctor.py": (
         "names ~/.skcapstone as the ROOT of the skcapstone-sync Syncthing folder it "
         "audits, which is the fleet tree's parent, not fleet state; read-only, and "
         "overridable by the syncfolder object's spec.root"
+    ),
+    "bounded_artifact_discovery.py": (
+        "reads estate evidence under ~/.skcapstone/evidence/work/<card>/ (and "
+        "explicit card-referenced paths), which is coordination evidence, not "
+        "fleet state under SKFLEET_ROOT; relocating the fleet tree must not move it"
+    ),
+    "claim_expiry_cli.py": (
+        "default --home is ~/.skcapstone, the CardStore root whose cards/ event "
+        "log observe() reads; that is coordination state, not fleet state under "
+        "SKFLEET_ROOT, the CLI never writes, and --home overrides the default"
     ),
 }
 

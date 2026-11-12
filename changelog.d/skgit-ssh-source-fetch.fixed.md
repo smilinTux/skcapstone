@@ -1,0 +1,1 @@
+Exact source reconstruction fetches private skgit (Forgejo) repositories over a code-pinned SSH transport with the host key, so SKLegal cards on skgit no longer fail with `exact source reconstruction failed`.

@@ -8,7 +8,10 @@ dynamic = ["version"]
 description = "Sovereign Agent Framework — conscious AI through identity, trust, memory, and security"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
-requires-python = ">=3.10"
+# 3.12 is the floor (2026-11-10): every fleet host runs 3.12 or newer, the
+# qualify env pins 3.12, and nothing runs 3.11. Earlier the floor was 3.11
+# because skwhisper (via the `all` extra) declares Requires-Python >=3.11.
+requires-python = ">=3.12"
 authors = [
     {name = "smilinTux", email = "admin@smilintux.org"},
 ]
@@ -22,11 +25,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
     "Topic :: Security :: Cryptography",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries",
@@ -37,6 +36,7 @@ dependencies = [
     "click>=8.1,<9.0",
     "cloud9>=1.0.0",
     "mcp>=1.0,<2.0",
+    "packaging>=23.0",
     "pydantic>=2.0,<3.0",
     "pyyaml>=6.0,<7.0",
     "rich>=13.0,<14.0",
@@ -47,12 +47,79 @@ dependencies = [
     # 0.1.46 changed parity absence semantics, 0.1.51 changed KanbanBoard.cards()
     # from failing closed to degrading one unreadable card. Neither was announced
     # because neither had to be: the floor was 0.1.44 and anything satisfied it.
-    "skcoord>=0.1.69",
-    "skmemory>=0.5.0",
+    #
+    # Bumped 2026-09-17: this branch calls Board.release_claim(abandon_reason=...),
+    # which does not exist in any skcoord release through 0.1.76 (verified against
+    # the skcoord repo: the feature lives only on its sibling spec branch, not yet
+    # merged to main or tagged). The floor is set one past the newest published
+    # tag so installing this package fails loudly until skcoord actually ships
+    # the version carrying abandon_reason, rather than silently resolving to
+    # 0.1.69 or any other real-but-lacking release. Do not lower this to make
+    # the dependency resolve; the ordering fix is that skcoord ships first.
+    #
+    # Bumped again 2026-09-18: the builder dispatcher and sknoded's main loop
+    # now catch skcoord.coordination.TaskUnclaimable, which is the typed
+    # refusal that stops one voided card from killing the node worker. Newest
+    # published skcoord tag at the time of writing is v0.1.77, so the floor is
+    # again set one past it: skcoord ships first, then this resolves.
+    #
+    # Bumped 2026-09-22: skcoord v0.1.82 is the published release that ships
+    # governed CardStore overlay recovery: scan_overlay_records,
+    # plan_overlay_recovery, save_recovery_plan, apply_overlay_recovery and
+    # rollback_overlay_recovery in skcoord.card_event_recovery, plus strict
+    # CardEvent append validation and doctor diagnostics. SKCapstone now
+    # requires that published floor so recovery is resolvable from the public
+    # wheel instead of an unreleased branch only.
+    # Bumped 2026-10-07: skcoord 0.1.84 adds the governed exact-canonical
+    # successor path needed to replace legacy repair card IDs.
+    # Bumped again 2026-10-07: skcoord 0.1.85 (#133) accepts legacy cores that
+    # omit optional exit_gates/non_goals/spec_version in that successor check.
+    # Bumped 2026-10-07: skcoord 0.1.86 skips stale projections to voided tasks
+    # during claim, avoiding a terminal-card demotion that blocks new claims.
+    #
+    # Production versions live in deploy/fleet-constraints.txt (CI and rollout
+    # install with -c). Bump the pin there in the same PR; the floor here must
+    # never exceed the pin.
+    # Bumped 2026-10-30: skcoord 0.1.89 completes ITIL-linked GTD items under
+    # the shared store lock (lost-update fix, skcoord #137).
+    # Bumped 2026-11-02: skcoord 0.1.90 contains the reviewed root-cause fix
+    # from skcoord #138; keeping this floor prevents reconciliation from
+    # downgrading task1-3 to a release that lacks it.
+    "skcoord>=0.1.90",
+    "skmemory>=0.11.156",
     "skskills>=0.1.1",
 ]
 
 [project.optional-dependencies]
+fleet-qualify = [
+    # Economy qualification needs a regular package inside the sealed prefix.
+    # A released pin, never a git URL: PyPI rejects any upload whose metadata
+    # carries a direct reference ("400 Can't have direct dependency"), which
+    # kept skcapstone off PyPI after 0.15.181. v0.3.45 is tagged at 7409a1ab,
+    # the commit the sealed qualify env (data/qualify-env.json) still builds.
+    "skharness==0.3.45",
+    "ansible-core==2.21.3; python_version >= '3.12'",
+    "ansible-core==2.19.5; python_version < '3.12'",
+    "pytest>=7.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.3",
+    "pluggy>=1.0",
+    "iniconfig>=1.0",
+    "packaging>=23.0",
+    # skcapstone's own suite imports these at collection; without them every
+    # skcapstone card failed sealed qualification (chi, 2026-10-11).
+    "skdashboard>=0.1.0",
+    "skcomms>=0.1.0",
+    "skseed>=0.1.0",
+    "setuptools>=68.0",
+    # capauth's suite imports these at collection; without webauthn every
+    # capauth card was interrupted with 6-8 collection errors (chi, 2026-10-11).
+    "webauthn>=2.0",
+    "soft-webauthn>=0.1",
+    "pywebpush>=1.14",
+    "python-gnupg>=0.5",
+    "zeroconf>=0.38",
+]
 dashboard = [
     "starlette>=0.40",
     "uvicorn>=0.30",
@@ -68,7 +135,7 @@ security = [
     "sksecurity>=1.2.0",
 ]
 memory = [
-    "skmemory[skvector]>=0.5.0",
+    "skmemory>=0.11.156",
 ]
 seed = [
     "skseed>=0.1.0",
@@ -83,7 +150,7 @@ comm = [
     "skcomms>=0.1.0",
 ]
 consciousness = [
-    "skwhisper>=0.1.0",
+    "skwhisper>=0.6.2",
 ]
 cloud = [
     "boto3>=1.34",
@@ -95,9 +162,9 @@ docker = [
 all = [
     "capauth>=0.2.5",
     "sksecurity>=1.2.0",
-    "skmemory[skvector]>=0.5.0",
+    "skmemory>=0.11.156",
     "skseed>=0.1.0",
-    "skwhisper>=0.1.0",
+    "skwhisper>=0.6.2",
     "skchat-sovereign>=0.1.1",
     "skcomms>=0.1.0",
     "skdashboard>=0.1.0",
@@ -107,8 +174,13 @@ all = [
     "docker>=7.0",
 ]
 dev = [
+    # Packaging tests build offline using the declared build backend.
+    "setuptools>=68.0",
+    "wheel",
+    "setuptools_scm>=8",
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "pytest-xdist>=3.5",
     "pytest-asyncio>=0.23",
     "black>=24.0",
     "ruff>=0.3",
@@ -116,10 +188,13 @@ dev = [
 
 [project.scripts]
 skcapstone = "skcapstone.cli:main"
+skmail = "skcapstone.fleet.skmail:main"
+skmail_writer = "skcapstone.fleet.skmail.skmail_writer:main"
 skcapstone-mcp = "skcapstone.mcp_server:main"
 crush = "skcapstone.crush_shim:main"
 skfleet = "skcapstone.fleet.cli:main"
 skoperator = "skcapstone.operator_seat.cli:main"
+skfleet-claim-expiry = "skcapstone.fleet.claim_expiry_cli:main"
 
 [project.urls]
 Homepage = "https://skcapstone.io"
@@ -133,10 +208,23 @@ where = ["src"]
 
 [tool.setuptools]
 script-files = [
+    "scripts/sk-alert",
+    "scripts/sk-cron-run",
+    "scripts/sk-alert-table",
+    # Run by skos deploy/schedule/jobs.yaml as skcapstone-backup-gfs. Shipped as
+    # an installed command so a new node gets it with the package instead of a
+    # hand copy in ~/.skcapstone/scripts.
+    "scripts/skcapstone-gfs-backup.sh",
+    # Runner for the CMDB network shadow and apply units (gate 4, card 075a82ce).
+    "scripts/skcapstone-cmdb-network",
+    "scripts/fleet/sk-wt-gc",
+    "scripts/fleet/sk-wt-task",
     "scripts/fleet/pi-cardstore-guard.mjs",
+    "scripts/fleet/pi-gateway-retry.mjs",
     "scripts/fleet/link-lineage.py",
     "scripts/fleet/skfleet-link-producer.py",
     "scripts/fleet/skfleet-pi-model-catalog.py",
+    "scripts/fleet/skfleet_readiness.py",
     "scripts/fleet/skfleet-rotate.py",
     "scripts/fleet/skfleet-worker-wrapper.py",
     "scripts/fleet/skmail_work.py",
@@ -145,7 +233,8 @@ script-files = [
 ]
 
 [tool.setuptools.package-data]
-skcapstone = ["SKILL.md", "defaults/**/*.json", "defaults/**/*.yaml", "defaults/**/*.feb", "defaults/**/*.md", "defaults/.stignore", "defaults/**/.stignore", "data/*.json", "data/*.yaml", "data/*.sh", "data/systemd/*.service", "data/systemd/*.socket", "data/systemd/*.timer", "static/*.html", "static/**/*.css", "static/**/*.js"]
+"skcapstone.fleet.skmail" = ["skmail"]
+skcapstone = ["SKILL.md", "defaults/**/*.json", "defaults/**/*.yaml", "defaults/**/*.feb", "defaults/**/*.md", "defaults/.stignore", "defaults/.stignore-shared", "defaults/**/.stignore", "data/*.json", "data/qualify-env.lock.txt", "data/*.apparmor", "data/*.yaml", "data/*.sh", "data/*.py", "data/systemd/*.service", "data/systemd/*.socket", "data/systemd/*.timer", "data/systemd/*.env.example", "data/worktrunk-claude-plugin/*.md", "data/worktrunk-claude-plugin/.claude-plugin/*.json", "data/worktrunk-claude-plugin/plugins/worktrunk/.claude-plugin/*.json", "data/worktrunk-claude-plugin/plugins/worktrunk/hooks/*", "data/worktrunk-claude-plugin/plugins/worktrunk/skills/**/*.md", "static/*.html", "static/**/*.css", "static/**/*.js"]
 
 [tool.black]
 line-length = 99
@@ -170,11 +259,15 @@ select = ["E", "F", "I", "N", "W"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-v --tb=short"
+# -rs: always print the reason for every skip. Several comments in tests/
+# claimed "pytest -rs lists them, so this cannot quietly stay skipped" while
+# no invocation anywhere passed -rs. The claim is now true.
+addopts = "-v --tb=short -rs"
 asyncio_mode = "strict"
 markers = [
     "integration: cross-component test requiring real services/network (excluded from default CI unit run)",
     "e2e: live end-to-end test requiring an installed skcapstone CLI / running daemon (excluded from default CI unit run)",
+    "host_systemd: requires the host user systemd manager (excluded from isolated builder profiles)",
     "asyncio: mark an async test to be run by pytest-asyncio (registered here so --strict-markers passes even before the plugin loads)",
 ]
 

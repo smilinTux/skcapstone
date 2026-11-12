@@ -5,7 +5,7 @@
   },
   "name": "capauth-custody-doctor",
   "spec": {
-    "command": "capauth doctor custody",
+    "command": "capauth doctor custody --json",
     "conditions": [
       "MissedRun",
       "CustodyVerified"

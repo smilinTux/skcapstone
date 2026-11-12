@@ -27,6 +27,16 @@ def test_review_fail_is_terminal():
     assert _load(["review"], ("2026-09-01T14:28:05Z", "FAIL: evidence mismatch"))
 
 
+def test_review_fail_lifecycle_disposition_is_terminal():
+    assert _load(
+        ["review"],
+        (
+            "2026-09-15T23:12:01Z",
+            "FAIL_EVIDENCE_RECOVERED_RELEASE_EXACT_GENERATION_TO_REVIEW",
+        ),
+    )
+
+
 def test_review_pass_is_terminal():
     assert _load(["review"], ("2026-09-01T14:28:05Z", "PASS"))
 

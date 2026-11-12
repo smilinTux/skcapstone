@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S -u BASH_ENV bash
 # scripts/e2e-test.sh — Automated multi-agent E2E test for the SKCapstone daemon.
 #
 # Usage:
@@ -9,6 +9,10 @@
 #   1  — one or more checks failed
 
 set -euo pipefail
+
+python_bin="${PYTHON_BIN:-python}"
+"$python_bin" "$(dirname "$0")/ci/test_environment.py"
+unset BASH_ENV ENV
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -47,7 +51,7 @@ trap cleanup EXIT
 # Step 0: Reinstall package
 # ---------------------------------------------------------------------------
 info "Reinstalling skcapstone…"
-pip install -e . --quiet
+"$python_bin" -m pip install -e . --quiet
 
 # ---------------------------------------------------------------------------
 # Step 1: Start daemon in the background

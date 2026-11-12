@@ -81,10 +81,39 @@ class TestClassify:
             **kw,
         )
 
-    def test_live(self):
+    def test_a_fresh_wrapper_beat_is_shell_alive_not_live(self):
+        """A timer is not evidence of work.
+
+        This assertion used to read ``LIVE``.  It was wrong, and it was the
+        wrong in code form: on 2026-09-19 a worker held card 139ec63d for
+        6h18m having written zero files, with ``pi`` alive at 0.0% CPU and a
+        0-byte stdout log, while this exact classification path reported it
+        healthy on a beat whose age never exceeded 39 seconds.
+
+        The wrapper beat is a ``while :; do ...; sleep N; done`` loop beside
+        ``pi``, so it stays fresh on a wedged worker by construction.  It
+        proves the worker's shell has not exited and nothing else, and it now
+        says so.
+        """
         r = classify([self._beat(age_s=60)], "w", now=self.BASE_TS, thresholds=self.TH)
-        assert r.state == "LIVE"
+        assert r.state == "SHELL_ALIVE"
         assert r.evidence == "wrapper_beat"
+        assert "progress" in r.note
+
+    def test_only_an_agent_beat_can_be_live(self):
+        """An agent beat carries a progress_token; a wrapper beat cannot."""
+        r = classify(
+            [self._beat(emitter="agent", age_s=60, progress_token="step-42")],
+            "w",
+            now=self.BASE_TS,
+            thresholds=self.TH,
+        )
+        assert r.state == "LIVE"
+        assert r.evidence == "agent_beat"
+
+    def test_a_wrapper_beat_records_the_scope_of_what_it_proves(self):
+        """A reader going straight to the file must not be misled either."""
+        assert self._beat(age_s=60).proves == "shell-liveness"
 
     def test_agent_beat_preferred(self):
         beats = [self._beat(age_s=300), self._beat(emitter="agent", age_s=60)]

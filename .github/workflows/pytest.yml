@@ -1,14 +1,36 @@
 name: pytest
 
-# Pull requests run the complete deterministic suite once on Python 3.12 and
-# a focused compatibility lane on Python 3.11. Main, schedule, and reusable
-# release calls run the complete advertised Python 3.10 through 3.14 matrix.
-# Required check names remain "unit tests (py3.11)" and "unit tests (py3.12)".
+# Pull requests run the complete deterministic suite on Python 3.12, sharded.
+# Main, schedule and reusable release calls run the same single-version
+# matrix. 3.12 is the floor (requires-python >=3.12, 2026-11-10): every fleet
+# host runs 3.12 or newer and none runs 3.11. 3.13/3.14 still fail on pgpy's
+# imghdr import, so they are not in the matrix yet.
+# The required check name is "unit tests (py3.12)".
+#
+# merge_group (prerequisite for a GitHub merge queue, not yet enabled) is
+# treated IDENTICALLY to pull_request everywhere in this file: same
+# single-version matrix, same "docs-only" skip
+# eligibility. Without that, adding merge_group alone would have silently
+# widened the matrix to all 5 Python versions AND made every one of them run
+# the full ~16-minute suite (since the existing `!= 'pull_request'` checks
+# throughout this file all evaluate true for merge_group by default) - a
+# 5x-per-queue-run cost increase with no corresponding safety gain, since
+# py3.12 already runs the complete deterministic suite either way.
+#
+# The one place merge_group is treated MORE conservatively than pull_request:
+# `DOCS_ONLY_ALLOWED` (the "impact" step below) is deliberately left
+# false for merge_group by omission - the docs-only test-skip never applies
+# in the merge queue, even for a change that would have qualified as a PR.
+# That is a safety choice, not an oversight: the merge queue is the last gate
+# before main, and forcing the full suite there is cheap insurance against a
+# batch whose cumulative diff classification is less certain than a single
+# PR's.
 
 on:
   workflow_call:
   pull_request:
     branches: [main]
+  merge_group:
   schedule:
     - cron: "17 7 * * 1"
 
@@ -16,8 +38,30 @@ permissions:
   contents: read
 
 concurrency:
+  # github.event.pull_request.number is empty for merge_group, so this falls
+  # back to github.ref - GitHub gives every merge-queue entry its own
+  # temporary ref (refs/heads/gh-readonly-queue/...), so different entries
+  # never collide in this group. cancel-in-progress excludes merge_group on
+  # purpose: a merge-queue entry that gets cancelled mid-run when a newer entry
+  # supersedes it needs GitHub's own queue handling, not a blind cancel here.
+  #
+  # push is included (added 2026-09-21). It was previously excluded along with
+  # merge_group, but the merge-queue reasoning never applied to it, and the
+  # omission cost real releases: with cancel-in-progress false, GitHub holds at
+  # most ONE pending run per group and evicts it when the next arrives, so on a
+  # busy main every push run was cancelled at `classify test impact` before it
+  # could test anything. Cancelling a superseded push run is correct here, and
+  # it cannot interrupt a publish: this group covers only the reusable tests
+  # job, which has already released it by the time `tag`, `build` and
+  # `pypi-publish` run, and those serialize on their own `publish-tag-` group.
   group: pytest-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -p -e -o pipefail {0}
+env:
+  BASH_ENV: ""
 
 jobs:
   classify:
@@ -37,11 +81,16 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # merge_group carries no pull_request context; the event itself
+          # names the base being tested.
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = pull_request ]; then
             base="$PR_BASE_SHA"
+          elif [ "$EVENT_NAME" = merge_group ]; then
+            base="$MERGE_GROUP_BASE_SHA"
           elif [ -n "$BEFORE_SHA" ] && ! [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
             base="$BEFORE_SHA"
           else
@@ -52,22 +101,200 @@ jobs:
       - id: impact
         name: Classify documentation-only change
         env:
+          # Deliberately pull_request-only (see file header): the merge
+          # queue never gets the docs-only skip, even when it would have
+          # qualified as a PR.
           DOCS_ONLY_ALLOWED: ${{ github.event_name == 'pull_request' }}
         run: scripts/ci/classify-test-impact.sh "${{ steps.range.outputs.base_sha }}" "$GITHUB_SHA"
       - id: matrix
         env:
           EVENT_NAME: ${{ github.event_name }}
+        # The push matrix used to be [3.10, 3.11, 3.12, 3.13, 3.14], wider than
+        # the two versions a pull request must pass. That is why main could be
+        # green on every PR and still unpublishable: the publish workflow runs
+        # this same job on push, and measured 2026-09-21 it failed on three of
+        # the five.
+        #   3.10  install fails outright. The `all` extra needs skwhisper, which
+        #         declares Requires-Python >=3.11, so pip resolves nothing.
+        #   3.13  ModuleNotFoundError: No module named 'imghdr'. That module left
+        #   3.14  the stdlib in 3.13. Nothing under src/ imports it; it comes
+        #         from pgpy (and capauth), so it is not fixable in this repo.
+        # Testing a version the dependency set cannot install is not coverage,
+        # it is a permanently red gate. Re-add 3.13/3.14 when pgpy supports
+        # them, and 3.10 only if the skwhisper floor ever drops.
+        # 3.11 was dropped on 2026-11-10: no fleet host runs it.
         run: |
-          if [ "$EVENT_NAME" = pull_request ]; then
-            echo 'value=["3.11","3.12"]' >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; then
+            echo 'value=["3.12"]' >> "$GITHUB_OUTPUT"
           else
-            echo 'value=["3.10","3.11","3.12","3.13","3.14"]' >> "$GITHUB_OUTPUT"
+            echo 'value=["3.12"]' >> "$GITHUB_OUTPUT"
           fi
 
+  # Sharded py3.12 suite (pull_request / merge_group only). A GitHub-hosted
+  # runner has 2 vCPUs, so xdist alone only gets ~2x; the suite is also split
+  # across 6 runners by scripts/ci/pytest_shard.py. The required check
+  # "unit tests (py3.12)" is the `unit-py312` job below, which aggregates these
+  # shards, so branch protection is unchanged.
+  shard:
+    name: unit shard ${{ matrix.shard }}/6 (py3.12)
+    needs: classify
+    if: >-
+      needs.classify.outputs.docs-only != 'true' &&
+      (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Provision test environment
+        uses: ./.github/actions/test-env
+      - name: Run unit shard
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONPATH: scripts/ci
+          COVERAGE_FILE: coverage-shard${{ matrix.shard }}.dat
+        run: |
+          set -o pipefail
+          # Same selection as the unsharded suite, restricted to this shard's
+          # files (pytest_shard.py partitions by file, balanced by test count),
+          # then xdist inside the shard with --dist loadfile.
+          timeout --kill-after=10s 25m python -m pytest tests/ \
+            -p pytest_shard --shard ${{ matrix.shard }}/6 \
+            -n auto --dist loadfile \
+            --strict-markers \
+            -m "not integration and not e2e" \
+            --durations=40 -o faulthandler_timeout=60 \
+            --junitxml=junit-shard${{ matrix.shard }}.xml \
+            --cov=skcapstone --cov-report= \
+            > pytest-ci-shard${{ matrix.shard }}.log 2>&1
+      - name: Preserve shard results even when pytest fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-shard-${{ matrix.shard }}
+          path: |
+            pytest-ci-shard${{ matrix.shard }}.log
+            coverage-shard${{ matrix.shard }}.dat
+            junit-shard${{ matrix.shard }}.xml
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Preserve sandbox diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sandbox-diagnostics-shard-${{ matrix.shard }}
+          path: sandbox-ci.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---- Pull request / merge_group required check ---------------------------
+  # "unit tests (py3.12)" on PRs is the `unit-py312` job below, which
+  # aggregates the shards. The push / schedule / workflow_call matrix job
+  # `unit` is skipped on PRs, and a skipped matrix job keeps its literal
+  # unexpanded name, so exactly one job carries the required name per event.
+
+  unit-py312:
+    name: unit tests (py3.12)
+    needs: [classify, shard]
+    # `shard` is skipped for docs-only PRs, which would skip this job with it;
+    # !cancelled() keeps it running. This is the shard AGGREGATOR: it installs
+    # nothing but coverage, merges coverage and logs, and fails unless every
+    # shard passed.
+    if: >-
+      ${{ !cancelled() && needs.classify.result == 'success' &&
+      (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Record documentation-only decision
+        if: needs.classify.outputs.docs-only == 'true'
+        run: |
+          echo "Documentation-only classification verified by scripts/ci/classify-test-impact.sh."
+          echo "Python 3.12 unit execution intentionally omitted." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: needs.classify.outputs.docs-only != 'true'
+        with:
+          python-version: "3.12"
+      - name: Collect shard results, logs and coverage
+        if: always() && !cancelled() && needs.classify.outputs.docs-only != 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: unit-shard-*
+          path: shard-results
+          merge-multiple: true
+      - name: Merge shard coverage and logs
+        if: always() && !cancelled() && needs.classify.outputs.docs-only != 'true'
+        run: |
+          shopt -s nullglob
+          logs=(shard-results/pytest-ci-shard*.log)
+          : > pytest-ci.log
+          if [ "${#logs[@]}" -gt 0 ]; then
+            cat "${logs[@]}" >> pytest-ci.log
+          fi
+          data=(shard-results/coverage-shard*.dat)
+          if [ "${#data[@]}" -gt 0 ]; then
+            python -m pip install coverage
+            python -m coverage combine --keep "${data[@]}"
+            python -m coverage xml -o coverage.xml
+            python -m coverage report --skip-covered >> pytest-ci.log
+          fi
+      - name: Preserve test diagnostics even when pytest times out
+        if: always() && needs.classify.outputs.docs-only != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pytest-diagnostics-py3.12
+          path: |
+            pytest-ci.log
+            sandbox-ci.log
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload coverage
+        # Coverage is optional; action bootstrap TLS failures occur before
+        # its fail_ci_if_error setting can handle an upload error.
+        continue-on-error: true
+        if: always() && !cancelled() && needs.classify.outputs.docs-only != 'true'
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+      - name: Require every py3.12 shard to pass
+        # Last on purpose: logs, coverage and the diagnostics artifact are
+        # preserved first. A skipped shard is only acceptable for a
+        # documentation-only change, in which case this step never runs.
+        if: always() && !cancelled() && needs.classify.outputs.docs-only != 'true'
+        env:
+          SHARD_RESULT: ${{ needs.shard.result }}
+        run: |
+          echo "shard result: $SHARD_RESULT"
+          [ "$SHARD_RESULT" = success ]
+
+  # Push, schedule and reusable workflow_call (publish gate): each matrix
+  # version runs the whole suite in one job, with xdist only.
   unit:
     name: unit tests (py${{ matrix.python-version }})
     needs: classify
+    if: >-
+      ${{ !cancelled() && needs.classify.result == 'success' &&
+      github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
     runs-on: ubuntu-latest
+    # 2026-10-13: the serial suite reached ~13,570 tests / 38-39 minutes; the
+    # full run uses pytest-xdist (-n auto, --dist loadfile) on the 2 vCPUs of a
+    # runner. 35m step / 45m job keep headroom over the slowest observed run
+    # while still failing a genuine hang in minutes rather than hours.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -77,126 +304,43 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-      - name: Record documentation-only decision
-        if: github.event_name == 'pull_request' && needs.classify.outputs.docs-only == 'true'
-        run: |
-          echo "Documentation-only classification verified by scripts/ci/classify-test-impact.sh."
-          echo "Python ${{ matrix.python-version }} unit execution intentionally omitted." >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        if: needs.classify.outputs.docs-only != 'true'
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - name: Install system deps (libfuse)
-        if: needs.classify.outputs.docs-only != 'true'
-        run: |
-          sudo apt-get update \
-            -o Dir::Etc::sourcelist="sources.list.d/ubuntu.sources" \
-            -o Dir::Etc::sourceparts="-"
-          sudo apt-get install -y libfuse-dev
-      - name: Install package with all extras and dev tools
-        if: needs.classify.outputs.docs-only != 'true'
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[all,dev]"
-      - name: Verify resolved package dependencies
-        if: needs.classify.outputs.docs-only != 'true'
-        run: python -m pip check
-      - name: Verify registry skcoord contract before source overlay
-        if: needs.classify.outputs.docs-only != 'true'
-        run: |
-          python -m pip install --force-reinstall --no-deps --no-cache-dir \
-            --only-binary=:all: "skcoord==0.1.69"
-          python -m pip show skcoord
-          python - <<'PY'
-          import os
-          import tempfile
-          from importlib.metadata import version
-          from pathlib import Path
-
-          from packaging.version import Version
-          from skcoord.card_store import CardCore, CardStore
-          from skcoord.cmdb_scheduler import ReconcileLease, ScheduledReconcileConfig
-          from skcoord.coordination import Board
-          from skcoord.lifecycle import audit_lifecycle, repair_lifecycle, transition_task
-
-          assert Version(version("skcoord")) == Version("0.1.69")
-          assert callable(audit_lifecycle)
-          assert callable(repair_lifecycle)
-          assert callable(transition_task)
-          assert ReconcileLease
-          assert not ScheduledReconcileConfig().enabled
-
-          os.environ["SKCOORD_CARD_STORE"] = "1"
-          with tempfile.TemporaryDirectory() as directory:
-              home = Path(directory)
-              store = CardStore(home)
-              store.create(
-                  CardCore(
-                      id="registry-contract",
-                      title="Registry contract",
-                      acceptance_criteria=["birth criterion"],
-                  )
-              )
-              store.append_event(
-                  "registry-contract",
-                  "amend_criteria",
-                  "ci",
-                  criteria=["amended criterion"],
-              )
-              card = store.fold("registry-contract")
-              assert card is not None
-              assert card.acceptance_criteria == ["amended criterion"]
-              view = next(
-                  item
-                  for item in Board(home).get_task_views()
-                  if item.task.id == "registry-contract"
-              )
-              assert view.task.acceptance_criteria == ["amended criterion"]
-          PY
-          python -m pytest -q \
-            tests/test_cli_kanban.py \
-            tests/test_coord_kanban_mcp.py \
-            tests/test_coord_amend.py
-      - name: Resolve exact sibling revisions
-        if: needs.classify.outputs.docs-only != 'true'
-        id: siblings
-        run: |
-          set -euo pipefail
-          dashboard="$(git ls-remote https://github.com/smilinTux/skdashboard HEAD | cut -f1)"
-          harness="$(git ls-remote https://github.com/smilinTux/skharness HEAD | cut -f1)"
-          [[ "$dashboard" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$harness" =~ ^[0-9a-f]{40}$ ]]
-          echo "dashboard=$dashboard" >> "$GITHUB_OUTPUT"
-          echo "harness=$harness" >> "$GITHUB_OUTPUT"
-          printf 'Sibling freshness fence: skdashboard=%s skharness=%s\n' "$dashboard" "$harness"
-      - name: Install extracted siblings at exact revisions
+      - name: Provision test environment
+        uses: ./.github/actions/test-env
+      - name: Run complete deterministic unit suite
         if: needs.classify.outputs.docs-only != 'true'
         env:
-          DASHBOARD_SHA: ${{ steps.siblings.outputs.dashboard }}
-          HARNESS_SHA: ${{ steps.siblings.outputs.harness }}
+          PYTHONUNBUFFERED: "1"
         run: |
-          pip install --force-reinstall --no-deps --no-cache-dir \
-            "skdashboard @ git+https://github.com/smilinTux/skdashboard@${DASHBOARD_SHA}" \
-            "skharness @ git+https://github.com/smilinTux/skharness@${HARNESS_SHA}"
-      - name: Run complete deterministic unit suite
-        if: >-
-          needs.classify.outputs.docs-only != 'true' &&
-          (github.event_name != 'pull_request' || matrix.python-version == '3.12')
-        run: |
-          python -m pytest tests/ \
+          set -o pipefail
+          # --dist loadfile keeps every test file on one worker, so module
+          # scoped fixtures and intra-file ordering behave exactly as they do
+          # serially; parallelism is across files. Tests that must not share a
+          # machine with others are marked xdist_group (honoured only by
+          # --dist loadgroup, so none exist today by design).
+          timeout --kill-after=10s 35m python -m pytest tests/ \
+            -n auto --dist loadfile \
             --strict-markers \
             -m "not integration and not e2e" \
-            --cov=skcapstone --cov-report=xml --cov-report=term-missing
-      - name: Build and run Python 3.11 compatibility lane
-        if: >-
-          needs.classify.outputs.docs-only != 'true' &&
-          github.event_name == 'pull_request' && matrix.python-version == '3.11'
-        env:
-          BASE_SHA: ${{ needs.classify.outputs.base-sha }}
-        run: scripts/ci/run-python311-compat.sh "$BASE_SHA" "$GITHUB_SHA"
+            --durations=40 -o faulthandler_timeout=60 \
+            --cov=skcapstone --cov-report=xml --cov-report=term-missing \
+            > pytest-ci.log 2>&1
+      - name: Preserve test diagnostics even when pytest times out
+        if: always() && needs.classify.outputs.docs-only != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pytest-diagnostics-py${{ matrix.python-version }}
+          path: |
+            pytest-ci.log
+            sandbox-ci.log
+          if-no-files-found: warn
+          retention-days: 7
       - name: Upload coverage
+        # Coverage is optional; action bootstrap TLS failures occur before
+        # its fail_ci_if_error setting can handle an upload error.
+        continue-on-error: true
         if: >-
           always() && !cancelled() && matrix.python-version == '3.12' &&
           needs.classify.outputs.docs-only != 'true'

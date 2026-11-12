@@ -6,6 +6,7 @@ import pytest
 
 import skcapstone.link_review_work as review_work_module
 from skcapstone.card_store import CardCore, CardStore
+from skcapstone.fleet.production_review import review_family_allowed
 from skcapstone.link_review_work import (
     card_generation,
     load_review_work,
@@ -126,12 +127,26 @@ def test_reconcile_is_restart_idempotent_and_launchable(tmp_path):
     card = CardStore(home).fold(first.review_card_id)
     assert card is not None
     assert card.owner is None
-    assert card.status.value == "backlog"
+    assert card.status.value == "review"
     assert "review" in card.labels
     assert card.links["producer_identity"] == "builder"
     assert card.links["repository"] == "https://github.com/org/repo"
     assert card.links["base_ref"] == "main"
     assert "source-only" in card.labels
+
+
+def test_glm_only_source_creates_distinct_glm_review_card(tmp_path):
+    home = _home_with_source(tmp_path)
+    CardStore(home).append_event("source01", "add_label", "builder", label="glm-only")
+    item = _item(home)
+
+    result = reconcile_review_work(home, item, evidence_sha256="a" * 64)
+
+    card = CardStore(home).fold(result.review_card_id)
+    assert result.launchable is True
+    assert card is not None
+    assert {"glm-only", "review-distinct-agent"} <= set(card.labels)
+    assert review_family_allowed("glm", "glm", card.labels)
 
 
 def test_reconcile_converges_for_cross_host_order(tmp_path):
@@ -174,12 +189,13 @@ def test_ready_review_card_reproduces_reviewer_preflight_rejection(tmp_path):
             },
         )
     )
+    store.append_event(card_id, "move", "link", column="review")
     store.append_event(card_id, "move", "coordinator", column="ready")
 
     result = reconcile_review_work(home, item, evidence_sha256="6" * 64)
 
     assert result.launchable is False
-    assert result.reason == "review card is not unclaimed review work"
+    assert result.reason == "review card is not unclaimed governed review work"
 
 
 def test_duplicate_matching_cards_fail_closed(tmp_path):
@@ -428,6 +444,7 @@ def test_existing_canonical_card_inherits_binding_without_identity_rewrite(tmp_p
             meta=meta,
         )
     )
+    CardStore(home).append_event(card_id, "move", "link", column="review")
     before = CardStore(home).fold(card_id)
 
     result = reconcile_review_work(home, item, evidence_sha256="0" * 64)

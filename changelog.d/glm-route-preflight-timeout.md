@@ -1,0 +1,1 @@
+- Increase the bounded route preflight timeout so transient gateway latency does not cache healthy GLM routes as unavailable.

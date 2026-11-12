@@ -1,0 +1,1 @@
+- fleet: the legacy hosted-review verifier folds the review card instead of reading the raw core.json, whose initial labels hid every legacy review from routing.

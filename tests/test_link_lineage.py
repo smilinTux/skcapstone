@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parents[1] / "scripts/fleet/link-lineage.py"
 spec = importlib.util.spec_from_file_location("link_lineage", SCRIPT)
 mod = importlib.util.module_from_spec(spec)
@@ -418,6 +420,79 @@ def test_terminal_fail_is_reconciled_but_not_a_pass(tmp_path):
     assert out["records"]["org/repo#12"]["review_verdict"] == "FAIL"
 
 
+@pytest.mark.parametrize(
+    ("verdict", "token"),
+    [
+        ("PASS exact-head checks green", "PASS"),
+        ("FAIL|lint", "FAIL"),
+        ("BLOCKED: dependency unavailable", "BLOCKED"),
+    ],
+)
+def test_explained_terminal_verdict_resolves_without_review_work(tmp_path, verdict, token):
+    _home(tmp_path, "a1b2c3d4", "e5f6a7b8")
+    cards = [
+        {"id": "a1b2c3d4", "title": "Implement source", "labels": []},
+        {
+            "id": "e5f6a7b8",
+            "title": "[REVIEW] Check source",
+            "labels": ["review", "parent-a1b2c3d4"],
+            "status": "done",
+            "links": {"verdict": verdict, "pr": "org/repo#12", "commit": "a" * 40},
+        },
+    ]
+    out = mod.reconcile(
+        [
+            {
+                "repository": "org/repo",
+                "number": 12,
+                "body": "a1b2c3d4",
+                "headRefOid": "a" * 40,
+                "baseRefOid": "b" * 40,
+            }
+        ],
+        cards,
+        tmp_path,
+        reviewer_candidates=[_reviewer()],
+    )
+    assert out["coverage"]["lineage-complete"] == 1
+    assert out["records"]["org/repo#12"]["review_verdict"] == token
+    assert out["review_work_recommendations"] == []
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    ["PASSED", "FAILURE", "BLOCKEDISH", "PASS_FOR_REVIEW", "PASSWORD", "NOT PASS", 1, True],
+)
+def test_malformed_terminal_prefix_fails_closed(tmp_path, verdict):
+    _home(tmp_path, "a1b2c3d4", "e5f6a7b8")
+    cards = [
+        {"id": "a1b2c3d4", "title": "Implement source", "labels": []},
+        {
+            "id": "e5f6a7b8",
+            "title": "[REVIEW] Check source",
+            "labels": ["review", "parent-a1b2c3d4"],
+            "status": "done",
+            "links": {"verdict": verdict, "pr": "org/repo#12", "commit": "a" * 40},
+        },
+    ]
+    out = mod.reconcile(
+        [
+            {
+                "repository": "org/repo",
+                "number": 12,
+                "body": "a1b2c3d4",
+                "headRefOid": "a" * 40,
+                "baseRefOid": "b" * 40,
+            }
+        ],
+        cards,
+        tmp_path,
+        reviewer_candidates=[_reviewer()],
+    )
+    assert out["coverage"]["unresolved"] == 1
+    assert len(out["review_work_recommendations"]) == 1
+
+
 def test_review_required_source_label_is_not_reviewer(tmp_path):
     _home(tmp_path, "a1b2c3d4", "e5f6a7b8")
     cards = [
@@ -599,3 +674,180 @@ def test_multiple_head_bound_terminal_reviews_are_unresolved(tmp_path):
     )
     assert out["records"] == {}
     assert out["coverage"]["unresolved"] == 1
+
+
+def _exclusion(classification="unmanaged", **changes):
+    record = {
+        "repository": "org/repo",
+        "pr": 17,
+        "head_sha": "a" * 40,
+        "base_sha": "b" * 40,
+        "owner": "link",
+        "reason": "bounded evidence-backed exclusion",
+        "classification": classification,
+        "source_evidence_sha256": "c" * 64,
+        "expires_at": "2099-01-01T00:00:00+00:00",
+    }
+    record.update(changes)
+    return {"schema": "skfleet.link-lineage-exclusion/v1", "records": [record]}
+
+
+@pytest.mark.parametrize("classification", ["unmanaged", "review-artifact", "superseded"])
+def test_structured_exclusion_classes_are_accepted(tmp_path, classification):
+    out = mod.reconcile(
+        [{"repository": "org/repo", "number": 17, "headRefOid": "a" * 40, "baseRefOid": "b" * 40}],
+        [],
+        tmp_path,
+        _exclusion(classification),
+    )
+    assert out["coverage"] == {"excluded": 1, "unresolved": 0, "lineage-complete": 0}
+    assert out["diagnostics"][0]["exclusion_classification"] == classification
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"head_sha": "d" * 40}, "head SHA"),
+        ({"base_sha": "d" * 40}, "base SHA"),
+        ({"expires_at": "2000-01-01T00:00:00+00:00"}, "future"),
+        ({"source_evidence_sha256": "bad"}, "hash"),
+        ({"classification": "unknown"}, "unknown"),
+        ({"repository": "other/repo"}, "repository"),
+    ],
+)
+def test_exclusion_validation_fails_closed(tmp_path, changes, message):
+    with pytest.raises(ValueError, match=message):
+        mod.reconcile(
+            [
+                {
+                    "repository": "org/repo",
+                    "number": 17,
+                    "headRefOid": "a" * 40,
+                    "baseRefOid": "b" * 40,
+                }
+            ],
+            [],
+            tmp_path,
+            _exclusion(**changes),
+        )
+
+
+def test_duplicate_exclusion_pr_fails_closed(tmp_path):
+    exclusion = _exclusion()
+    exclusion["records"].append(dict(exclusion["records"][0]))
+    with pytest.raises(ValueError, match="duplicate"):
+        mod.reconcile(
+            [
+                {
+                    "repository": "org/repo",
+                    "number": 17,
+                    "headRefOid": "a" * 40,
+                    "baseRefOid": "b" * 40,
+                }
+            ],
+            [],
+            tmp_path,
+            exclusion,
+        )
+
+
+def test_unknown_exclusion_pr_fails_closed(tmp_path):
+    with pytest.raises(ValueError, match="unknown"):
+        mod.reconcile(
+            [
+                {
+                    "repository": "org/repo",
+                    "number": 17,
+                    "headRefOid": "a" * 40,
+                    "baseRefOid": "b" * 40,
+                }
+            ],
+            [],
+            tmp_path,
+            _exclusion(pr=999),
+        )
+
+
+def test_legacy_reason_map_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="structured"):
+        mod.reconcile(
+            [
+                {
+                    "repository": "org/repo",
+                    "number": 17,
+                    "headRefOid": "a" * 40,
+                    "baseRefOid": "b" * 40,
+                }
+            ],
+            [],
+            tmp_path,
+            {"17": "legacy reason"},
+        )
+
+
+_PR = {"repository": "org/repo", "number": 17, "headRefOid": "a" * 40, "baseRefOid": "b" * 40}
+
+
+def test_exclusion_is_scoped_to_its_repository(tmp_path):
+    other = {**_PR, "repository": "org/other"}
+    out = mod.reconcile([_PR, other], [], tmp_path, _exclusion())
+    assert out["coverage"] == {"excluded": 1, "unresolved": 1, "lineage-complete": 0}
+    excluded = [d for d in out["diagnostics"] if d["classification"] == "excluded"]
+    assert [d["repository"] for d in excluded] == ["org/repo"]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"pr": True},
+        {"pr": "17"},
+        {"pr": 0},
+        {"owner": ""},
+        {"reason": "  "},
+        {"head_sha": "A" * 40},
+        {"expires_at": "2099-01-01T00:00:00"},
+        {"expires_at": "not-a-date"},
+        {"expires_at": None},
+        {"classification": ["unmanaged"]},
+    ],
+)
+def test_malformed_exclusion_fields_fail_closed(tmp_path, changes):
+    with pytest.raises(ValueError):
+        mod.reconcile([_PR], [], tmp_path, _exclusion(**changes))
+
+
+def test_exclusion_with_extra_or_missing_fields_fails_closed(tmp_path):
+    extra = _exclusion()
+    extra["records"][0]["approved"] = True
+    with pytest.raises(ValueError, match="malformed"):
+        mod.reconcile([_PR], [], tmp_path, extra)
+    missing = _exclusion()
+    del missing["records"][0]["owner"]
+    with pytest.raises(ValueError, match="malformed"):
+        mod.reconcile([_PR], [], tmp_path, missing)
+
+
+@pytest.mark.parametrize("value", ["excluded", ["17"], {"schema": "other", "records": []}])
+def test_non_structured_exclusion_input_is_rejected(tmp_path, value):
+    with pytest.raises(ValueError, match="structured"):
+        mod.reconcile([_PR], [], tmp_path, value)
+
+
+def test_empty_structured_exclusions_exclude_nothing(tmp_path):
+    out = mod.reconcile(
+        [_PR], [], tmp_path, {"schema": "skfleet.link-lineage-exclusion/v1", "records": []}
+    )
+    assert out["coverage"]["excluded"] == 0 and out["coverage"]["unresolved"] == 1
+
+
+def test_shipped_example_exclusion_loads_through_the_real_validator(tmp_path):
+    example = json.loads((SCRIPT.parent / "link-exclusions.example.json").read_text())
+    record = example["records"][0]
+    pr = {
+        "repository": record["repository"],
+        "number": record["pr"],
+        "headRefOid": record["head_sha"],
+        "baseRefOid": record["base_sha"],
+    }
+    out = mod.reconcile([pr], [], tmp_path, example)
+    assert out["coverage"]["excluded"] == 1

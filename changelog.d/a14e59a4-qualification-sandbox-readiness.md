@@ -1,0 +1,1 @@
+- Card `a14e59a4`: fleet rollout installs the deployed bwrap AppArmor attachment from main, preserving prior profile bytes. Production readiness exercises the actual sealed qualification sandbox on every host, including hosts whose authority timer is inactive, so namespace refusal cannot pass an import-only gate.

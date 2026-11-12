@@ -62,7 +62,7 @@ def test_dreaming_capture_serializes_on_the_store_lock(tmp_path: Path):
     assert holding.wait(2), "lock holder never started"
 
     def dream_write():
-        DreamingEngine(home=tmp_path)._capture_to_gtd_someday(_dream_result())
+        DreamingEngine(home=tmp_path, agent_name="lumina")._capture_to_gtd_someday(_dream_result())
         order.append("dream-done")
 
     t_dream = threading.Thread(target=dream_write)
@@ -87,7 +87,7 @@ def test_dreaming_capture_is_atomic(tmp_path: Path, monkeypatch):
         raise OSError("crash at the rename")
 
     monkeypatch.setattr(_os, "replace", _boom)
-    DreamingEngine(home=tmp_path)._capture_to_gtd_someday(_dream_result())
+    DreamingEngine(home=tmp_path, agent_name="lumina")._capture_to_gtd_someday(_dream_result())
 
     assert [it["id"] for it in _load_list("someday-maybe")] == ["pre01"]
     assert list((_gtd_dir()).glob(".someday-maybe.json.*.tmp")) == []
@@ -98,7 +98,7 @@ def test_dreaming_capture_still_lands_its_items(tmp_path: Path):
     from skcapstone.mcp_tools.gtd_tools import _gtd_dir, _load_list
 
     _gtd_dir()
-    DreamingEngine(home=tmp_path)._capture_to_gtd_someday(_dream_result())
+    DreamingEngine(home=tmp_path, agent_name="lumina")._capture_to_gtd_someday(_dream_result())
 
     someday = _load_list("someday-maybe")
     assert len(someday) == 3

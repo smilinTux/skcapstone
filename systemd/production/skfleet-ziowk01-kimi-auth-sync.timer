@@ -1,0 +1,10 @@
+[Unit]
+Description=Keep the ZIOWK01 worker Kimi credential current
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

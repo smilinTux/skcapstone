@@ -8,7 +8,7 @@ announces changes via the coord.sync pubsub topic.
 Design:
     - Uses watchdog (inotify on Linux) to detect file-system events
     - Debounces events (Syncthing writes in stages)
-    - Resolves Syncthing conflict files by mtime: newer wins
+    - Preserves every Syncthing conflict file for explicit reconciliation
     - Publishes coord.sync messages so peers can react immediately
 
 Syncthing conflict filename format:
@@ -19,8 +19,11 @@ Syncthing conflict filename format:
 from __future__ import annotations
 
 import asyncio
+import errno
+import hashlib
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -100,8 +103,8 @@ class CoordFederationWatcher:
         <shared_root>/coordination/agents/
 
     On every new or modified .json file:
-      1. If it is a Syncthing conflict file, resolve by mtime (newer wins).
-      2. Publish a coord.sync pubsub message announcing the change.
+      1. If it is a Syncthing conflict file, preserve every byte and diagnose it.
+      2. Otherwise publish a coord.sync message announcing the change.
 
     Thread safety: the watchdog observer runs in its own thread. File
     callbacks are dispatched back to the asyncio event loop via
@@ -187,6 +190,11 @@ class CoordFederationWatcher:
         if not path.exists():
             return
 
+        try:
+            path.resolve().relative_to(self._coord_dir.resolve())
+        except (OSError, ValueError):
+            return
+
         # Check if this is a Syncthing conflict file
         stem = path.stem  # e.g. "abc1-task.sync-conflict-20260302-120000-ABC"
         if _CONFLICT_RE.search(stem):
@@ -195,11 +203,11 @@ class CoordFederationWatcher:
             await self._announce(path, event="synced")
 
     async def _resolve_conflict(self, conflict_path: Path) -> None:
-        """Resolve a Syncthing conflict file using last-writer-wins (mtime).
+        """Preserve a Syncthing conflict and emit a hash-bound diagnostic.
 
         The conflict file's stem contains the `.sync-conflict-DATE-TIME-ID`
-        suffix. Strip it to find the canonical filename, then keep whichever
-        version has the newer mtime and delete the loser.
+        suffix. Both it and any canonical file remain byte-for-byte untouched;
+        neither copy is treated as authoritative.
 
         Args:
             conflict_path: Path to the `.sync-conflict-*.json` file.
@@ -208,38 +216,31 @@ class CoordFederationWatcher:
         canonical_stem = _CONFLICT_RE.sub("", stem)
         canonical_path = conflict_path.parent / f"{canonical_stem}.json"
 
-        if not canonical_path.exists():
-            # No canonical version - promote conflict to canonical
-            try:
-                conflict_path.rename(canonical_path)
-                logger.info("Promoted conflict to canonical: %s", canonical_path.name)
-                await self._announce(canonical_path, event="conflict_resolved")
-            except OSError as exc:
-                logger.warning("Could not promote conflict file: %s", exc)
-            return
-
-        # Compare modification times
         try:
-            conflict_mtime = conflict_path.stat().st_mtime
-            canonical_mtime = canonical_path.stat().st_mtime
-        except OSError:
+            conflict_sha256 = hashlib.sha256(conflict_path.read_bytes()).hexdigest()
+            try:
+                with os.fdopen(
+                    os.open(canonical_path, os.O_RDONLY | os.O_NOFOLLOW), "rb"
+                ) as canonical_file:
+                    canonical_sha256 = hashlib.sha256(canonical_file.read()).hexdigest()
+            except FileNotFoundError:
+                canonical_sha256 = "absent"
+            except OSError as exc:
+                if exc.errno != errno.ELOOP:
+                    raise
+                canonical_sha256 = "unsafe"
+        except OSError as exc:
+            logger.warning("Could not inspect coordination conflict: %s", exc)
             return
 
-        if conflict_mtime > canonical_mtime:
-            # Conflict is newer - replace canonical
-            try:
-                conflict_path.replace(canonical_path)
-                logger.info("Conflict newer - replaced canonical: %s", canonical_path.name)
-                await self._announce(canonical_path, event="conflict_resolved")
-            except OSError as exc:
-                logger.warning("Could not replace canonical with conflict: %s", exc)
-        else:
-            # Canonical is newer (or same age) - drop conflict
-            try:
-                conflict_path.unlink(missing_ok=True)
-                logger.debug("Dropped older conflict: %s", conflict_path.name)
-            except OSError as exc:
-                logger.warning("Could not remove conflict file: %s", exc)
+        logger.warning(
+            "Coordination conflict preserved: canonical=%s canonical_sha256=%s "
+            "conflict=%s conflict_sha256=%s",
+            canonical_path.name,
+            canonical_sha256,
+            conflict_path.name,
+            conflict_sha256,
+        )
 
     async def _announce(self, path: Path, event: str = "synced") -> None:
         """Publish a coord.sync message for a changed coordination file.

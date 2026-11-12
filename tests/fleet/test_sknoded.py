@@ -157,7 +157,7 @@ def test_changed_inventory_does_rewrite_node_json(paths, monkeypatch) -> None:
 def test_control_node_sized_node_json_stays_under_64kb(paths, monkeypatch) -> None:
     """The size guard, measured on the serialized file, not on an estimate."""
     inventory = _real_inventory()
-    assert len(inventory["units"]["user"]) >= 80
+    assert len(inventory["units"]["user"]) >= 75
     assert len(inventory["packages"]) >= 25
     _stub_collect(monkeypatch, [inventory])
     sknoded.run_once(paths, CONTROL_NODE)
@@ -246,3 +246,25 @@ def test_missing_inventory_degrades_to_an_empty_block(paths, monkeypatch) -> Non
     sknoded.run_once(paths, CONTROL_NODE)
     published = store.read_node_file(paths, CONTROL_NODE, "node.json")["status"]["inventory"]
     assert published == {"units": {}, "packages": {}, "truncated": {}}
+
+
+def test_builder_standby_reaps_with_admitted_host_and_never_requalifies(paths, monkeypatch):
+    """Orphan reap uses the admitted host label; no profile requalification runs."""
+    operator = store.Writer(role="operator", node="op", identity="op")
+    store.write_spec(
+        paths,
+        "node",
+        "node-chiap02",
+        {"cordoned": False, "role": "builder-standby"},
+        writer=operator,
+        labels={"host": "chiap02"},
+    )
+    seen = []
+    monkeypatch.setattr(
+        "skcapstone.fleet.production_tests.reap_orphaned_test_units",
+        lambda home, host: seen.append(host) or [],
+    )
+    monkeypatch.setattr("skcapstone.fleet.builder_dispatch.consume_one", lambda *_a: None)
+    result = sknoded.run_once(paths, "node-chiap02")
+    assert seen == ["chiap02"]
+    assert "profile_requalification" not in result

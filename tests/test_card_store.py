@@ -114,7 +114,9 @@ def test_import_and_parity_roundtrip(tmp_path, monkeypatch):
     board.archive_task("p3", by="opus")
     # an explicit overlay move must be reproduced too
     board.create_task(Task(id="p4", title="moved to review", created_by="opus"))
-    CardEventLog(tmp_path).append(CardEvent(card_id="p4", action="move", column="review"))
+    CardEventLog(tmp_path).append(
+        CardEvent(card_id="p4", action="move", writer="test-operator", column="review")
+    )
 
     result = import_from_legacy(tmp_path)
     assert result["imported"] == 4
@@ -320,7 +322,9 @@ def test_overlay_move_on_preexisting_card_folds_to_done(tmp_path):
     board.ensure_dirs()
     board.create_task(Task(id="07c78c7f", title="completed via overlay", created_by="o"))
     import_from_legacy(tmp_path)
-    CardEventLog(tmp_path).append(CardEvent(card_id="07c78c7f", action="move", column="done"))
+    CardEventLog(tmp_path).append(
+        CardEvent(card_id="07c78c7f", action="move", writer="test-operator", column="done")
+    )
     assert CardStore(tmp_path).fold("07c78c7f").status == Column.DONE
 
 
@@ -336,9 +340,13 @@ def test_overlay_priority_label_owner_fold_on_preexisting_card(tmp_path):
     board.create_task(Task(id="ov1", title="overlay mutations", created_by="o"))
     import_from_legacy(tmp_path)
     log = CardEventLog(tmp_path)
-    log.append(CardEvent(card_id="ov1", action="set_priority", priority="high"))
-    log.append(CardEvent(card_id="ov1", action="add_label", label="urgent"))
-    log.append(CardEvent(card_id="ov1", action="assign", owner="lumina"))
+    log.append(
+        CardEvent(card_id="ov1", action="set_priority", writer="test-operator", priority="high")
+    )
+    log.append(
+        CardEvent(card_id="ov1", action="add_label", writer="test-operator", label="urgent")
+    )
+    log.append(CardEvent(card_id="ov1", action="assign", writer="test-operator", owner="lumina"))
     card = CardStore(tmp_path).fold("ov1")
     assert card.priority == "high"
     assert "urgent" in card.labels
@@ -357,8 +365,12 @@ def test_overlay_review_move_folds_status_and_owner(tmp_path):
     board.create_task(Task(id="0f9d3aca", title="in review", created_by="o"))
     import_from_legacy(tmp_path)
     log = CardEventLog(tmp_path)
-    log.append(CardEvent(card_id="0f9d3aca", action="move", column="review"))
-    log.append(CardEvent(card_id="0f9d3aca", action="assign", owner="lumina"))
+    log.append(
+        CardEvent(card_id="0f9d3aca", action="move", writer="test-operator", column="review")
+    )
+    log.append(
+        CardEvent(card_id="0f9d3aca", action="assign", writer="test-operator", owner="lumina")
+    )
     card = CardStore(tmp_path).fold("0f9d3aca")
     assert card.status == Column.REVIEW
     assert card.owner == "lumina"
@@ -376,7 +388,13 @@ def test_store_event_after_overlay_wins_by_timestamp(tmp_path):
     store = CardStore(tmp_path)
     store.create(CardCore(id="mix1", title="merge order"))
     CardEventLog(tmp_path).append(
-        CardEvent(card_id="mix1", action="move", column="doing", ts="2026-07-01T00:00:00+00:00")
+        CardEvent(
+            card_id="mix1",
+            action="move",
+            writer="test-operator",
+            column="doing",
+            ts="2026-07-01T00:00:00+00:00",
+        )
     )
     store.append_event("mix1", "move", "opus", column="review")  # ts=now, later
     assert store.fold("mix1").status == Column.REVIEW

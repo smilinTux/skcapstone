@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import time
@@ -15,6 +16,26 @@ from skcoord.card_store import (
     current_claim_precondition,
     mirror_coord_release,
 )
+
+logger = logging.getLogger("skcapstone.fleet.terminal_capacity")
+
+
+def is_abandon_reason_signature_mismatch(exc: TypeError) -> bool:
+    """True when exc is the known abandon_reason interface mismatch.
+
+    The pyproject.toml floor pins skcoord>=0.1.77, which carries
+    abandon_reason on Board.release_claim and mirror_coord_release. That
+    floor protects any node that installs from a wheel. It cannot protect a
+    node running from a git checkout, where nothing ever re-resolves: such a
+    node can keep an older skcoord on disk indefinitely and hit exactly this
+    TypeError in production.
+
+    Narrowed to the known signature (the exact unexpected-keyword-argument
+    message the older skcoord raises) rather than every TypeError, so an
+    unrelated TypeError, which would indicate an actual bug in this code
+    path, is never silently swallowed alongside it.
+    """
+    return "abandon_reason" in str(exc)
 
 
 def _load_required(path: Path) -> dict[str, Any]:
@@ -121,14 +142,47 @@ def retire_worker_generation(
         if current_revision is not None:
             if current_revision != claim_revision:
                 return None
-            mirror_coord_release(
-                home,
-                card,
-                owner,
-                owner,
-                claim_revision,
-                transition_id=f"terminal-capacity:{owner}:{claim_revision}",
-            )
+            try:
+                mirror_coord_release(
+                    home,
+                    card,
+                    owner,
+                    owner,
+                    claim_revision,
+                    transition_id=f"terminal-capacity:{owner}:{claim_revision}",
+                    # The worker's host terminal slot is invalidated, so the work
+                    # stopped because its execution environment died out from
+                    # under it. That maps to "error", not to "unspecified": the
+                    # cause is known, only the message is not.
+                    abandon_reason="error",
+                )
+            except TypeError as exc:
+                if not is_abandon_reason_signature_mismatch(exc):
+                    raise
+                # The release genuinely did not run, so this must degrade the
+                # same way an unmet precondition does above: report None, not
+                # a lying success. Logged at error level, with a distinct
+                # message, so an operator can tell an installed-skcoord
+                # interface mismatch apart from an ordinary release failure
+                # and knows to re-resolve the dependency, not chase a bug.
+                logger.error(
+                    "mirror_coord_release() interface mismatch for %s owner=%s "
+                    "claim_revision=%s: installed skcoord predates the "
+                    "abandon_reason parameter; leaving the claim in place: %s",
+                    card,
+                    owner,
+                    claim_revision,
+                    exc,
+                )
+                return None
         if not _generation_was_released(store, card, owner, claim_revision):
             return None
-        return invalidate_worker(path, host, card, owner, claim_revision)
+        snapshot = invalidate_worker(path, host, card, owner, claim_revision)
+        store.append_event(
+            card,
+            "link",
+            owner,
+            link_key="worker_liveness",
+            link_value=f"{owner}|{claim_revision}|inactive",
+        )
+        return snapshot

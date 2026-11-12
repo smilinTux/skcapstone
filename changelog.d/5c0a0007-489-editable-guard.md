@@ -1,0 +1,1 @@
+- Card `5c0a0007` (port of #489, card `ec108b74`): add `fleet/editable_guard.py` and `scripts/pip-editable-guard.sh` to block `pip install -e` into the shared `~/.skenv` on service hosts, with the pre-change editable inventory and tests. Replacing the remaining service-imported editable installs stays open work.

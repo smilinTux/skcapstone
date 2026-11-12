@@ -1,0 +1,1 @@
+Fleet builders release a generation that exited with no outcome even when it left ignored build caches (__pycache__, .venv, node_modules), and discard that workspace so the next offer starts fresh. Previously such generations stayed parked in awaiting-evidence forever.

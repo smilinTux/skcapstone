@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import ast
+import copy
 import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+from types import ModuleType
 from urllib.parse import urlsplit
 
 import pytest
+
+from tests.fleet.test_source_bundle import git, publish
+from tests.fleet.test_source_bundle import source as source_fixture
+
+source = source_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 ROTATE = ROOT / "scripts" / "fleet" / "skfleet-rotate.py"
@@ -24,6 +32,26 @@ def _load(*names: str) -> dict[str, object]:
         if isinstance(node, ast.FunctionDef) and node.name in names
     }
     assert set(nodes) == set(names)
+
+    # Module-level constants the loaded functions close over. Without these the
+    # exec'd function bodies raise NameError on any module global, which would
+    # otherwise push shared vocabulary (such as the safety label names) into
+    # duplicated literals inside each function purely to satisfy this harness.
+    # This only ADDS names to the namespace; no assertion above is relaxed.
+    def _is_literal_constant(node: ast.stmt) -> bool:
+        if not isinstance(node, ast.Assign):
+            return False
+        if not all(
+            isinstance(target, ast.Name) and target.id.isupper() for target in node.targets
+        ):
+            return False
+        try:
+            ast.literal_eval(node.value)
+        except (ValueError, SyntaxError, TypeError):
+            return False
+        return True
+
+    constants = [node for node in tree.body if _is_literal_constant(node)]
     namespace: dict[str, object] = {
         "Path": Path,
         "os": os,
@@ -33,7 +61,11 @@ def _load(*names: str) -> dict[str, object]:
         "urlsplit": urlsplit,
     }
     exec(
-        compile(ast.Module([nodes[name] for name in names], []), str(ROTATE), "exec"),
+        compile(
+            ast.Module(constants + [nodes[name] for name in names], []),
+            str(ROTATE),
+            "exec",
+        ),
         namespace,
     )
     return namespace
@@ -42,10 +74,119 @@ def _load(*names: str) -> dict[str, object]:
 def _helpers() -> dict[str, object]:
     return _load(
         "_resolve_workspace_root",
+        "_complete_source_binding",
         "_source_workspace_spec",
+        "_preclaim_worker_source",
+        "_preclaim_source_ref",
+        "_normalize_credential_free_https_remote",
+        "_select_matching_source_remote",
         "_verify_source_workspace",
+        "_governed_review_metadata",
         "_materialize_worker_workspace",
     )
+
+
+def test_production_verified_unpublished_source_skips_remote_ref(monkeypatch):
+    ns = _load("_preclaim_worker_source")
+    ns["PRODUCTION_POLICY"] = {"enabled": True}
+    spec = ("https://example.test/repository.git", "refs/heads/unpublished", "a" * 40)
+    ns["_source_workspace_spec"] = lambda core, labels: spec
+    probes = []
+    ns["_preclaim_source_ref"] = lambda *args: probes.append(args)
+    module = ModuleType("skcapstone.fleet.source_bundle")
+    module.verify_review_source = lambda core, repository, head: True
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    assert ns["_preclaim_worker_source"]({"id": "deadbeef"}, []) == spec
+    assert probes == []
+    module.verify_review_source = lambda *args: False
+    assert ns["_preclaim_worker_source"]({"id": "deadbeef"}, []) == spec
+    assert probes == [spec]
+
+
+def test_production_bad_bundle_does_not_fall_back_to_another_revision(monkeypatch):
+    ns = _load("_preclaim_worker_source")
+    ns["PRODUCTION_POLICY"] = {"enabled": True}
+    ns["_source_workspace_spec"] = lambda *args: ("https://example.test/r.git", "main", "a" * 40)
+    probes = []
+    ns["_preclaim_source_ref"] = lambda *args: probes.append(args)
+    module = ModuleType("skcapstone.fleet.source_bundle")
+
+    def invalid(*args):
+        raise ValueError("candidate hash mismatch")
+
+    module.verify_review_source = invalid
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    with pytest.raises(ValueError, match="hash mismatch"):
+        ns["_preclaim_worker_source"]({}, [])
+    assert probes == []
+
+
+@pytest.mark.parametrize("source", ["https"], indirect=True)
+@pytest.mark.host_systemd
+def test_generated_review_imports_unpublished_head_not_producer_base(source, tmp_path):
+    """Exercise both launcher helpers against real typed source/bundle custody."""
+    from skcapstone.fleet import source_bundle
+
+    publish(source)
+    core = copy.deepcopy(source["core"])
+    # Generated review cards retain the producer's base alongside the reviewed head.
+    core["meta"].update(repository=source["remote"], base_ref="main", base_revision=source["base"])
+    before = copy.deepcopy(core)
+    ns = _helpers()
+    ns["PRODUCTION_POLICY"] = {"enabled": True}
+    ns["_preclaim_source_ref"] = lambda *args: pytest.fail("unpublished remote fallback")
+    labels = ["review", "source-only", "seat-seraph"]
+    target = tmp_path / "review-checkout"
+    assert ns["_preclaim_worker_source"](core, labels)[2] == source["head"]
+    assert ns["_materialize_worker_workspace"](str(target), core, labels) == str(target)
+    assert git(target, "rev-parse", "HEAD") == source["head"] != source["base"]
+    assert git(target, "rev-parse", "HEAD^{tree}") == source["tree"]
+    assert git(target, "status", "--porcelain") == ""
+    assert core == before
+    assert source["store"].fold(source["card"]).owner == source["owner"]
+    assert source_bundle.verify_review_source(core, source["remote"], source["head"])
+    producer = {
+        "meta": {
+            "repository": source["remote"],
+            "base_ref": "main",
+            "base_revision": source["base"],
+        }
+    }
+    assert ns["_source_workspace_spec"](producer, ["source-only"])[2] == source["base"]
+    ns["PRODUCTION_POLICY"] = None
+    assert ns["_source_workspace_spec"](core, labels)[2] == source["base"]
+
+
+@pytest.mark.parametrize("head", [None, "bad", "f" * 40])
+def test_production_review_head_missing_malformed_or_conflicting_refused(head):
+    from skcapstone.fleet.source_bundle import SourceBundleError
+
+    ns = _helpers()
+    ns["PRODUCTION_POLICY"] = {"enabled": True}
+    core = {
+        "meta": {
+            "repository": "https://example.invalid/source.git",
+            "base_ref": "main",
+            "base_revision": "a" * 40,
+            "link_source_card": "24b00001",
+        }
+    }
+    if head is not None:
+        core["meta"]["link_head_revision"] = head
+    if head == "f" * 40:
+        core["links"] = {"link_head_revision": "b" * 40}
+    with pytest.raises((ValueError, SourceBundleError), match="head|conflict"):
+        ns["_source_workspace_spec"](core, ["review", "source-only"])
+
+
+def _remote_listing(remotes: dict[str, str]) -> str:
+    """Format git config --get-regexp remote URL output."""
+    return "".join(f"remote.{name}.url {url}\n" for name, url in remotes.items())
+
+
+def _is_remote_listing(command: list[str]) -> bool:
+    """Return True when command lists configured remote URLs."""
+    return len(command) >= 2 and command[-2] == "--get-regexp"
 
 
 def test_preclaim_source_ref_accepts_only_remote_exact_ref() -> None:
@@ -155,8 +296,8 @@ def test_exact_revision_is_checked_out_after_named_ref_clone(tmp_path: Path) -> 
             checkout.mkdir()
             (checkout / ".git").mkdir()
             return subprocess.CompletedProcess(command, 0, "", "")
-        if command[-2:] == ["--get", "remote.origin.url"]:
-            output = "https://github.com/smilinTux/sklegal\n"
+        if _is_remote_listing(command):
+            output = _remote_listing({"origin": "https://github.com/smilinTux/sklegal"})
         elif "status" in command or "fetch" in command or "checkout" in command:
             output = ""
         elif "rev-parse" in command:
@@ -198,6 +339,84 @@ def test_non_source_card_keeps_empty_working_directory(tmp_path: Path) -> None:
     assert target.is_dir()
 
 
+@pytest.mark.parametrize("lane", ["codex", "glm", "qwen", None])
+def test_production_policy_refuses_empty_workspace_on_every_lane(tmp_path: Path, lane) -> None:
+    helpers = _helpers()
+    helpers["PRODUCTION_POLICY"] = {"lanes": {}}
+    target = tmp_path / "pi-codex-chiap08-37bbe263"
+    with pytest.raises(ValueError, match="requires an exact source binding"):
+        helpers["_materialize_worker_workspace"](str(target), {}, [], lane=lane)
+    assert not target.exists()
+
+
+def test_production_policy_keeps_governed_review_source_free(tmp_path: Path) -> None:
+    helpers = _helpers()
+    helpers["PRODUCTION_POLICY"] = {"lanes": {}}
+    core = {
+        "links": {
+            "producer_identity": "pi-codex-x",
+            "candidate_evidence_sha256": "a" * 64,
+            "link_source_card": "abcd1234",
+            "link_head_revision": "b" * 40,
+        }
+    }
+    target = tmp_path / "review"
+    out = helpers["_materialize_worker_workspace"](str(target), core, ["review"], lane="codex")
+    assert out == str(target)
+
+
+def test_workspace_blocker_is_not_an_escalation_trigger() -> None:
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    names = {"needs_escalation"}
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names)
+    consts = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.Assign)
+        and getattr(n.targets[0], "id", "")
+        in {"_WORKSPACE_BLOCKER_RE", "_CAPABILITY_VERDICT_RE", "_ESCALATE_LABEL"}
+    ]
+    ns: dict = {"re": re}
+    exec(compile(ast.Module(consts + [fn], []), str(ROTATE), "exec"), ns)
+    cases = {
+        "blocked_on=capability:exact-card-TDD-and-workspace-AGENTS-unavailable": False,
+        "blocked_on=capability referent=workspace-empty": False,
+        "blocked_on=capability referent=free": True,
+    }
+    for value, expected in cases.items():
+        ns["_load_outcomes"] = lambda v=value: {"c1": ("2026-10-12T20:00:00Z", v)}
+        assert ns["needs_escalation"]("c1", {}, []) is expected, value
+
+
+@pytest.mark.parametrize(
+    "core",
+    [
+        # esc-auto-7722064f: ops card for another host, no source binding at all.
+        {"id": "7722064f", "title": "ops task for ZIOWK01"},
+        # esc-auto-9c537e1e: names a PR in prose but carries only a partial binding.
+        {"id": "9c537e1e", "links": {"repository": "https://example.invalid/r.git"}},
+    ],
+)
+def test_escalate_lane_refuses_empty_workspace(tmp_path: Path, core: dict) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "pi-escalate-chiap08-7722064f"
+    with pytest.raises(ValueError, match="requires an exact source binding"):
+        materialize(str(target), core, [], lane="escalate")
+    assert not target.exists()
+
+
+def test_escalate_lane_refusal_is_independent_of_other_lanes(tmp_path: Path) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    assert materialize(str(target), {}, [], lane="codex") == str(target)
+
+
+def test_scheduler_passes_lane_to_workspace_guard() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+    start = source.index("workspace=_materialize_worker_workspace(")
+    assert 'lane=_LANE["name"]' in source[start : start + 300]
+
+
 def test_source_checkout_is_cloned_atomically(tmp_path: Path) -> None:
     materialize = _helpers()["_materialize_worker_workspace"]
     target = tmp_path / "worker"
@@ -211,9 +430,12 @@ def test_source_checkout_is_cloned_atomically(tmp_path: Path) -> None:
             checkout.mkdir()
             (checkout / ".git").mkdir()
             return subprocess.CompletedProcess(command, 0, "", "")
-        if command[-2:] == ["--get", "remote.origin.url"]:
+        if _is_remote_listing(command):
             return subprocess.CompletedProcess(
-                command, 0, "https://github.com/smilinTux/sklegal\n", ""
+                command,
+                0,
+                _remote_listing({"origin": "https://github.com/smilinTux/sklegal"}),
+                "",
             )
         if "status" in command:
             return subprocess.CompletedProcess(command, 0, "", "")
@@ -299,8 +521,8 @@ def test_interrupted_clone_cleans_up_and_can_retry(tmp_path: Path) -> None:
             checkout.mkdir()
             (checkout / ".git").mkdir()
             return subprocess.CompletedProcess(command, 0, "", "")
-        if command[-2:] == ["--get", "remote.origin.url"]:
-            output = "https://github.com/smilinTux/sklegal\n"
+        if _is_remote_listing(command):
+            output = _remote_listing({"origin": "https://github.com/smilinTux/sklegal"})
         elif "status" in command or "fetch" in command:
             output = ""
         else:
@@ -317,8 +539,8 @@ def test_existing_dirty_workspace_is_preserved_and_rejected(tmp_path: Path) -> N
     (target / ".git").mkdir(parents=True)
 
     def dirty(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        if command[-2:] == ["--get", "remote.origin.url"]:
-            output = "https://github.com/smilinTux/sklegal\n"
+        if _is_remote_listing(command):
+            output = _remote_listing({"origin": "https://github.com/smilinTux/sklegal"})
         elif "status" in command:
             output = " M preserved.py\n"
         else:
@@ -347,8 +569,8 @@ def test_existing_clean_source_workspace_is_reused(tmp_path: Path) -> None:
     (target / ".git").mkdir(parents=True)
 
     def clean(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        if command[-2:] == ["--get", "remote.origin.url"]:
-            output = "https://github.com/smilinTux/sklegal\n"
+        if _is_remote_listing(command):
+            output = _remote_listing({"origin": "https://github.com/smilinTux/sklegal"})
         elif "status" in command or "fetch" in command:
             output = ""
         else:
@@ -379,8 +601,8 @@ def test_configured_source_workspace_is_still_verified(
     monkeypatch.setenv("SKFLEET_WORKSPACE", str(target))
 
     def wrong_origin(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        if command[-2:] == ["--get", "remote.origin.url"]:
-            output = "https://github.com/example/wrong\n"
+        if _is_remote_listing(command):
+            output = _remote_listing({"origin": "https://github.com/example/wrong"})
         elif "status" in command or "fetch" in command:
             output = ""
         else:
@@ -402,10 +624,413 @@ def test_configured_source_workspace_is_still_verified(
         )
 
 
+def test_matching_non_origin_remote_passes_repository_verification() -> None:
+    """Accept the unique alias remote when origin is an unrelated mirror."""
+    verify = _helpers()["_verify_source_workspace"]
+    calls: list[list[str]] = []
+    revision = "a" * 40
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if _is_remote_listing(command):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                _remote_listing(
+                    {
+                        "origin": "https://git.example.internal/sklegal.git",
+                        "github": "https://github.com/smilinTux/sklegal.git",
+                    }
+                ),
+                "",
+            )
+        if "status" in command or "fetch" in command or "merge-base" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "rev-parse" in command:
+            return subprocess.CompletedProcess(command, 0, revision + "\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    verify(
+        "/tmp/workspace",
+        "https://github.com/smilinTux/sklegal",
+        "main",
+        revision,
+        runner=runner,
+    )
+    assert [
+        "git",
+        "-C",
+        "/tmp/workspace",
+        "fetch",
+        "--quiet",
+        "github",
+        "main",
+    ] in calls
+
+
+def test_remote_fetch_timeout_is_bounded_without_timing_out_local_git() -> None:
+    verify = _helpers()["_verify_source_workspace"]
+    observed: list[tuple[list[str], object]] = []
+
+    def runner(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        observed.append((command, kwargs.get("timeout")))
+        if _is_remote_listing(command):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                _remote_listing({"origin": "https://github.com/smilinTux/sklegal"}),
+                "",
+            )
+        if "fetch" in command:
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(ValueError, match="reconstructability_blocked: workspace fetch timed out"):
+        verify(
+            "/tmp/workspace",
+            "https://github.com/smilinTux/sklegal",
+            "main",
+            "a" * 40,
+            runner=runner,
+        )
+    assert next(timeout for command, timeout in observed if "fetch" in command) <= 15
+    assert all(timeout is None for command, timeout in observed if "fetch" not in command)
+
+
+def test_remote_clone_timeout_is_bounded_and_cleans_temporary_workspace(tmp_path: Path) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    observed_timeout: object = None
+
+    def timeout(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal observed_timeout
+        observed_timeout = kwargs.get("timeout")
+        temporary = Path(command[-1])
+        temporary.mkdir()
+        (temporary / "partial").write_text("partial", encoding="utf-8")
+        raise subprocess.TimeoutExpired(command, observed_timeout)
+
+    with pytest.raises(ValueError, match="workspace materialization timed out"):
+        materialize(
+            str(target),
+            {
+                "links": {
+                    "repository": "https://github.com/smilinTux/sklegal",
+                    "base_ref": "main",
+                    "base_revision": "a" * 40,
+                }
+            },
+            ["source-only"],
+            runner=timeout,
+        )
+    assert observed_timeout <= 15
+    assert not target.exists()
+    assert not list(tmp_path.glob(".*.materializing-*"))
+
+
+def test_ambiguous_matching_remotes_fail_closed() -> None:
+    select = _helpers()["_select_matching_source_remote"]
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            _remote_listing(
+                {
+                    "origin": "https://github.com/smilinTux/sklegal",
+                    "github": "https://github.com/smilinTux/sklegal.git",
+                }
+            ),
+            "",
+        )
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        select("/tmp/workspace", "https://github.com/smilinTux/sklegal", runner=runner)
+
+
+def test_credential_bearing_matching_remote_fails_closed() -> None:
+    select = _helpers()["_select_matching_source_remote"]
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            _remote_listing(
+                {
+                    "origin": "https://mirror.example/sklegal",
+                    "github": "https://token@github.com/smilinTux/sklegal",
+                }
+            ),
+            "",
+        )
+
+    with pytest.raises(ValueError, match="credential-free"):
+        select("/tmp/workspace", "https://github.com/smilinTux/sklegal", runner=runner)
+
+
+def test_no_matching_remote_fails_closed() -> None:
+    select = _helpers()["_select_matching_source_remote"]
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            _remote_listing({"origin": "https://github.com/example/wrong"}),
+            "",
+        )
+
+    with pytest.raises(ValueError, match="does not match"):
+        select("/tmp/workspace", "https://github.com/smilinTux/sklegal", runner=runner)
+
+
 def test_materialization_precedes_claim_in_scheduler_source() -> None:
     source = ROTATE.read_text(encoding="utf-8")
-    preflight_at = source.index("_preclaim_source_ref(*_source_spec)")
+    preflight_at = source.index("_source_spec = _preclaim_worker_source(")
     materialize_at = source.index("_materialize_worker_workspace(", preflight_at)
     claim_at = source.index("claim=subprocess.run(", materialize_at)
     assert preflight_at < materialize_at < claim_at
     assert "os.makedirs(workspace,exist_ok=True)" not in source
+
+
+def _stale_workspace_runner(
+    remotes: dict[str, str],
+    stale: str,
+    exact: str,
+    anchors: str,
+    issued: list[list[str]],
+):
+    """Simulate a clean workspace parked at a prior card's commit."""
+    state = {"reset": False}
+
+    def runner(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        issued.append(list(command))
+        if _is_remote_listing(command):
+            return subprocess.CompletedProcess(command, 0, _remote_listing(remotes), "")
+        if "status" in command or "fetch" in command or "merge-base" in command:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "checkout" in command:
+            state["reset"] = True
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "for-each-ref" in command:
+            return subprocess.CompletedProcess(command, 0, anchors, "")
+        if command[-1] == "HEAD^{commit}":
+            head = exact if state["reset"] else stale
+            return subprocess.CompletedProcess(command, 0, head + "\n", "")
+        return subprocess.CompletedProcess(command, 0, exact + "\n", "")
+
+    return runner
+
+
+def test_stale_clean_workspace_is_reset_to_exact_base_revision(
+    tmp_path: Path,
+) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    (target / ".git").mkdir(parents=True)
+    issued: list[list[str]] = []
+    runner = _stale_workspace_runner(
+        {"origin": "https://github.com/smilinTux/sklegal"},
+        stale="b" * 40,
+        exact="a" * 40,
+        anchors="refs/heads/feat/prior-claim-work\n",
+        issued=issued,
+    )
+
+    result = materialize(
+        str(target),
+        {
+            "links": {
+                "repository": "https://github.com/smilinTux/sklegal",
+                "base_ref": "main",
+                "base_revision": "a" * 40,
+            }
+        },
+        ["source-only"],
+        runner=runner,
+    )
+    assert result == str(target)
+    resets = [c for c in issued if "checkout" in c and "a" * 40 in c]
+    assert resets, "expected a detached checkout of the exact base_revision"
+    assert "--detach" in resets[0]
+
+
+def test_stale_unanchored_workspace_stays_blocked(tmp_path: Path) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "worker"
+    (target / ".git").mkdir(parents=True)
+    issued: list[list[str]] = []
+    runner = _stale_workspace_runner(
+        {"origin": "https://github.com/smilinTux/sklegal"},
+        stale="b" * 40,
+        exact="a" * 40,
+        anchors="",
+        issued=issued,
+    )
+
+    with pytest.raises(ValueError, match="not anchored"):
+        materialize(
+            str(target),
+            {
+                "links": {
+                    "repository": "https://github.com/smilinTux/sklegal",
+                    "base_ref": "main",
+                    "base_revision": "a" * 40,
+                }
+            },
+            ["source-only"],
+            runner=runner,
+        )
+    assert not [c for c in issued if "checkout" in c]
+
+
+def test_configured_stale_workspace_is_not_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    materialize = _helpers()["_materialize_worker_workspace"]
+    target = tmp_path / "configured"
+    (target / ".git").mkdir(parents=True)
+    monkeypatch.setenv("SKFLEET_WORKSPACE", str(target))
+    issued: list[list[str]] = []
+    runner = _stale_workspace_runner(
+        {"origin": "https://github.com/smilinTux/sklegal"},
+        stale="b" * 40,
+        exact="a" * 40,
+        anchors="refs/heads/feat/prior-claim-work\n",
+        issued=issued,
+    )
+
+    with pytest.raises(ValueError, match="does not match exact base_revision"):
+        materialize(
+            str(tmp_path / "unused"),
+            {
+                "links": {
+                    "repository": "https://github.com/smilinTux/sklegal",
+                    "base_ref": "main",
+                    "base_revision": "a" * 40,
+                }
+            },
+            ["source-only"],
+            runner=runner,
+        )
+    assert not [c for c in issued if "checkout" in c]
+
+
+# ---------------------------------------------------------------------------
+# source-only carried two unrelated meanings at once (routing + safety).
+# The tests below pin the split: routing now also fires on a complete binding,
+# so the safety half can be expressed on its own without a card's binding
+# silently going unchecked. See docs/fleet/source-only-split.md.
+# ---------------------------------------------------------------------------
+
+
+_COMPLETE_BINDING = {
+    "repository": "https://github.com/smilinTux/skcapstone.git",
+    "base_ref": "main",
+    "base_revision": "b" * 40,
+}
+
+
+def test_complete_binding_without_the_label_is_still_routed() -> None:
+    """A binding is honoured even when nobody applied ``source-only``.
+
+    Measured on the chi board 2026-09-18 by folding every card in a fresh
+    process: 79 live cards carried a complete repository/base_ref/base_revision
+    binding and no ``source-only`` label, so the dispatcher never looked at the
+    binding at all. All 79 validate cleanly through this function, which is why
+    widening the trigger blocks nothing that dispatches today.
+    """
+    spec = _helpers()["_source_workspace_spec"]
+    assert spec({"links": dict(_COMPLETE_BINDING)}, []) == (
+        _COMPLETE_BINDING["repository"],
+        "main",
+        "b" * 40,
+    )
+    assert spec({"meta": dict(_COMPLETE_BINDING)}, []) == (
+        _COMPLETE_BINDING["repository"],
+        "main",
+        "b" * 40,
+    )
+
+
+def test_partial_binding_without_the_label_does_not_jam_dispatch() -> None:
+    """A partial binding and no label stays inert rather than blocking.
+
+    This is deliberately NOT symmetric with the labelled path. 511 live chi
+    cards carry a partial binding and no ``source-only`` label; raising on them
+    would turn every one into a ``WORKSPACE_BLOCKED`` skip, trading a checking
+    win for a fleet-wide liveness regression. A partial binding is a triage
+    defect to be reported, not a dispatch trigger.
+    """
+    spec = _helpers()["_source_workspace_spec"]
+    assert spec({"links": {"repository": _COMPLETE_BINDING["repository"]}}, []) is None
+    assert spec({"links": {"base_revision": "c" * 40}}, []) is None
+    assert (
+        spec(
+            {"links": {"repository": _COMPLETE_BINDING["repository"], "base_ref": "main"}},
+            [],
+        )
+        is None
+    )
+
+
+def test_no_external_action_label_never_demands_a_binding() -> None:
+    """The safety label is routing-inert, which is the whole point of the split.
+
+    ``source-only`` forces a binding to exist (see
+    ``test_source_card_requires_exact_repository_and_base``). A card whose only
+    need is "take no external action" can therefore now say so without being
+    forced to invent a repository it does not use, and without triage having to
+    strip a safety constraint to unjam its routing.
+    """
+    spec = _helpers()["_source_workspace_spec"]
+    assert spec({}, ["no-external-action"]) is None
+    assert spec({"links": {}}, ["no-external-action"]) is None
+
+
+def test_no_external_action_alongside_a_binding_still_routes() -> None:
+    """Declaring safety does not waive a binding the card actually carries."""
+    spec = _helpers()["_source_workspace_spec"]
+    assert spec({"links": dict(_COMPLETE_BINDING)}, ["no-external-action"]) == (
+        _COMPLETE_BINDING["repository"],
+        "main",
+        "b" * 40,
+    )
+
+
+def test_source_only_without_a_binding_still_fails_closed() -> None:
+    """Regression fence: the legacy label keeps its strict contract.
+
+    2,612 chi cards carry ``source-only`` and none of them are being relabelled
+    by this change, so the labelled path must behave byte-for-byte as before.
+    If this assertion is ever relaxed, those cards start dispatching without the
+    pinned checkout they were authored against.
+    """
+    spec = _helpers()["_source_workspace_spec"]
+    with pytest.raises(ValueError, match="repository"):
+        spec({"links": {}}, ["source-only"])
+
+
+def test_no_external_action_rail_reaches_the_worker_brief() -> None:
+    """Both labels emit the constraint; an unlabelled card emits nothing."""
+    rail = _load("_worker_no_external_action_instructions")[
+        "_worker_no_external_action_instructions"
+    ]
+    assert rail([]) == ""
+    assert "NO EXTERNAL ACTION" in rail(["no-external-action"])
+    assert "NO EXTERNAL ACTION" in rail(["Source-Only"])
+    assert "acceptance criteria" in rail(["source-only"])
+
+
+def test_safety_label_names_match_the_library_constants() -> None:
+    """The dispatcher is a separately deployed artifact, so pin the vocabulary.
+
+    ``~/.local/bin/skfleet-rotate.py`` is copied per host and a git pull does
+    not update it. If the script and the library ever disagree on the spelling
+    of the safety label, a card would carry a constraint one side honours and
+    the other ignores, which is exactly the failure this split exists to end.
+    """
+    from skcapstone.source_binding import NO_EXTERNAL_ACTION_LABELS
+
+    source = ROTATE.read_text(encoding="utf-8")
+    for label in NO_EXTERNAL_ACTION_LABELS:
+        assert f'"{label}"' in source

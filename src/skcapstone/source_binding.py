@@ -1,9 +1,35 @@
-"""Validation for immutable source workspace bindings."""
+"""Validation for immutable source workspace bindings, and the safety label
+vocabulary that used to be tangled up with them."""
 
 from __future__ import annotations
 
 import re
 from urllib.parse import urlsplit
+
+# Labels that assert the safety constraint "take no external action".
+#
+# "source-only" is the deprecated spelling. It is kept, and kept first-class,
+# because 2,612 chi cards already carry it and state the constraint verbatim in
+# their acceptance criteria: "Source-only. No live database write, provider,
+# Inbox, mailing, deployment, push, or external action." That label ALSO used to
+# be the only thing that made a dispatcher demand a repository binding, so a
+# single token meant both "materialize a pinned workspace" and "touch nothing
+# live". Triage could not correct one without silently dropping the other.
+#
+# "no-external-action" is the constraint on its own, with no routing sense.
+# Routing is now driven by the binding itself (see
+# scripts/fleet/skfleet-rotate.py:_complete_source_binding), so a card that only
+# needs the safety constraint no longer has to invent a repository to get it,
+# and a card that carries a binding gets it verified whether or not it is
+# labelled. Neither direction can lose the safety meaning by accident: nothing
+# in the routing path reads these labels to decide whether to check a binding.
+NO_EXTERNAL_ACTION_LABELS = ("no-external-action", "source-only")
+
+
+def declares_no_external_action(labels: list[str] | tuple[str, ...]) -> bool:
+    """True when a card asserts the no-external-action safety constraint."""
+    normalized = {str(value).strip().lower() for value in labels}
+    return bool(normalized.intersection(NO_EXTERNAL_ACTION_LABELS))
 
 
 def source_binding_meta(

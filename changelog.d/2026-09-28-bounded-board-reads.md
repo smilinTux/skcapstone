@@ -1,0 +1,1 @@
+- Cards `f4791e84` and `2f054aa5`: MCP `coord_status` is bounded by default (active-only rows, limit 200, `summary_only`, true totals), and `coord kanban` drops archive-indexed cards from the active view with `--include-archived` restoring the full non-void scope; voided cards never return. Cuts multi-megabyte board dumps from every agent session.

@@ -19,9 +19,9 @@ from typing import Callable
 Runner = Callable[[list[str]], subprocess.CompletedProcess]
 
 
-def default_runner(cmd: list[str]) -> subprocess.CompletedProcess:
+def default_runner(cmd: list[str], *, timeout: int = 30) -> subprocess.CompletedProcess:
     """Run one actuation command, captured, bounded, never check=True."""
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
 
 
 @dataclass(frozen=True)

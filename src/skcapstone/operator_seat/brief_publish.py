@@ -19,6 +19,19 @@ from typing import Any
 from ..atomic_io import atomic_write_text
 
 
+def _freeze_state(result: dict[str, Any]) -> str:
+    """Tri-state freeze status for display (standard R4): frozen, active, unprovisioned.
+
+    Reads ``freeze_state`` from the pass result (loop.run_once supplies it).
+    A legacy result without the field falls back to the old boolean, mapped to
+    frozen/active, so pre-existing callers keep their previous rendering.
+    """
+    state = result.get("freeze_state")
+    if isinstance(state, str) and state:
+        return state
+    return "frozen" if result.get("frozen") else "active"
+
+
 def _rows(entries: list[dict[str, Any]]) -> str:
     """Render firing/stale entries as HTML table rows (escaped)."""
     out = []
@@ -50,8 +63,14 @@ def render_html(result: dict[str, Any], now_iso: str) -> str:
     route = html.escape(str(result.get("route") or "-"))
     report = html.escape(str(result.get("report") or ""))
 
-    if frozen:
+    freeze_state = _freeze_state(result)
+    if frozen or freeze_state == "frozen":
         state = '<span class="frozen">FROZEN</span> Atlas is standing down.'
+    elif freeze_state == "unprovisioned":
+        state = (
+            '<span class="frozen">UNPROVISIONED</span> no human-provisioned freeze '
+            "store; every actuation refuses until an operator provisions it."
+        )
     elif brief.get("quiet"):
         state = '<span class="ok">ALL QUIET</span> nothing firing.'
     else:
@@ -131,8 +150,14 @@ def render_markdown(result: dict[str, Any], now_iso: str) -> str:
         f"tick `{now_iso}` | route `{result.get('route') or '-'}`",
         "",
     ]
-    if frozen:
+    freeze_state = _freeze_state(result)
+    if frozen or freeze_state == "frozen":
         lines.append("**FROZEN** - Atlas is standing down.")
+    elif freeze_state == "unprovisioned":
+        lines.append(
+            "**UNPROVISIONED** - no human-provisioned freeze store; "
+            "every actuation refuses until an operator provisions it."
+        )
     elif brief.get("quiet"):
         lines.append("**All quiet** - nothing firing.")
     else:

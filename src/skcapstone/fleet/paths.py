@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import re
-import socket
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -87,11 +86,54 @@ def default_paths() -> FleetPaths:
     return FleetPaths(root=Path(root).expanduser())
 
 
+def paths_for_home(home: Path | str) -> FleetPaths:
+    """The fleet tree anchored under an explicit home, ignoring SKFLEET_ROOT.
+
+    ``default_paths`` honors ``SKFLEET_ROOT`` and the real OS home, which is
+    correct for a live process but wrong for a caller that must resolve to
+    the fleet tree under a specific, given home no matter what the
+    environment says -- most often a throwaway ``tmp_path`` in a test, which
+    must never be one unset environment variable away from touching the
+    live, Syncthing-shared sovereign home. This is the second (and only
+    other) place allowed to know where under a home the fleet tree sits, so
+    a caller such as ``rollout_history`` never has to spell the sovereign
+    home's name out for itself a second time.
+
+    Args:
+        home: The home directory the fleet tree sits under (a real user
+            home in production, a throwaway directory in tests).
+
+    Returns:
+        A :class:`FleetPaths` rooted at ``<home>/<sovereign home>/fleet``.
+    """
+    return FleetPaths(root=Path(home).expanduser() / Path(SOVEREIGN_HOME).name / "fleet")
+
+
+def paths_for_sovereign_home(home: Path | str) -> FleetPaths:
+    """The fleet tree under an already-resolved sovereign home.
+
+    For callers handed the sovereign home itself (``~/.skcapstone``) rather
+    than a user home: ``paths_for_home`` would append the sovereign name a
+    second time and resolve ``~/.skcapstone/.skcapstone/fleet``, a tree with
+    no nodes (profile requalification, 2026-10-09).
+    """
+    return FleetPaths(root=Path(home).expanduser() / "fleet")
+
+
 def self_node_name() -> str:
-    """This machine's node name (SKFLEET_NODE override, else hostname)."""
+    """This machine's node name (SKFLEET_NODE override, else hostname).
+
+    The hostname derivation lives in :func:`skcapstone.estate.node_name` so
+    that the value ``coord bootstrap`` PERSISTS into the host-local
+    ``environment.d`` file and the value computed here when nothing is
+    persisted cannot drift apart.
+
+    Returns:
+        The node name for this machine.
+    """
     env = os.environ.get("SKFLEET_NODE")
     if env:
         return env
-    host = socket.gethostname().split(".")[0].lower()
-    host = re.sub(r"[^a-z0-9-]", "-", host).strip("-") or "unknown"
-    return f"node-{host}"
+    from ..estate import node_name
+
+    return node_name()

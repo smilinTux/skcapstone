@@ -52,6 +52,10 @@ echo '{"session_id":"test","trigger":"manual","cwd":"."}' | /path/to/pre-compact
 # Re-register if needed
 skmemory register
 
-# Force semantic indexing of any flat-only memories
-skmemory sync && skwhisper digest --backlog
+# Force indexing of any flat-only memories: start the MANAGED per-agent unit.
+# Never an ad-hoc `skmemory sync`: before skmemory PR #82 its first phase
+# could write ~150-char SQLite previews into the flat source of truth. The
+# unit is serialized with its own timer, logged via sk-cron-run, and carries
+# the agent selectors and embed URLs.
+systemctl --user start skmemory-sync@lumina.service && skwhisper digest --backlog
 ```

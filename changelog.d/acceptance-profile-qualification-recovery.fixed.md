@@ -1,0 +1,1 @@
+Initial source-profile qualification now matches the sealed Vitest recipe to the full suite the pinned runner executes, preserves per-file minimums, and safely successors only compatible unlaunched or terminal test plans. Replayed failed jobs retain their original refusal instead of surfacing a duplicate-file error.

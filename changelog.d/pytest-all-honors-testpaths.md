@@ -1,0 +1,1 @@
+- Full pytest qualification now lets pytest use the repository's configured test paths, avoiding unrelated vendored test packages.

@@ -308,6 +308,99 @@ def register_agents_commands(main: click.Group) -> None:
         )
         console.print()
 
+    @agents.command("stale")
+    @click.option("--home", default=AGENT_HOME, type=click.Path(), help="Shared SKCapstone root.")
+    @click.option("--days", default=14, show_default=True, help="Inactivity threshold in days.")
+    @click.option("--json-out", is_flag=True, help="Machine-readable JSON.")
+    @click.option("--limit", default=10, show_default=True, help="Rows to print (largest first).")
+    @click.option(
+        "--archive",
+        is_flag=True,
+        help="MOVE the stale seats into --archive-dir (nothing is deleted). Default is a dry run.",
+    )
+    @click.option(
+        "--archive-dir",
+        type=click.Path(),
+        default=None,
+        help="Where --archive moves seats (default ~/.skcapstone-archive/stale-agents/<date>).",
+    )
+    def agents_stale(
+        home: str, days: int, json_out: bool, limit: int, archive: bool, archive_dir: str | None
+    ):
+        """Report ephemeral worker seats with no activity for --days (dry run).
+
+        A seat is an agent folder that is not a registered memory profile,
+        not the active agent, and has no soul/ or identity/ directory: the
+        per-run homes the coding fleet leaves behind. Real agents are never
+        listed. Without --archive this only reads.
+
+        \b
+        Note: ~/.skcapstone is a Syncthing folder on fleet estates. Moving a
+        seat out of it removes that folder on every peer of the folder too.
+        """
+        import json as _json
+        from datetime import datetime
+
+        from ..agent_scope import archive_seats, shared_root_for, stale_seats
+
+        root = shared_root_for(Path(home))
+        report = stale_seats(root, days=days)
+        moved: list = []
+        if archive and report.stale:
+            dest = (
+                Path(archive_dir).expanduser()
+                if archive_dir
+                else (
+                    Path.home()
+                    / ".skcapstone-archive"
+                    / "stale-agents"
+                    / datetime.now().strftime("%Y%m%d")
+                )
+            )
+            moved = archive_seats(report, dest)
+
+        if json_out:
+            data = report.to_dict()
+            data["archived"] = [{"name": n, "dest": d} for n, d in moved]
+            click.echo(_json.dumps(data, indent=2))
+            return
+
+        def _mb(n: int) -> str:
+            return f"{n / 1048576:.1f} MiB"
+
+        console.print()
+        console.print(
+            f"  [bold]{report.total_dirs}[/] agent folders under {root}/agents: "
+            f"{len(report.real_agents)} real agents, {report.seats} worker seats"
+        )
+        console.print(
+            f"  [bold]{len(report.stale)}[/] seats idle > {days} days, "
+            f"{_mb(report.stale_bytes)} total"
+        )
+        reasons: dict = {}
+        for seat in report.stale:
+            reasons[seat.reason] = reasons.get(seat.reason, 0) + 1
+        if reasons:
+            console.print(
+                "  [dim]by reason: "
+                + ", ".join(f"{k} {v}" for k, v in sorted(reasons.items()))
+                + "[/]"
+            )
+        for seat in sorted(report.stale, key=lambda s: s.size_bytes, reverse=True)[:limit]:
+            when = datetime.fromtimestamp(seat.last_activity).strftime("%Y-%m-%d")
+            console.print(
+                f"    {seat.name[:38]:<38} {when} {_mb(seat.size_bytes):>10}  {seat.reason}"
+            )
+        if moved:
+            console.print(
+                f"\n  [green]Archived {len(moved)} seat(s)[/] to {Path(moved[0][1]).parent}"
+            )
+        elif report.stale:
+            console.print(
+                "\n  [dim]Dry run. Re-run with --archive to move them (never deletes).[/]"
+            )
+        console.print()
+
     @agents.command("status")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     def agents_status(home: str):

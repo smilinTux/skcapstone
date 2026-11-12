@@ -1,0 +1,249 @@
+"""A blocked workspace must yield its dispatch slot.
+
+Measured 2026-09-21 on chiap08: the same five cards were attempted 18 times
+each over three hours out of a pool of 35 and the fleet launched nothing,
+because WORKSPACE_BLOCKED logged and continued without recording any backoff.
+"""
+
+import ast
+import json
+import os
+import time
+from pathlib import Path
+
+import pytest
+
+ROTATE = Path(__file__).parents[1] / "scripts" / "fleet" / "skfleet-rotate.py"
+
+NAMES = (
+    "_workspace_cooldown_seconds",
+    "_load_workspace_cooldown",
+    "_record_workspace_cooldown",
+    "_workspace_cooldown_active",
+    "_remote_review_cooldown_exempt",
+)
+CONSTANTS = {
+    "_WORKSPACE_COOLDOWN_DEFAULT_SECONDS",
+    "_WORKSPACE_COOLDOWN_ENV",
+}
+
+
+def _load(tmp_path: Path) -> dict:
+    """Load the cooldown helpers without executing the fleet launcher."""
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    wanted = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in NAMES
+    }
+    assert set(wanted) == set(NAMES), sorted(wanted)
+    constants = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and {t.id for t in node.targets if isinstance(t, ast.Name)} & CONSTANTS
+    ]
+    assert {
+        t.id for node in constants for t in node.targets if isinstance(t, ast.Name)
+    } == CONSTANTS
+    module = ast.Module(body=constants + [wanted[n] for n in NAMES], type_ignores=[])
+    ns: dict = {"os": os, "json": json, "time": time}
+    exec(compile(module, str(ROTATE), "exec"), ns)
+    # Point the state file at the test's own directory.
+    ns["_WORKSPACE_COOLDOWN_PATH"] = str(tmp_path / "workspace-cooldown.json")
+    return ns
+
+
+def test_default_window_is_one_hour(tmp_path, monkeypatch):
+    ns = _load(tmp_path)
+    monkeypatch.delenv("SKFLEET_WORKSPACE_COOLDOWN_SECONDS", raising=False)
+    assert ns["_workspace_cooldown_seconds"]() == 3600
+
+
+def test_env_override_is_honoured(tmp_path, monkeypatch):
+    ns = _load(tmp_path)
+    monkeypatch.setenv("SKFLEET_WORKSPACE_COOLDOWN_SECONDS", "120")
+    assert ns["_workspace_cooldown_seconds"]() == 120
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "abc", "-5"])
+def test_bad_override_falls_back_rather_than_raising(tmp_path, monkeypatch, raw):
+    ns = _load(tmp_path)
+    monkeypatch.setenv("SKFLEET_WORKSPACE_COOLDOWN_SECONDS", raw)
+    assert ns["_workspace_cooldown_seconds"]() == 3600
+
+
+def test_a_blocked_card_is_skipped_then_released(tmp_path, monkeypatch):
+    ns = _load(tmp_path)
+    monkeypatch.setenv("SKFLEET_WORKSPACE_COOLDOWN_SECONDS", "100")
+    ns["_record_workspace_cooldown"]("aaa11111", now=1000.0)
+    assert ns["_workspace_cooldown_active"]("aaa11111", now=1050.0) is True
+    # past the window the card returns to the pool on its own
+    assert ns["_workspace_cooldown_active"]("aaa11111", now=1101.0) is False
+
+
+def test_an_unrecorded_card_is_never_skipped(tmp_path, monkeypatch):
+    ns = _load(tmp_path)
+    monkeypatch.setenv("SKFLEET_WORKSPACE_COOLDOWN_SECONDS", "100")
+    ns["_record_workspace_cooldown"]("aaa11111", now=1000.0)
+    assert ns["_workspace_cooldown_active"]("bbb22222", now=1001.0) is False
+
+
+def test_local_cooldown_does_not_suppress_one_enabled_remote_review(tmp_path):
+    ns = _load(tmp_path)
+    ns["_record_workspace_cooldown"]("aaa11111", now=1000.0)
+    ns["_record_workspace_cooldown"]("bbb22222", now=1000.0)
+    table = ns["_load_workspace_cooldown"]()
+    policy = {"remote_review": {"enabled": True, "card_ids": ["aaa11111"]}}
+    review = (None, None, "aaa11111", None, ["review"])
+    other_review = (None, None, "bbb22222", None, ["review"])
+    source = (None, None, "aaa11111", None, ["source-only"])
+    assert ns["_workspace_cooldown_active"]("aaa11111", table, now=1001.0)
+    assert ns["_remote_review_cooldown_exempt"](review, policy)
+    assert not ns["_remote_review_cooldown_exempt"](other_review, policy)
+    assert not ns["_remote_review_cooldown_exempt"](source, policy)
+    policy["remote_review"]["enabled"] = False
+    assert not ns["_remote_review_cooldown_exempt"](review, policy)
+
+
+def test_zero_window_disables_the_throttle(tmp_path, monkeypatch):
+    ns = _load(tmp_path)
+    monkeypatch.setenv("SKFLEET_WORKSPACE_COOLDOWN_SECONDS", "0")
+    ns["_record_workspace_cooldown"]("aaa11111", now=1000.0)
+    assert ns["_workspace_cooldown_active"]("aaa11111", now=1000.0) is False
+
+
+def test_expired_entries_are_pruned_so_the_file_cannot_grow(tmp_path, monkeypatch):
+    ns = _load(tmp_path)
+    monkeypatch.setenv("SKFLEET_WORKSPACE_COOLDOWN_SECONDS", "100")
+    ns["_record_workspace_cooldown"]("old00000", now=1000.0)
+    ns["_record_workspace_cooldown"]("new00000", now=2000.0)
+    data = json.loads(Path(ns["_WORKSPACE_COOLDOWN_PATH"]).read_text())
+    assert "old00000" not in data
+    assert "new00000" in data
+
+
+@pytest.mark.parametrize("body", ["not json at all", "[]", '{"a": "not-a-number"}'])
+def test_a_malformed_file_fails_open(tmp_path, monkeypatch, body):
+    """A bug in a throttle must never be able to stop the fleet."""
+    ns = _load(tmp_path)
+    monkeypatch.setenv("SKFLEET_WORKSPACE_COOLDOWN_SECONDS", "100")
+    Path(ns["_WORKSPACE_COOLDOWN_PATH"]).write_text(body, encoding="utf-8")
+    assert ns["_load_workspace_cooldown"]() == {}
+    assert ns["_workspace_cooldown_active"]("a", now=1.0) is False
+
+
+def test_an_unwritable_path_does_not_raise(tmp_path, monkeypatch):
+    ns = _load(tmp_path)
+    ns["_WORKSPACE_COOLDOWN_PATH"] = "/proc/definitely/not/writable/cooldown.json"
+    ns["_record_workspace_cooldown"]("aaa11111", now=1000.0)  # must not raise
+    assert ns["_load_workspace_cooldown"]() == {}
+
+
+def test_the_blocked_path_actually_records_the_cooldown():
+    """Guards the wiring, not just the helpers."""
+    source = ROTATE.read_text(encoding="utf-8")
+    marker = 'log(d,"WORKSPACE_BLOCKED|%s|%s|%s"%(HOST,cid,exc))'
+    assert marker in source
+    tail = source[source.index(marker) : source.index(marker) + 400]
+    assert (
+        "_record_workspace_cooldown(cid)" in tail
+    ), "WORKSPACE_BLOCKED must record a cooldown or the card keeps its slot"
+
+
+def test_the_pool_filter_runs_after_every_rebuild_of_pool():
+    """The filter must sit after the POOL_V2 authority rebuild.
+
+    `pool` is REPLACED wholesale twice late in the cycle, by
+    _pool_v2_authority_rows and then _seraph_unique_source_heads. A filter
+    placed before either is silently undone. Measured 2026-09-21: the filter
+    logged WORKSPACE_COOLDOWN_SKIPPED for four cards and all four were still
+    attempted in the same cycle, because the legacy pool it had filtered was
+    thrown away and rebuilt from POOL_V2.
+    """
+    source = ROTATE.read_text(encoding="utf-8")
+    authority = "_pool_v2_authority_rows("
+    unique_heads = "_seraph_unique_source_heads(pool)"
+    owned = "owned=[x for x in pool if owns(x[2])]"
+    skip = "WORKSPACE_COOLDOWN_SKIPPED"
+    for needle in (authority, unique_heads, owned, skip):
+        assert needle in source, needle
+    assert source.index(skip) > source.index(
+        authority
+    ), "cooldown filter must run AFTER the POOL_V2 authority rebuild"
+    assert source.index(skip) > source.index(
+        unique_heads
+    ), "cooldown filter must run AFTER _seraph_unique_source_heads"
+    assert source.index(skip) < source.index(
+        owned
+    ), "cooldown filter must run BEFORE owned is derived from pool"
+    assert (
+        "and not _remote_review_cooldown_exempt(row, PRODUCTION_POLICY)"
+        in source[source.index(skip) - 600 : source.index(owned)]
+    ), "remote review must bypass the local workspace cooldown in the actual pool filter"
+
+
+def test_builder_offers_ignore_the_local_workspace_cooldown():
+    """Remote builders materialize their own source; a local cooldown must not hide a card.
+
+    Measured on chiap08 2026-10-09: the local lane loop logged
+    TEST_PROFILE_BLOCKED required-test-profile-unqualified and cooled 38-65 ready
+    source cards per cycle, so the builder (which requalifies those profiles)
+    saw only 7-15 of ~60 eligible cards while processing every one it saw.
+    """
+    source = ROTATE.read_text(encoding="utf-8")
+    snapshot = "_builder_offer_pool = list(pool)"
+    skip = "pool = [row for row in pool if row[2] not in _cooling_set]"
+    owned = "owned=[x for x in pool if owns(x[2])]"
+    candidates = (
+        "_builder_candidates = [\n    candidate\n    for candidate in _builder_offer_pool\n"
+    )
+    for needle in (snapshot, skip, owned, candidates):
+        assert needle in source, needle
+    assert source.index(snapshot) < source.index(skip) < source.index(owned)
+    assert source.index(owned) < source.index(candidates)
+    # Local lanes still only see the cooled pool: the partition keys on owned.
+    assert "_builder_partition(\n    owned, _builder_candidate_ids, _builder_held_ids\n)" in source
+
+
+def test_phase_timing_marks_every_major_phase_and_never_raises():
+    source = ROTATE.read_text(encoding="utf-8")
+    phases = [
+        "startup_slots",
+        "pool_fold",
+        "pool_v2_authority",
+        "remote_review_offers",
+        "builder_offers",
+        "lane_selection",
+        "review_withheld",
+        "lane_launch",
+    ]
+    positions = [source.index('_phase_timing("%s")' % name) for name in phases]
+    assert positions == sorted(positions)
+    tree = ast.parse(source)
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_phase_timing"
+    )
+    lines = []
+    namespace = {
+        "time": time,
+        "_PHASE_MARK": [None],
+        "_cycle_started": time.monotonic() - 5,
+        "HOST": "fixture",
+        "d": "unused",
+        "log": lambda d, msg: lines.append(msg),
+    }
+    exec(compile(ast.Module(body=[helper], type_ignores=[]), "rotate", "exec"), namespace)
+    namespace["_phase_timing"]("pool_fold")
+    namespace["_phase_timing"]("builder_offers")
+    assert lines[0].startswith("PHASE_TIMING|fixture|phase=pool_fold|elapsed_s=5.")
+    assert lines[1].startswith("PHASE_TIMING|fixture|phase=builder_offers|elapsed_s=5.")
+    assert lines[1].endswith("|phase_s=0.0")
+
+    def broken(d, msg):
+        raise OSError("disk full")
+
+    namespace["log"] = broken
+    namespace["_phase_timing"]("lane_launch")

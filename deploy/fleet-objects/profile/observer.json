@@ -5,6 +5,13 @@
   },
   "name": "observer",
   "spec": {
+    "binaries": {
+      "allowed": [
+        "wt"
+      ],
+      "mustNot": [],
+      "required": []
+    },
     "capauthIdentityClass": "observer",
     "description": "Watched, never installed into (norpv1300, the Proxmox hypervisor hosting the GPU VM). NO INSTALLATION EVER TARGETS AN OBSERVER NODE. It is reachable for reporting only, and its inventory may be collected over ssh rather than by a local sknoded, which is the ssh-pull fallback in docs/fleet/control-bus-folder.md. Putting SK software on the box that hosts the node adds risk for near-zero benefit. This manifest exists so that 'not managed' is a recorded decision rather than an omission. Role model and the two orthogonal axes: docs/fleet/adr-node-role-model.md.",
     "packages": {

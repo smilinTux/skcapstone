@@ -1,0 +1,1 @@
+- Non-authority seat-cycle invocations now exit successfully after recording their fenced no-op, preventing healthy inactive hosts from failing deployment drift gates.

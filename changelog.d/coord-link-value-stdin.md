@@ -1,0 +1,1 @@
+- coord link accepts --value-from-stdin (VALUE -) so values over the 128 KiB argv limit can be linked; the baseline curator now sends recipes that way.

@@ -6,6 +6,7 @@ arrives in Phase 3 and will gate on store.actuation_allowed().
 
 from __future__ import annotations
 
+import logging
 import platform
 import socket
 import time
@@ -17,6 +18,8 @@ from . import nodeinventory, store
 from .capacity import allocatable, node_capacity
 from .conditions import merge_transitions, node_conditions, probe_conditions
 from .paths import FleetPaths
+
+logger = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL_S = 60
 
@@ -193,7 +196,33 @@ def run_once(paths: FleetPaths, node: str) -> dict:
     if unadmitted and store.read_node_file(paths, node, "join.json") is None:
         join = build_join_request(paths, node, report["status"]["capacity"], now_iso)
         join_written = store.write_node_file(paths, writer, "join.json", join, if_changed=False)
-    return {"heartbeat": heartbeat, "node": node_written, "join": join_written}
+    dispatch = None
+    if (spec := store.read_spec(paths, "node", node)) and (
+        spec.get("spec", {}).get("role") == "builder-standby"
+    ):
+        try:
+            from .production_tests import reap_orphaned_test_units
+
+            host = (spec.get("labels") or {}).get("host") or socket.gethostname()
+            host = host.split(".")[0].lower()
+            # Free memory held by finished units whose claim moved on before
+            # admission is asked for the next launch.
+            reaped = reap_orphaned_test_units(paths.root.parent, host)
+            if reaped:
+                logger.warning("orphaned test units on %s: %s", node, reaped)
+        except (OSError, ValueError) as exc:
+            logger.warning("orphaned test unit reap failed on %s: %s", node, exc)
+        from .builder_dispatch import consume_one
+
+        dispatch = consume_one(paths, paths.root.parent, node)
+    result = {
+        "heartbeat": heartbeat,
+        "node": node_written,
+        "join": join_written,
+    }
+    if dispatch is not None:
+        result["dispatch"] = dispatch
+    return result
 
 
 def main_loop(
@@ -221,7 +250,13 @@ def main_loop(
     Tailscale IP) is logged and otherwise ignored: it disables the SURFACE,
     never the self-report loop this function exists to run.
     """
+    from .builder_dispatch import BuilderDispatchError, TaskUnclaimable
     from .converge import ACTUATION_INTERVAL_S, converge_once
+
+    #: The only two per-card failures reachable from this loop. Bound lazily
+    #: with the rest of the dispatch machinery so a report-only node still
+    #: imports nothing it does not use.
+    skippable = (TaskUnclaimable, BuilderDispatchError)
 
     act_every = ACTUATION_INTERVAL_S if actuation_interval is None else actuation_interval
     if not once:
@@ -232,10 +267,29 @@ def main_loop(
     last_report = 0.0
     while True:
         now = time.time()
+        # Two separate guards, not one. A card that refuses on every pass would
+        # otherwise starve whichever stage sits after it in a shared try, and
+        # the self-report is the node's liveness signal.
         if now - last_report >= interval or last_report == 0.0:
-            run_once(paths, node)
+            try:
+                run_once(paths, node)
+            except skippable as exc:
+                logger.warning("sknoded self-report skipped one unusable card: %s", exc)
             last_report = now
-        converge_once(paths, node)
+        try:
+            converge_once(paths, node)
+        except skippable as exc:
+            # ziowk01-wsl, 2026-09-18: a card voided out from under the
+            # dispatch queue raised ValueError through claim_task and killed
+            # the unit, discarding 18h of process state over one unusable card.
+            #
+            # This is deliberately NOT ``except Exception``. Everything else
+            # still terminates the unit so systemd restarts it and the failure
+            # stays visible: a corrupt or unreadable CardStore, a coordination
+            # home that has gone missing, a permissions failure, an OSError on
+            # the fleet tree. Those are not one-card problems, and swallowing
+            # them would turn every card on this node into a silent skip.
+            logger.warning("sknoded converge skipped one unusable card: %s", exc)
         if once:
             return
         time.sleep(act_every)

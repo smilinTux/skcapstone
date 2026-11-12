@@ -1,0 +1,920 @@
+"""Tests for rollout drift detection (spec A.6, Task 3).
+
+The whole point of this module is that a version check would have reported
+every host healthy during all four real drift incidents measured on this
+fleet: three different skmail binaries with no version difference (the file
+belonged to no package), a dispatcher script copied out of band from the
+package, a seat unit FAILED for weeks, and a rotate timer active but not
+enabled for at least 7 weeks. These tests hold detect_drift to content and
+state, never to a version string: content digests for unit files and the
+dispatcher script, the git_sha, and an enabled-versus-active mismatch as a
+first-class finding.
+
+Every host state is built under a throwaway tmp_path `home`, never the real
+`~/.skcapstone`. `repo_root` is this real checkout, reused the same way
+test_deployment_manifest.py reuses it, so expected digests come from the
+actual shipped systemd/ tree and dispatcher script rather than a hand-built
+fake tree.
+
+Live systemd is never touched: `skfleet_readiness.subprocess.run` is
+monkeypatched, following the exact pattern tests/fleet/test_readiness_wiring.py
+already established, so detect_drift's reuse of Task 2's `unit_in_scope` (and
+the same module's `_systemctl_show_value`) is exercised against fixed
+fixture output instead of a live systemd instance.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+sys.path.insert(0, str(REPO_ROOT / "scripts" / "fleet"))
+import skfleet_readiness  # noqa: E402
+
+from skcapstone.fleet import rollout_drift  # noqa: E402
+from skcapstone.fleet.deployment_manifest import PER_HOST_ARTIFACTS  # noqa: E402
+from skcapstone.fleet.rollout_drift import Drift, detect_drift  # noqa: E402
+
+LINK_SERVICE = "skfleet-link.service"
+LINK_TIMER = "skfleet-link.timer"
+CORE_SERVICE = "skcapstone.service"  # ships with no paired timer
+DISPATCHER_NAME = "skfleet-rotate.py"
+
+
+#: The genuine subprocess.run, captured at import time. The monkeypatch
+#: below replaces the attribute on the subprocess MODULE itself (patching
+#: `skfleet_readiness.subprocess.run` patches it for every importer,
+#: rollout_drift included), so a delegating fake cannot call
+#: `subprocess.run` -- that is the fake. This is the real one.
+_REAL_SUBPROCESS_RUN = subprocess.run
+
+
+pytestmark = pytest.mark.usefixtures("sandbox_prerequisites")
+
+
+def _fake_systemctl(responses):
+    """A subprocess.run replacement answering `systemctl --user show <unit>
+    -p <prop> --value` from `responses[(unit, prop)]`, defaulting an unlisted
+    (unit, prop) pair to LoadState=not-found so an unmentioned unit reads as
+    genuinely unknown rather than silently succeeding.
+
+    A non-systemctl call is DELEGATED to the real subprocess.run rather than
+    asserted against. detect_drift also shells out to `git -C <repo_root>
+    rev-parse HEAD` to read the checkout surface, and that call is
+    read-only, local to this very checkout, and is the fact under test in
+    the checkout:git_sha cases -- faking it would mean the tests never
+    exercise the code path that actually reads the checkout. The systemctl
+    assertion stays exactly as strict as it was: live systemd is still
+    never touched.
+    """
+
+    def fake_run(cmd, **kwargs):
+        if list(cmd[:1]) != ["systemctl"]:
+            return _REAL_SUBPROCESS_RUN(cmd, **kwargs)
+        assert cmd[:3] == ["systemctl", "--user", "show"], f"unexpected subprocess call: {cmd}"
+        unit = cmd[3]
+        prop = cmd[cmd.index("-p") + 1]
+        value = responses.get((unit, prop), "not-found" if prop == "LoadState" else "")
+        return subprocess.CompletedProcess(cmd, 0, stdout=value + "\n", stderr="")
+
+    return fake_run
+
+
+@pytest.fixture(autouse=True)
+def _no_live_systemctl(monkeypatch):
+    """Every test must explicitly supply systemctl fixture output; a stray
+    live call is a bug in the test, not a fact about the real fleet.
+    """
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl({}))
+
+
+@pytest.fixture
+def home(tmp_path: Path) -> Path:
+    return tmp_path / "home"
+
+
+def _install_unit(home: Path, unit_name: str) -> None:
+    dest = home / ".config" / "systemd" / "user" / unit_name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(REPO_ROOT / "systemd" / unit_name, dest)
+
+
+def _install_dispatcher(home: Path) -> None:
+    """Install EVERY per-host artifact, not just the dispatcher.
+
+    A plain `cp`, deliberately: the rollout's copy step is a `cp`, which
+    rewrites nothing, so a healthy host's ~/.local/bin copies are byte-for-
+    byte equal to the repo's. (Contrast _install_all_script_files, which
+    must reproduce pip's shebang rewrite for the ~/.skenv/bin copies.)
+    """
+    for relative_path in PER_HOST_ARTIFACTS:
+        dest = home / ".local" / "bin" / relative_path.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REPO_ROOT / relative_path, dest)
+
+
+def _install_dist_info(home: Path, git_sha: str) -> None:
+    dist_info = (
+        home
+        / ".skenv"
+        / "lib"
+        / "python3.12"
+        / "site-packages"
+        / (f"skcapstone-0.15.168.dev1+g{git_sha}.dist-info")
+    )
+    dist_info.mkdir(parents=True, exist_ok=True)
+
+
+def _manifest(git_sha: str = "deadbeef") -> dict:
+    return {
+        "revision": "irrelevant-for-drift",
+        "git_sha": git_sha,
+        "package_version": "irrelevant-for-drift",
+        "required_env": [],
+        "units": [CORE_SERVICE, LINK_SERVICE],
+    }
+
+
+def _install_all_script_files(home: Path) -> None:
+    """Mirror every pyproject.toml script-files entry into ~/.skenv/bin, the
+    real pip install location -- reproducing pip's own behavior, not just a
+    raw copy: pip REWRITES a Python script's shebang line to point at the
+    venv's own interpreter on install (measured live on chiap01: the
+    installed copy of every .py script-files entry differs from the repo
+    in exactly and only that one line). A raw copyfile here would make this
+    "healthy host" fixture unrealistic -- quiet only because it never
+    exercised the one transform every real host's install actually applies.
+    """
+    for entry in rollout_drift._script_files(REPO_ROOT):
+        dest = home / ".skenv" / "bin" / Path(entry).name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        content = (REPO_ROOT / entry).read_bytes()
+        if entry.endswith(".py") and content.startswith(b"#!"):
+            _, _, rest = content.partition(b"\n")
+            content = b"#!" + str(home / ".skenv" / "bin" / "python").encode() + b"\n" + rest
+        dest.write_bytes(content)
+    package = REPO_ROOT / "src/skcapstone/fleet/skmail"
+    target = home / ".skenv/lib/python3.12/site-packages/skcapstone/fleet/skmail"
+    target.mkdir(parents=True, exist_ok=True)
+    for name in ("__init__.py", "__main__.py", "skmail", "skmail_writer.py"):
+        shutil.copyfile(package / name, target / name)
+
+
+def _matching_host(home: Path, git_sha: str = "deadbeef") -> None:
+    """Build a home tree that agrees with `_manifest(git_sha)` in every way."""
+    _install_unit(home, CORE_SERVICE)
+    _install_unit(home, LINK_SERVICE)
+    _install_dispatcher(home)
+    _install_dist_info(home, git_sha)
+    _install_all_script_files(home)
+
+
+def _production_layout(home):
+    from skcapstone.fleet.deployment_manifest import production_compatibility_shim
+
+    _matching_host(home)
+    policy = home / ".skcapstone/fleet/production.json"
+    policy.parent.mkdir(parents=True)
+    policy.write_text('{"schema":"skfleet.production/v1"}')
+    for name in ("skfleet-rotate.py", "skfleet-worker-wrapper.py"):
+        (home / ".local/bin" / name).write_bytes(production_compatibility_shim(name, home))
+    for path in (REPO_ROOT / "systemd/production").glob("*.service"):
+        (home / ".config/systemd/user" / path.name).write_bytes(path.read_bytes())
+
+
+def test_production_observer_accepts_one_canonical_copy_and_exact_shims(home):
+    _production_layout(home)
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+    assert not [d for d in drifts if d.artifact.startswith(("dispatcher:", "compatibility:"))]
+    assert not [d for d in drifts if d.artifact == "unit:skfleet-link.service"]
+
+
+def test_production_canonical_script_is_checked_when_legacy_timer_disabled(home, monkeypatch):
+    _production_layout(home)
+    monkeypatch.setattr(
+        skfleet_readiness.subprocess,
+        "run",
+        _fake_systemctl(
+            {
+                ("skfleet-rotate.timer", "LoadState"): "loaded",
+                ("skfleet-rotate.timer", "ActiveState"): "inactive",
+                ("skfleet-rotate.timer", "UnitFileState"): "disabled",
+            }
+        ),
+    )
+    (home / ".skenv/bin/skfleet-rotate.py").unlink()
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+    assert any(
+        d.artifact == "dispatcher:skfleet-rotate.py" and d.kind == "missing" for d in drifts
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["canonical-body", "canonical-shebang", "full-copy-shim", "wrong-shim", "missing-shim"],
+)
+def test_production_observer_detects_wrong_canonical_or_compatibility_file(home, mutation):
+    _production_layout(home)
+    canonical = home / ".skenv/bin/skfleet-rotate.py"
+    shim = home / ".local/bin/skfleet-rotate.py"
+    if mutation == "canonical-body":
+        canonical.write_bytes(canonical.read_bytes() + b"\nchanged=True\n")
+    elif mutation == "canonical-shebang":
+        canonical.write_bytes(b"#!/usr/bin/python3\n" + canonical.read_bytes().split(b"\n", 1)[1])
+    elif mutation == "full-copy-shim":
+        shim.write_bytes((REPO_ROOT / "scripts/fleet/skfleet-rotate.py").read_bytes())
+    elif mutation == "wrong-shim":
+        shim.write_text('print("wrong target")\n')
+    else:
+        shim.unlink()
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+    wanted = (
+        "dispatcher:skfleet-rotate.py"
+        if mutation.startswith("canonical")
+        else "compatibility:skfleet-rotate.py"
+    )
+    assert any(d.artifact == wanted for d in drifts)
+
+
+def _in_scope_link_responses() -> dict:
+    """skfleet-link.timer active and enabled: fully converged, in scope."""
+    return {
+        (LINK_TIMER, "LoadState"): "loaded",
+        (LINK_TIMER, "ActiveState"): "active",
+        (LINK_TIMER, "UnitFileState"): "enabled",
+    }
+
+
+def _in_scope_rotate_responses() -> dict:
+    return {
+        ("skfleet-rotate.timer", "LoadState"): "loaded",
+        ("skfleet-rotate.timer", "ActiveState"): "active",
+        ("skfleet-rotate.timer", "UnitFileState"): "enabled",
+    }
+
+
+def _all_responses() -> dict:
+    responses = {}
+    responses.update(_in_scope_link_responses())
+    responses.update(_in_scope_rotate_responses())
+    return responses
+
+
+# ---------------------------------------------------------------------------
+# No drift when a host genuinely matches its manifest
+# ---------------------------------------------------------------------------
+
+
+def test_matching_host_reports_no_drift(home: Path, monkeypatch):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    assert drifts == []
+
+
+# ---------------------------------------------------------------------------
+# Changed unit file
+# ---------------------------------------------------------------------------
+
+
+def test_changed_unit_file_is_reported(home: Path, monkeypatch):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    installed = home / ".config" / "systemd" / "user" / LINK_SERVICE
+    installed.write_text(installed.read_text() + "\n# hand-edited on the host\n")
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    changed = [d for d in drifts if d.kind == "changed" and LINK_SERVICE in d.artifact]
+    assert len(changed) == 1
+    drift = changed[0]
+    assert isinstance(drift, Drift)
+    assert drift.host == "node-test"
+    assert drift.expected != drift.found
+    assert drift.found is not None
+
+
+# ---------------------------------------------------------------------------
+# Changed dispatcher script
+# ---------------------------------------------------------------------------
+
+
+def test_changed_dispatcher_script_is_reported(home: Path, monkeypatch):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    installed = home / ".local" / "bin" / DISPATCHER_NAME
+    installed.write_text(installed.read_text() + "\n# a stale, hand-copied edit\n")
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    changed = [d for d in drifts if d.kind == "changed" and "dispatcher" in d.artifact]
+    assert len(changed) == 1
+    assert changed[0].artifact == "dispatcher:skfleet-rotate.py"
+
+
+# ---------------------------------------------------------------------------
+# Missing is distinct from changed
+# ---------------------------------------------------------------------------
+
+
+def test_missing_unit_is_reported_distinctly_from_changed(home: Path, monkeypatch):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    # skcapstone.service is never installed at all on this host.
+    (home / ".config" / "systemd" / "user" / CORE_SERVICE).unlink()
+    # skfleet-link.service IS installed but its content has drifted.
+    installed = home / ".config" / "systemd" / "user" / LINK_SERVICE
+    installed.write_text(installed.read_text() + "\n# hand-edited\n")
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    missing = [d for d in drifts if CORE_SERVICE in d.artifact]
+    changed = [d for d in drifts if LINK_SERVICE in d.artifact and d.kind == "changed"]
+    assert len(missing) == 1
+    assert missing[0].kind == "missing"
+    assert missing[0].found is None
+    assert missing[0].expected is not None
+    assert len(changed) == 1
+    assert missing[0].kind != changed[0].kind
+
+
+# ---------------------------------------------------------------------------
+# Legitimate local state: an out-of-scope role's absence is not drift
+# ---------------------------------------------------------------------------
+
+
+def test_dispatcher_absent_on_a_seat_only_host_is_not_drift(home: Path, monkeypatch):
+    """The chiap08 case: this host deliberately does not run the dispatcher.
+    skfleet-rotate.timer is loaded but inactive and disabled here (measured,
+    real shape), so unit_in_scope must say out-of-scope and the dispatcher's
+    absence must not be reported.
+    """
+    responses = _in_scope_link_responses()
+    responses.update(
+        {
+            ("skfleet-rotate.timer", "LoadState"): "loaded",
+            ("skfleet-rotate.timer", "ActiveState"): "inactive",
+            ("skfleet-rotate.timer", "UnitFileState"): "disabled",
+        }
+    )
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(responses))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _install_unit(home, CORE_SERVICE)
+    _install_unit(home, LINK_SERVICE)
+    _install_dist_info(home, "deadbeef")
+    # deliberately no dispatcher script installed
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    assert [d for d in drifts if "dispatcher" in d.artifact] == []
+
+
+# ---------------------------------------------------------------------------
+# Unit enablement versus activity
+# ---------------------------------------------------------------------------
+
+
+def test_active_but_not_enabled_unit_is_reported(home: Path, monkeypatch):
+    """The measured skfleet-rotate.timer incident, generalised: a timer that
+    is active right now but carries no timers.target.wants symlink is a
+    latent total outage waiting for the next reboot, and no content digest
+    catches it because the unit FILE is correct.
+    """
+    responses = {
+        (LINK_TIMER, "LoadState"): "loaded",
+        (LINK_TIMER, "ActiveState"): "active",
+        (LINK_TIMER, "UnitFileState"): "disabled",
+    }
+    responses.update(_in_scope_rotate_responses())
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(responses))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    mismatches = [d for d in drifts if d.kind == "enablement_mismatch"]
+    assert len(mismatches) == 1
+    drift = mismatches[0]
+    assert LINK_TIMER in drift.artifact
+    assert drift.expected == "enabled"
+    assert drift.found == "disabled"
+    assert drift.host == "node-test"
+
+
+def test_active_and_enabled_unit_reports_no_enablement_drift(home: Path, monkeypatch):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    assert [d for d in drifts if d.kind == "enablement_mismatch"] == []
+
+
+# ---------------------------------------------------------------------------
+# A FAILED unit is unambiguous drift, even when its enablement is
+# self-consistent (the chiap08 incident: skfleet-niobe-shadow.service sat
+# FAILED for weeks. Its ActiveState was never "active", so the enablement
+# check above -- which only compares "active but not enabled" or "enabled
+# but not active" -- saw a self-consistent inactive/disabled unit and
+# emitted nothing).
+# ---------------------------------------------------------------------------
+
+
+def test_failed_unit_with_correct_enablement_is_reported(home: Path, monkeypatch):
+    """A unit whose enablement is self-consistent (disabled, not active) but
+    whose ActiveState is literally "failed" must still be reported: a
+    crashed unit is unambiguous drift regardless of what its enable state
+    says.
+    """
+    responses = {
+        (LINK_SERVICE, "ActiveState"): "failed",
+    }
+    responses.update(_in_scope_link_responses())  # the paired timer stays healthy
+    responses.update(_in_scope_rotate_responses())
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(responses))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    failed = [d for d in drifts if d.kind == "failed"]
+    assert len(failed) == 1
+    drift = failed[0]
+    assert drift.artifact == f"unit_failed:{LINK_SERVICE}"
+    assert drift.expected == "not failed"
+    assert drift.found == "failed"
+    assert drift.host == "node-test"
+    # And the enablement check (a different, still-healthy signal on the
+    # paired timer) must not also fire for the same underlying unit.
+    assert [d for d in drifts if d.kind == "enablement_mismatch"] == []
+
+
+def test_healthy_unit_reports_no_failed_drift(home: Path, monkeypatch):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    assert [d for d in drifts if d.kind == "failed"] == []
+
+
+# ---------------------------------------------------------------------------
+# git_sha
+# ---------------------------------------------------------------------------
+
+
+def test_git_sha_mismatch_is_reported(home: Path, monkeypatch):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home, git_sha="deadbeef")
+
+    drifts = detect_drift(_manifest(git_sha="c0ffee00"), home, REPO_ROOT)
+
+    git_sha_drifts = [d for d in drifts if d.artifact == "package:git_sha"]
+    assert len(git_sha_drifts) == 1
+    assert git_sha_drifts[0].kind == "changed"
+    assert git_sha_drifts[0].expected == "c0ffee00"
+    assert git_sha_drifts[0].found == "deadbeef"
+
+
+def test_installed_git_sha_resolves_exact_release_tag(home: Path, tmp_path: Path):
+    repo = tmp_path / "tagged-repo"
+    repo.mkdir()
+    _REAL_SUBPROCESS_RUN(["git", "init", "-q", str(repo)], check=True)
+    _REAL_SUBPROCESS_RUN(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.org",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "release",
+        ],
+        check=True,
+    )
+    sha = _REAL_SUBPROCESS_RUN(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    _REAL_SUBPROCESS_RUN(["git", "-C", str(repo), "tag", "v1.2.3"], check=True)
+
+    dist_dir = home / ".skenv/lib/python3.12/site-packages"
+    (dist_dir / "skcapstone-1.2.3.dist-info").mkdir(parents=True)
+    assert rollout_drift._installed_git_sha(home, repo) == sha
+
+    (dist_dir / "skcapstone-1.2.3.dist-info").rename(dist_dir / "skcapstone-1.2.4.dist-info")
+    assert rollout_drift._installed_git_sha(home, repo) is None
+
+
+def test_installed_git_sha_keeps_embedded_hash_without_tag(home: Path, tmp_path: Path):
+    _install_dist_info(home, "deadbeef")
+    assert rollout_drift._installed_git_sha(home, tmp_path / "no-repo") == "deadbeef"
+
+
+def test_drift_checks_do_not_scan_unrelated_home_entries(home: Path, monkeypatch):
+    _install_dist_info(home, "deadbeef")
+    (home / "unavailable-nfs-link").symlink_to("/mnt/cloud/unavailable")
+    original_glob = Path.glob
+
+    def guarded_glob(path, pattern):
+        if path == home:
+            raise AssertionError("drift check scanned unrelated home entries")
+        return original_glob(path, pattern)
+
+    monkeypatch.setattr(Path, "glob", guarded_glob)
+    assert rollout_drift._installed_git_sha(home, REPO_ROOT) == "deadbeef"
+    detect_drift(_manifest(), home, REPO_ROOT)
+
+
+def test_git_sha_missing_when_no_dist_info_is_reported_as_missing_not_changed(
+    home: Path, monkeypatch
+):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _install_unit(home, CORE_SERVICE)
+    _install_unit(home, LINK_SERVICE)
+    _install_dispatcher(home)
+    # no .skenv dist-info installed at all
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    git_sha_drifts = [d for d in drifts if d.artifact == "package:git_sha"]
+    assert len(git_sha_drifts) == 1
+    assert git_sha_drifts[0].kind == "missing"
+    assert git_sha_drifts[0].found is None
+
+
+# ---------------------------------------------------------------------------
+# Hand-installed critical units: never shipped, but the enablement check
+# still has to see them. skfleet-rotate.service/.timer are in NEITHER
+# shipped tree (see ALLOWED_UNSHIPPED_UNITS in rollout_drift.py) but are
+# real, live, hand-installed units, and this is the exact incident that
+# motivated the enablement check in the first place: measured on all three
+# rotate hosts, skfleet-rotate.timer active=active, enabled=disabled, for
+# at least 7 weeks, with no shipped-only loop ever able to see it.
+# ---------------------------------------------------------------------------
+
+
+def test_hand_installed_dispatcher_timer_active_but_not_enabled_is_reported(
+    home: Path, monkeypatch
+):
+    responses = _in_scope_link_responses()
+    responses.update(
+        {
+            ("skfleet-rotate.timer", "LoadState"): "loaded",
+            ("skfleet-rotate.timer", "ActiveState"): "active",
+            ("skfleet-rotate.timer", "UnitFileState"): "disabled",
+        }
+    )
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(responses))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    mismatches = [
+        d for d in drifts if d.kind == "enablement_mismatch" and "skfleet-rotate" in d.artifact
+    ]
+    assert len(mismatches) == 1
+    drift = mismatches[0]
+    assert drift.artifact == "unit_enablement:skfleet-rotate.timer"
+    assert drift.expected == "enabled"
+    assert drift.found == "disabled"
+    assert drift.host == "node-test"
+
+
+def test_hand_installed_dispatcher_timer_active_and_enabled_reports_no_enablement_drift(
+    home: Path, monkeypatch
+):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    assert [
+        d for d in drifts if "skfleet-rotate" in d.artifact and d.kind == "enablement_mismatch"
+    ] == []
+
+
+def test_hand_installed_dispatcher_out_of_scope_enablement_is_not_checked(home: Path, monkeypatch):
+    """The chiap08 shape: rotate timer loaded but inactive and disabled, so
+    out of scope. A host that deliberately does not run this role must not
+    be held to "is it enabled" any more than it is held to "is the script
+    installed" (test_dispatcher_absent_on_a_seat_only_host_is_not_drift,
+    above, covers that half).
+    """
+    responses = _in_scope_link_responses()
+    responses.update(
+        {
+            ("skfleet-rotate.timer", "LoadState"): "loaded",
+            ("skfleet-rotate.timer", "ActiveState"): "inactive",
+            ("skfleet-rotate.timer", "UnitFileState"): "disabled",
+        }
+    )
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(responses))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _install_unit(home, CORE_SERVICE)
+    _install_unit(home, LINK_SERVICE)
+    _install_dist_info(home, "deadbeef")
+    # The pip-installed script-files copy of skfleet-rotate.py (unlike the
+    # hand-installed ~/.local/bin dispatcher this test is actually about)
+    # ships with the package on every host regardless of role, so it must
+    # be present here or its own "missing" finding would be indistinguishable
+    # from the enablement question this test exists to isolate.
+    _install_all_script_files(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    assert [d for d in drifts if "skfleet-rotate" in d.artifact] == []
+
+
+# ---------------------------------------------------------------------------
+# The remaining script-files still require content-based drift detection.
+# The packaged skmail implementation is checked separately below.
+# ---------------------------------------------------------------------------
+
+
+def test_script_files_list_keeps_writer_compatibility():
+    """The writer's historical executable name remains installed for callers."""
+    assert "scripts/fleet/skmail_writer.py" in rollout_drift._script_files(REPO_ROOT)
+
+
+def test_divergent_script_file_binary_is_reported(home: Path, monkeypatch):
+    """A script-files entry installed with different content than the repo
+    ships -- the exact shape of the skmail incident (three different
+    binaries across five hosts, none matching the repo) -- must be reported
+    for ANY entry in the list, not just skmail by name.
+    """
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    installed = home / ".skenv" / "bin" / "skmail_writer.py"
+    installed.write_bytes(installed.read_bytes() + b"\n# a divergent binary on this host\n")
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    changed = [d for d in drifts if d.artifact == "script:skmail_writer.py"]
+    assert len(changed) == 1
+    assert changed[0].kind == "changed"
+    assert changed[0].found is not None
+    assert changed[0].expected != changed[0].found
+
+
+def test_missing_script_file_is_reported_distinctly_from_changed(home: Path, monkeypatch):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    (home / ".skenv" / "bin" / "skmail_writer.py").unlink()
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    missing = [d for d in drifts if d.artifact == "script:skmail_writer.py"]
+    assert len(missing) == 1
+    assert missing[0].kind == "missing"
+    assert missing[0].found is None
+
+
+def test_matching_script_files_report_no_drift(home: Path, monkeypatch):
+    """A host with every script-files entry correctly installed (this
+    checkout's own fixture-built 'healthy host') shows no script drift --
+    proving the check is quiet on a genuinely matching host, not just loud
+    on a broken one.
+    """
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    assert [d for d in drifts if d.artifact.startswith("script:")] == []
+
+
+def test_pip_rewritten_shebang_alone_is_not_reported_as_drift(home: Path, monkeypatch):
+    """Measured live on chiap01: pip rewrites a Python script-files entry's
+    shebang line (#!/usr/bin/env python3 -> #!<venv>/bin/python) on every
+    install. That is universal and harmless, never a fact about this host
+    being wrong, so a script whose ONLY difference from the repo is its
+    shebang line must not be reported.
+    """
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    installed = home / ".skenv" / "bin" / "skfleet_readiness.py"
+    body = installed.read_bytes().split(b"\n", 1)[1]
+    installed.write_bytes(b"#!/home/other-user/.skenv/bin/python3\n" + body)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    assert [d for d in drifts if d.artifact == "script:skfleet_readiness.py"] == []
+
+
+# ---------------------------------------------------------------------------
+# Every per-host artifact, not just the dispatcher
+#
+# skfleet-rotate.py resolves its worker wrapper as
+# os.path.join(os.path.dirname(__file__), "skfleet-worker-wrapper.py") -- so
+# the wrapper that actually runs is the copy beside the DEPLOYED dispatcher
+# in ~/.local/bin, never the package's copy in ~/.skenv/bin. Before this,
+# the rollout copied only the dispatcher and this detector graded only the
+# dispatcher, so a wrapper change would have shipped a new dispatcher
+# calling an old wrapper with nothing to copy it and nothing to report it.
+# ---------------------------------------------------------------------------
+
+
+def test_per_host_artifacts_include_the_worker_wrapper():
+    """The declared list is not just the dispatcher."""
+    names = [p.name for p in PER_HOST_ARTIFACTS]
+    assert "skfleet-rotate.py" in names
+    assert "skfleet-worker-wrapper.py" in names
+
+
+def test_every_declared_per_host_artifact_exists_in_the_repo():
+    """A declared artifact that the repo does not ship would silently skip."""
+    for relative_path in PER_HOST_ARTIFACTS:
+        assert (REPO_ROOT / relative_path).is_file(), f"{relative_path} is declared but missing"
+
+
+@pytest.mark.parametrize("relative_path", PER_HOST_ARTIFACTS, ids=lambda p: p.name)
+def test_missing_per_host_artifact_is_reported(home: Path, monkeypatch, relative_path):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    (home / ".local" / "bin" / relative_path.name).unlink()
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    found = [d for d in drifts if d.artifact == f"dispatcher:{relative_path.name}"]
+    assert len(found) == 1, f"no finding for a missing {relative_path.name}: {drifts}"
+    assert found[0].kind == "missing"
+    assert found[0].found is None
+
+
+@pytest.mark.parametrize("relative_path", PER_HOST_ARTIFACTS, ids=lambda p: p.name)
+def test_stale_per_host_artifact_is_reported(home: Path, monkeypatch, relative_path):
+    """A deployed copy whose CONTENT differs from the repo is drift.
+
+    This is the shape the one-hour 2026-09-19 outage actually had: the
+    deployed file was present, readable, and wrong.
+    """
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    deployed = home / ".local" / "bin" / relative_path.name
+    deployed.write_text(deployed.read_text(encoding="utf-8") + "\n# stale\n", encoding="utf-8")
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    found = [d for d in drifts if d.artifact == f"dispatcher:{relative_path.name}"]
+    assert len(found) == 1, f"no finding for a stale {relative_path.name}: {drifts}"
+    assert found[0].kind == "changed"
+    assert found[0].found is not None and found[0].found != found[0].expected
+
+
+# ---------------------------------------------------------------------------
+# The checkout surface: the one nothing was reading
+# ---------------------------------------------------------------------------
+
+
+def test_checkout_surface_is_silent_without_a_pin(home: Path, monkeypatch):
+    """No pin means the manifest came from this very checkout, so comparing
+    the checkout against it is a tautology and must emit nothing rather than
+    a finding that can never be anything but clean.
+    """
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+
+    drifts = detect_drift(_manifest(), home, REPO_ROOT)
+
+    assert [d for d in drifts if d.artifact == "checkout:git_sha"] == []
+
+
+def test_pinned_checkout_on_the_wrong_commit_is_reported(home: Path, monkeypatch):
+    """A node whose CHECKOUT is stale reports it, even though every other
+    surface agrees -- because every other expected value is read from that
+    same stale checkout, so it agrees with itself perfectly.
+    """
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    manifest = {**_manifest(), "checkout_git_sha_pinned": True}
+
+    drifts = detect_drift(manifest, home, REPO_ROOT)
+
+    found = [d for d in drifts if d.artifact == "checkout:git_sha"]
+    assert len(found) == 1, f"a pinned stale checkout went unreported: {drifts}"
+    assert found[0].kind == "changed"
+    assert found[0].expected == "deadbeef"
+    assert found[0].found == rollout_drift._checkout_git_sha(REPO_ROOT)
+
+
+def test_pinned_checkout_on_the_right_commit_is_clean(home: Path, monkeypatch):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    real_sha = rollout_drift._checkout_git_sha(REPO_ROOT)
+    assert real_sha, "this test needs a real git checkout"
+    _matching_host(home, git_sha=real_sha)
+    manifest = {**_manifest(git_sha=real_sha), "checkout_git_sha_pinned": True}
+
+    drifts = detect_drift(manifest, home, REPO_ROOT)
+
+    assert [d for d in drifts if d.artifact == "checkout:git_sha"] == []
+
+
+def test_unreadable_checkout_is_missing_not_silently_clean(home: Path, monkeypatch, tmp_path):
+    """No git checkout at all must not read as agreement."""
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    assert rollout_drift._checkout_git_sha(tmp_path / "nope") is None
+
+
+def test_retired_dispatcher_units_are_not_shipped_so_never_drift_or_reinstall(home: Path):
+    """A rollout copies the shipped trees, so a retired unit must not be in them."""
+    from skcapstone.fleet.deployment_manifest import build_manifest
+
+    retired = set(rollout_drift.RETIRED_UNITS) | {"skfleet-rotate.service", "skfleet-rotate.timer"}
+    assert "skfleet-seat-cycle.service" in retired and "skfleet-niobe-live.timer" in retired
+    for tree in (
+        REPO_ROOT / "systemd",
+        REPO_ROOT / "systemd/production",
+        REPO_ROOT / "src/skcapstone/data/systemd",
+    ):
+        assert not {p.name for p in tree.iterdir()} & retired
+    assert not set(build_manifest(REPO_ROOT, home)["units"]) & retired
+
+
+def test_manifest_naming_a_retired_unit_is_not_missing_drift(home: Path, monkeypatch):
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    manifest = _manifest()
+    manifest["units"] = [*manifest["units"], "skfleet-seat-cycle.service"]
+    drifts = detect_drift(manifest, home, REPO_ROOT)
+    assert not [d for d in drifts if "seat-cycle" in d.artifact]
+
+
+def test_the_three_surfaces_are_named_distinctly(home: Path, monkeypatch):
+    """Desync all three at once: the report must name each one separately.
+
+    This is the whole point of the module for an operator: "something is
+    stale" is not actionable, "the checkout is stale AND the package is
+    stale AND this one script is stale" tells you which of three different
+    fixes to run.
+    """
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home, git_sha="0bad0bad")  # package surface disagrees
+    deployed = home / ".local" / "bin" / "skfleet-worker-wrapper.py"
+    deployed.write_text("# stale\n", encoding="utf-8")  # artifact surface disagrees
+    manifest = {**_manifest(git_sha="deadbeef"), "checkout_git_sha_pinned": True}
+
+    drifts = detect_drift(manifest, home, REPO_ROOT)
+    artifacts = {d.artifact for d in drifts}
+
+    assert "checkout:git_sha" in artifacts
+    assert "package:git_sha" in artifacts
+    assert "dispatcher:skfleet-worker-wrapper.py" in artifacts
+
+
+@pytest.mark.parametrize("name", ("__init__.py", "__main__.py", "skmail", "skmail_writer.py"))
+@pytest.mark.parametrize("mutation", ("missing", "changed"))
+def test_packaged_mail_content_drift_is_reported(home, monkeypatch, name, mutation):
+    """Moving mail out of script-files must preserve detection of real drift."""
+    monkeypatch.setattr(skfleet_readiness.subprocess, "run", _fake_systemctl(_all_responses()))
+    monkeypatch.setenv("SKFLEET_NODE", "node-test")
+    _matching_host(home)
+    path = home / ".skenv/lib/python3.12/site-packages/skcapstone/fleet/skmail" / name
+    if mutation == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(path.read_bytes() + b"\n# changed implementation\n")
+    found = [
+        d
+        for d in detect_drift(_manifest(), home, REPO_ROOT)
+        if d.artifact == f"package:skmail/{name}"
+    ]
+    assert len(found) == 1
+    assert found[0].kind == mutation

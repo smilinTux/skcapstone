@@ -12,17 +12,28 @@ Usage:
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+#: Total wall-clock seconds the memory drift checks may spend per doctor run.
+DRIFT_BUDGET_SECONDS = 120.0
+#: Ceiling for one ``skmemory health`` call. lumina on noroc2027 (41k
+#: memories) takes about 25 s, so the old 30 s ceiling sat right at the edge.
+DRIFT_AGENT_TIMEOUT_SECONDS = 60.0
+#: Concurrent ``skmemory health`` subprocesses.
+DRIFT_WORKERS = 4
 
 
 @dataclass
@@ -118,7 +129,12 @@ class DiagnosticReport:
         }
 
 
-def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
+def run_diagnostics(
+    home: Path,
+    deep: bool = False,
+    all_agents: bool = False,
+    drift_budget: float = DRIFT_BUDGET_SECONDS,
+) -> DiagnosticReport:
     """Run all diagnostic checks against the sovereign agent stack.
 
     Args:
@@ -127,6 +143,11 @@ def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
             content comparison of each editable checkout against its
             released artifact). Off by default so session-start runs stay
             fast and work offline.
+        all_agents: Sweep memory drift across EVERY agent folder on this
+            node instead of the active agent plus registered memory
+            profiles. See :func:`_check_memory_drift`.
+        drift_budget: Wall-clock seconds the memory drift checks may use in
+            total. Agents not reached in time come back ``unknown``.
 
     Returns:
         DiagnosticReport with results for every check.
@@ -140,18 +161,598 @@ def run_diagnostics(home: Path, deep: bool = False) -> DiagnosticReport:
     report.checks.extend(_check_identity(home))
     report.checks.extend(_check_identity_consistency(home))
     report.checks.extend(_check_memory(home))
+    report.checks.extend(_check_memory_drift(home, all_agents=all_agents, budget=drift_budget))
+    report.checks.extend(_check_memory_sync_timer(home))
+    report.checks.extend(_check_io_priority())
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
     report.checks.extend(_check_sync_conflicts(home))
+    report.checks.extend(_check_stignore(home))
     report.checks.extend(_check_multi_writer_layouts(home))
     report.checks.extend(_check_scheduler(home))
     report.checks.extend(_check_systemd_runtime(home))
     report.checks.extend(_check_store_integrity(home))
+    report.checks.extend(_check_crontab_targets())
+    report.checks.extend(_check_estate(home))
     report.checks.extend(_check_codex())
     report.checks.extend(_check_harness_env(home))
     report.checks.extend(_check_versions())
 
     return report
+
+
+# ---------------------------------------------------------------------------
+# Estate bootstrap checks (category "estate").
+#
+# Every check below exists because a second estate was stood up from scratch
+# and the item was MISSING, with nothing in the codebase to create it and
+# nothing to report its absence. Each one names the exact fix, and each one
+# reports the real state: a question this host cannot answer comes back
+# ``unknown``, never a pass.
+#
+# The checks also police the estate-versus-host split described in
+# :mod:`skcapstone.estate`. ``~/.skcapstone`` is ONE Syncthing folder shared
+# by every node, so a host-local value written into it hands every node the
+# same wrong answer. That is the bug class that produces an estate where
+# every node believes it is the control node, and ``estate:host-local-leak``
+# exists to catch it on its own terms.
+# ---------------------------------------------------------------------------
+
+#: The bounded lifecycle seat timers that still ship. A seat without its timer
+#: never runs, which is the state that reported ok=True with no workflow layer.
+#: The paused Atlas, Seraph and Niobe seats were retired and have no timer.
+SEAT_CYCLE_TIMERS = tuple(f"skfleet-{seat}.timer" for seat in ("link", "mero"))
+
+#: Files in the SYNCED estate tree that are cheap to read and plausible
+#: places for a host-local variable to be pasted. Deliberately a short,
+#: bounded list: the estate tree holds thousands of card files and a full
+#: scan would make ``doctor`` unusable.
+_SYNCED_ENV_GLOBS = ("*.env", "*.conf", "config/*.env", "config/*.conf", "config/*.sh")
+
+
+def _check_estate_seat_control_plane(home: Path) -> Check:
+    """Verify the estate has elected a host to run the five lifecycle seats.
+
+    Args:
+        home: Agent home directory (the synced estate tree).
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    from .estate import local_host
+    from .lifecycle_seats import LIFECYCLE_SEATS
+
+    path = home / "coordination" / "seat-control-plane.json"
+    fix = f"skcapstone coord bootstrap --home {home}"
+    if not path.exists():
+        return Check(
+            name="estate:seat-control-plane",
+            description="Lifecycle seat control plane",
+            passed=False,
+            detail=(
+                f"{path} is absent, so all five lifecycle seats "
+                "(atlas, link, mero, niobe, seraph) refuse to run"
+            ),
+            fix=fix,
+            category="estate",
+        )
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return Check(
+            name="estate:seat-control-plane",
+            description="Lifecycle seat control plane",
+            passed=False,
+            detail=f"{path} is unreadable: {exc}",
+            fix=f"Repair or delete the file, then run: {fix}",
+            category="estate",
+        )
+    if not isinstance(data, dict) or data.get("schema_version") != 1:
+        return Check(
+            name="estate:seat-control-plane",
+            description="Lifecycle seat control plane",
+            passed=False,
+            detail=f"{path} is not a schema_version 1 control record",
+            fix=f"Repair or delete the file, then run: {fix}",
+            category="estate",
+        )
+    active = str(data.get("active_host") or "")
+    seats = data.get("seats")
+    if not active or not isinstance(seats, dict) or set(seats) != set(LIFECYCLE_SEATS):
+        return Check(
+            name="estate:seat-control-plane",
+            description="Lifecycle seat control plane",
+            passed=False,
+            detail=(
+                f"{path} must name an active_host and all five lifecycle seats; "
+                f"it names host={active or 'none'} seats={sorted(seats) if isinstance(seats, dict) else seats}"  # noqa: E501
+            ),
+            fix=f"Repair or delete the file, then run: {fix}",
+            category="estate",
+        )
+    unpinned = sorted(
+        seat for seat, hosts in seats.items() if not isinstance(hosts, list) or active not in hosts
+    )
+    if unpinned:
+        return Check(
+            name="estate:seat-control-plane",
+            description="Lifecycle seat control plane",
+            passed=False,
+            detail=f"{path} does not place {', '.join(unpinned)} on active_host {active}",
+            fix=f"Repair or delete the file, then run: {fix}",
+            category="estate",
+        )
+    here = local_host()
+    # active_host naming ANOTHER host is correct and expected on every node
+    # that is not the elected one. It is estate-wide truth, an election that
+    # guarantees exactly one host dispatches, so a non-elected node reading
+    # someone else's name is the system working.
+    where = "this host" if active == here else f"{active} (this host is {here}, not elected)"
+    return Check(
+        name="estate:seat-control-plane",
+        description="Lifecycle seat control plane",
+        passed=True,
+        detail=f"five seats elected on {where}",
+        category="estate",
+    )
+
+
+def _check_estate_skmail_helper() -> Check:
+    """Verify the ``skmail`` helper the seats shell out to is resolvable.
+
+    Seats resolve it via ``$SKMAIL_BIN``, then the interpreter's own bin
+    directory, then ``PATH`` (``seat_mail._mail_command``). When none of the
+    three answer, every seat reports ``mailbox_error: skmail_not_found``.
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    from .seat_mail import _mail_command
+
+    resolved = _mail_command()
+    if resolved:
+        return Check(
+            name="estate:skmail-helper",
+            description="skmail coordination helper",
+            passed=True,
+            detail=resolved,
+            category="estate",
+        )
+    return Check(
+        name="estate:skmail-helper",
+        description="skmail coordination helper",
+        passed=False,
+        detail=(
+            "not on $SKMAIL_BIN, beside the running interpreter, or on PATH; "
+            "every seat will report mailbox_error: skmail_not_found"
+        ),
+        fix=(
+            "install -m 755 <skcapstone checkout>/scripts/fleet/skmail "
+            f"{Path(sys.executable).parent / 'skmail'}"
+        ),
+        category="estate",
+    )
+
+
+def _check_estate_observation_feed(home: Path) -> Check:
+    """Verify the Link seat has a readable, fresh observation feed.
+
+    Args:
+        home: Agent home directory (the synced estate tree).
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    path = home / "coordination" / "link-observations.json"
+    if not path.exists():
+        return Check(
+            name="estate:link-observation-feed",
+            description="Link observation feed",
+            passed=False,
+            detail=f"{path} is absent, so the link seat returns observation_feed_missing",
+            fix=f"skcapstone coord bootstrap --home {home}",
+            category="estate",
+        )
+    try:
+        from .link_observation_feed import ObservationFeedError, load_observation_feed
+
+        feed = load_observation_feed(path)
+    except ObservationFeedError as exc:
+        stale = str(exc) == "observation_feed_stale"
+        return Check(
+            name="estate:link-observation-feed",
+            description="Link observation feed",
+            passed=False,
+            detail=f"{path}: {exc}",
+            fix=(
+                "systemctl --user enable --now skfleet-link-producer.timer"
+                if stale
+                else f"Delete the file and re-run: skcapstone coord bootstrap --home {home}"
+            ),
+            category="estate",
+        )
+    except Exception as exc:  # noqa: BLE001 - doctor must never crash the report
+        return Check(
+            name="estate:link-observation-feed",
+            description="Link observation feed",
+            passed=False,
+            unknown=True,
+            detail=f"{path} could not be evaluated: {type(exc).__name__}: {exc}",
+            category="estate",
+        )
+    return Check(
+        name="estate:link-observation-feed",
+        description="Link observation feed",
+        passed=True,
+        detail=f"fresh, {len(feed.records)} observation(s) at revision {feed.source_revision}",
+        category="estate",
+    )
+
+
+def _env_d_node_files() -> list[Path]:
+    """Return host-local ``environment.d`` files that set ``SKFLEET_NODE``."""
+    from .estate import NODE_ENV, environment_d_dir
+
+    found: list[Path] = []
+    directory = environment_d_dir()
+    if not directory.is_dir():
+        return found
+    for path in sorted(directory.glob("*.conf")):
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if any(line.strip().startswith(f"{NODE_ENV}=") for line in body.splitlines()):
+            found.append(path)
+    return found
+
+
+def _check_estate_node_env() -> Check:
+    """Verify ``SKFLEET_NODE`` is persisted host-locally, not only in a unit.
+
+    It used to be set ONLY inside a systemd unit, so the timer-driven seats
+    saw it and nothing else did: every interactive ``skcapstone fleet ...``
+    call failed with "no such node object".
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    from .estate import NODE_ENV, environment_d_dir, node_name
+
+    persisted = _env_d_node_files()
+    live = os.environ.get(NODE_ENV, "")
+    expected = node_name()
+    if persisted:
+        return Check(
+            name="estate:fleet-node-env",
+            description=f"{NODE_ENV} persisted for every shell on this host",
+            passed=True,
+            detail=(
+                f"{', '.join(str(p) for p in persisted)}"
+                + (f"; live value {live}" if live else "; not yet in this shell's environment")
+            ),
+            category="estate",
+        )
+    return Check(
+        name="estate:fleet-node-env",
+        description=f"{NODE_ENV} persisted for every shell on this host",
+        passed=False,
+        detail=(
+            f"no {NODE_ENV}= assignment in {environment_d_dir()}"
+            + (
+                f"; it is set to {live} in this process only, which a new shell will not see"
+                if live
+                else "; interactive `skcapstone fleet ...` will fail with 'no such node object'"
+            )
+            + ". This value is HOST-LOCAL: every node has a different one, so it belongs "
+            "under XDG config and must never be written into the synced ~/.skcapstone tree"
+        ),
+        fix=(
+            f"skcapstone coord bootstrap (writes {environment_d_dir() / 'skfleet-node.conf'} "
+            f"with {NODE_ENV}={expected}), then log in again or run: "
+            f"systemctl --user import-environment {NODE_ENV}"
+        ),
+        category="estate",
+    )
+
+
+def _sknoded_interval(unit_dir: Path) -> tuple[Optional[int], str]:
+    """Read the ``--interval`` seconds from the installed ``sknoded.service``.
+
+    Args:
+        unit_dir: The systemd user unit directory to read.
+
+    Returns:
+        An ``(interval, detail)`` tuple. ``interval`` is ``None`` when the
+        unit is absent or states no interval, and ``detail`` says which.
+    """
+    path = unit_dir / "sknoded.service"
+    if not path.is_file():
+        return None, f"{path} is not installed"
+    try:
+        body = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return None, f"{path} is unreadable: {exc}"
+    match = re.search(r"^ExecStart=.*?--interval\s+(\d+)", body, re.MULTILINE)
+    if not match:
+        return None, f"{path} states no --interval on its ExecStart"
+    return int(match.group(1)), str(path)
+
+
+def _check_estate_sknoded_interval(unit_dir: Path) -> Check:
+    """Verify sknoded beats often enough that a healthy node never reads Dead.
+
+    Args:
+        unit_dir: The systemd user unit directory to read.
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    from .fleet.node_controller import DEAD_AFTER_S, NOT_READY_AFTER_S
+
+    # Three beats before NotReady: one lost beat must be noise, not a phase
+    # transition. An interval at or above NOT_READY_AFTER_S guarantees the
+    # opposite, which is how a healthy node read as Dead between its beats.
+    ceiling = NOT_READY_AFTER_S // 3
+    interval, detail = _sknoded_interval(unit_dir)
+    if interval is None:
+        return Check(
+            name="estate:sknoded-interval",
+            description="sknoded beat interval versus the liveness thresholds",
+            passed=False,
+            unknown=True,
+            detail=detail,
+            category="estate",
+        )
+    if interval <= ceiling:
+        return Check(
+            name="estate:sknoded-interval",
+            description="sknoded beat interval versus the liveness thresholds",
+            passed=True,
+            detail=(
+                f"--interval {interval}s, at or under the {ceiling}s ceiling "
+                f"(NOT_READY_AFTER_S={NOT_READY_AFTER_S}, DEAD_AFTER_S={DEAD_AFTER_S})"
+            ),
+            category="estate",
+        )
+    phase = "Dead" if interval >= DEAD_AFTER_S else "NotReady"
+    return Check(
+        name="estate:sknoded-interval",
+        description="sknoded beat interval versus the liveness thresholds",
+        passed=False,
+        detail=(
+            f"--interval {interval}s in {detail} exceeds the {ceiling}s ceiling "
+            f"(NOT_READY_AFTER_S={NOT_READY_AFTER_S}, DEAD_AFTER_S={DEAD_AFTER_S}), "
+            f"so a healthy node reads as {phase} between its own beats"
+        ),
+        fix=(
+            f"Set ExecStart=... sknoded --interval {ceiling} in {unit_dir / 'sknoded.service'}, "
+            "then: systemctl --user daemon-reload && systemctl --user restart sknoded.service"
+        ),
+        category="estate",
+    )
+
+
+def _check_estate_seat_units(unit_dir: Path, home: Path) -> Check:
+    """Verify the bounded lifecycle seat timers are installed on this host.
+
+    Args:
+        unit_dir: The systemd user unit directory to read.
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    if not unit_dir.is_dir():
+        return Check(
+            name="estate:seat-units",
+            description="Bounded lifecycle seat units installed",
+            passed=False,
+            unknown=True,
+            detail=f"{unit_dir} does not exist, so no unit can be observed",
+            category="estate",
+        )
+    from .estate import local_host
+
+    control = home / "coordination" / "seat-control-plane.json"
+    try:
+        elected = json.loads(control.read_text(encoding="utf-8")).get("active_host")
+    except (OSError, ValueError, AttributeError):
+        elected = None
+    if elected and elected != local_host():
+        return Check(
+            name="estate:seat-units",
+            description="Bounded lifecycle seat units installed",
+            passed=True,
+            detail=f"seat host is {elected}; this host is not elected",
+            category="estate",
+        )
+    missing = [name for name in SEAT_CYCLE_TIMERS if not (unit_dir / name).is_file()]
+    if not missing:
+        return Check(
+            name="estate:seat-units",
+            description="Bounded lifecycle seat units installed",
+            passed=True,
+            detail=f"all {len(SEAT_CYCLE_TIMERS)} seat timers present in {unit_dir}",
+            category="estate",
+        )
+    return Check(
+        name="estate:seat-units",
+        description="Bounded lifecycle seat units installed",
+        passed=False,
+        detail=(
+            f"{len(missing)} of {len(SEAT_CYCLE_TIMERS)} seat timers absent from {unit_dir}: "
+            f"{', '.join(missing)}. The workflow layer does not run on this host"
+        ),
+        fix=(
+            "bash <skcapstone checkout>/scripts/install.sh   # lays the units down, then "
+            "systemctl --user enable --now " + " ".join(missing)
+        ),
+        category="estate",
+    )
+
+
+def _check_estate_unit_entrypoints(unit_dir: Path) -> Check:
+    """Verify every installed SKFleet unit names a python module that exists.
+
+    A unit whose ``ExecStart`` runs ``python -m <module>`` for a module that
+    is not installed fails the instant it is enabled, and systemd reports
+    only a generic start failure. ``skfleet-niobe-shadow.service`` shipped in
+    exactly that state and nobody noticed, so this check asks the question
+    directly instead of waiting for the unit to be enabled.
+
+    Args:
+        unit_dir: The systemd user unit directory to read.
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    if not unit_dir.is_dir():
+        return Check(
+            name="estate:unit-entrypoints",
+            description="Installed SKFleet units name importable modules",
+            passed=False,
+            unknown=True,
+            detail=f"{unit_dir} does not exist, so no unit can be observed",
+            category="estate",
+        )
+    broken: list[str] = []
+    examined = 0
+    for path in sorted(unit_dir.glob("skfleet-*.service")):
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        match = re.search(r"^ExecStart=.*?-m\s+(skcapstone[\w.]*)", body, re.MULTILINE)
+        if not match:
+            continue
+        examined += 1
+        module = match.group(1)
+        try:
+            if importlib.util.find_spec(module) is None:
+                broken.append(f"{path.name} -> {module}")
+        except (ImportError, ValueError):
+            broken.append(f"{path.name} -> {module}")
+    if not broken:
+        return Check(
+            name="estate:unit-entrypoints",
+            description="Installed SKFleet units name importable modules",
+            passed=True,
+            detail=f"{examined} unit(s) checked, every ExecStart module importable",
+            category="estate",
+        )
+    return Check(
+        name="estate:unit-entrypoints",
+        description="Installed SKFleet units name importable modules",
+        passed=False,
+        detail=f"{len(broken)} unit(s) name a missing module: {'; '.join(broken)}",
+        fix=(
+            "Remove the unit, or install the package that provides its module. A unit "
+            "that names a module nobody ships fails the instant it is enabled"
+        ),
+        category="estate",
+    )
+
+
+def _check_estate_host_local_leak(home: Path) -> Check:
+    """Report host-local values found inside the SYNCED estate tree.
+
+    This is a defect in its own right, not a symptom. ``~/.skcapstone`` is
+    one Syncthing folder shared by every node, so a variable that answers a
+    question about ONE machine hands every node in the estate the first
+    machine's answer. That is the exact mechanism that produces an estate
+    where every node believes it is the control node.
+
+    Args:
+        home: Agent home directory (the synced estate tree).
+
+    Returns:
+        One Check in the ``estate`` category.
+    """
+    from .estate import HOST_LOCAL_ENV_NAMES
+
+    leaks: list[str] = []
+    for pattern in _SYNCED_ENV_GLOBS:
+        for path in sorted(home.glob(pattern)):
+            if not path.is_file():
+                continue
+            try:
+                body = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for line in body.splitlines():
+                stripped = line.strip().removeprefix("export ").strip()
+                for name in HOST_LOCAL_ENV_NAMES:
+                    if stripped.startswith(f"{name}="):
+                        leaks.append(f"{path.name}: {name}")
+    if not leaks:
+        return Check(
+            name="estate:host-local-leak",
+            description="No host-local value inside the synced estate tree",
+            passed=True,
+            detail=(f"none of {', '.join(HOST_LOCAL_ENV_NAMES)} assigned under {home}"),
+            category="estate",
+        )
+    unique = sorted(set(leaks))
+    return Check(
+        name="estate:host-local-leak",
+        description="No host-local value inside the synced estate tree",
+        passed=False,
+        detail=(
+            f"{len(unique)} host-local assignment(s) inside the SYNCED tree {home}: "
+            f"{'; '.join(unique)}. Every node syncs this file and inherits one host's answer"
+        ),
+        fix=(
+            "Move each assignment out of ~/.skcapstone into the host-local XDG config "
+            "($XDG_CONFIG_HOME/environment.d/, default ~/.config/environment.d/), which "
+            "is per-machine and never synced"
+        ),
+        category="estate",
+    )
+
+
+def _check_estate(home: Path) -> list[Check]:
+    """Run every estate bootstrap check.
+
+    Args:
+        home: Agent home directory (the synced estate tree).
+
+    Returns:
+        List of Check results in the ``estate`` category.
+    """
+    from .estate import xdg_config_home
+
+    unit_dir = xdg_config_home() / "systemd" / "user"
+    checks = [
+        _check_estate_seat_control_plane(home),
+        _check_estate_skmail_helper(),
+        _check_estate_observation_feed(home),
+        _check_estate_node_env(),
+        _check_estate_host_local_leak(home),
+    ]
+    if platform.system() != "Linux":
+        checks.extend(
+            Check(
+                name=name,
+                description=description,
+                passed=False,
+                unknown=True,
+                detail=f"systemd user units are a Linux concept; this host is {platform.system()}",
+                category="estate",
+            )
+            for name, description in (
+                (
+                    "estate:sknoded-interval",
+                    "sknoded beat interval versus the liveness thresholds",
+                ),
+                ("estate:seat-units", "Bounded lifecycle seat units installed"),
+                ("estate:unit-entrypoints", "Installed SKFleet units name importable modules"),
+            )
+        )
+        return checks
+    checks.append(_check_estate_sknoded_interval(unit_dir))
+    checks.append(_check_estate_seat_units(unit_dir, home))
+    checks.append(_check_estate_unit_entrypoints(unit_dir))
+    return checks
 
 
 def multi_writer_migrations(home: Path) -> list[tuple[str, Path]]:
@@ -214,6 +815,11 @@ def _check_multi_writer_layouts(home: Path) -> list[Check]:
     ]
 
 
+#: How many conflict paths ``sync:conflicts`` prints. The count is always exact; the
+#: list is capped so a flood (hundreds of copies) does not bury the rest of the report.
+_CONFLICT_PATHS_SHOWN = 10
+
+
 def _check_sync_conflicts(home: Path) -> list[Check]:
     """Detect Syncthing sync-conflict files under the shared root.
 
@@ -231,7 +837,15 @@ def _check_sync_conflicts(home: Path) -> list[Check]:
     """
     conflicts: list[Path] = []
     if home.exists():
-        conflicts = [p for p in home.rglob("*.sync-conflict-*") if ".stversions" not in p.parts]
+        # os.walk with .stversions pruned, not Path.rglob: chiap04's shared
+        # root holds ~2.7M entries (318k of them in .stversions), and rglob
+        # built a Path for every one before filtering (18 s there).
+        for dirpath, dirnames, filenames in os.walk(home):
+            if ".stversions" in dirnames:
+                dirnames.remove(".stversions")
+            conflicts.extend(
+                Path(dirpath, n) for n in dirnames + filenames if ".sync-conflict-" in n
+            )
     if not conflicts:
         return [
             Check(
@@ -243,12 +857,15 @@ def _check_sync_conflicts(home: Path) -> list[Check]:
             )
         ]
     areas = sorted({p.relative_to(home).parts[0] for p in conflicts})
+    shown = sorted(str(p.relative_to(home)) for p in conflicts)[:_CONFLICT_PATHS_SHOWN]
+    more = len(conflicts) - len(shown)
+    paths = "; ".join(shown) + (f"; (+{more} more)" if more > 0 else "")
     return [
         Check(
             name="sync:conflicts",
             description="Syncthing sync-conflict files present",
             passed=False,
-            detail=f"{len(conflicts)} conflict file(s) in: {', '.join(areas)}",
+            detail=f"{len(conflicts)} conflict file(s) in: {', '.join(areas)}. Paths: {paths}",
             fix=(
                 "List with: find ~/.skcapstone -name '*.sync-conflict-*' ; keep "
                 "the authoritative copy and remove stale duplicates "
@@ -257,6 +874,129 @@ def _check_sync_conflicts(home: Path) -> list[Check]:
             category="sync",
         )
     ]
+
+
+def _check_stignore(home: Path) -> list[Check]:
+    """Check the Syncthing ignore layout against SYNCTHING_IGNORE_STANDARD. Report only.
+
+    ``.stignore`` is never synced, so per-node copies drift (one node lacked the
+    ``/secrets`` rule another had). The standard puts the rules in a synced
+    ``.stignore-shared`` and makes ``.stignore`` a shim that includes it. The effective
+    rules come from the Syncthing daemon (``/rest/db/ignores``) when it answers, else
+    from the files. A GPU worker's allowlist ``.stignore`` is a recognised variant, not
+    a violation. Nothing here changes a file; the fix text names the command.
+
+    Args:
+        home: Shared root directory (~/.skcapstone).
+
+    Returns:
+        Four checks: shim, shared file, shared-file drift, critical rules.
+    """
+    from .stignore_layout import diagnose
+
+    if not home.is_dir():
+        return []
+    diag = diagnose(home)
+    found = {f.code: f for f in diag.findings}
+    worker = diag.kind == "worker"
+    fix_install = "skcapstone sync stignore"
+    checks: list[Check] = []
+
+    if "not_shim" in found:
+        checks.append(
+            Check(
+                name="sync:stignore-shim",
+                description=".stignore is the shim that includes .stignore-shared",
+                passed=False,
+                detail=found["not_shim"].detail,
+                fix="skcapstone sync stignore --migrate",
+                category="sync",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                name="sync:stignore-shim",
+                description=".stignore is the shim that includes .stignore-shared",
+                passed=True,
+                detail="worker allowlist (no include by design)" if worker else "shim",
+                category="sync",
+            )
+        )
+
+    if "shared_missing" in found:
+        checks.append(
+            Check(
+                name="sync:stignore-shared",
+                description=".stignore-shared present",
+                passed=False,
+                detail=found["shared_missing"].detail,
+                fix=fix_install,
+                category="sync",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                name="sync:stignore-shared",
+                description=".stignore-shared present",
+                passed=True,
+                detail="not used on a worker allowlist" if worker else "present",
+                category="sync",
+            )
+        )
+
+    drift = found.get("shared_drift")
+    checks.append(
+        Check(
+            name="sync:stignore-shared-drift",
+            description=".stignore-shared matches the packaged canonical version",
+            passed=drift is None,
+            detail=drift.detail if drift else "identical" if not worker else "n/a on a worker",
+            fix=(
+                "Report only. If the packaged version is behind, update "
+                "src/skcapstone/defaults/.stignore-shared; if this node is behind, edit "
+                ".stignore-shared once (it syncs to every node)."
+                if drift
+                else ""
+            ),
+            category="sync",
+        )
+    )
+
+    crit = [f for f in diag.findings if f.code in ("critical_missing", "daemon_ignore_error")]
+    if diag.kind == "absent":
+        checks.append(
+            Check(
+                name="sync:stignore-critical-rules",
+                description="Critical ignore rules in the effective ruleset",
+                passed=False,
+                detail="no .stignore, so nothing is ignored",
+                fix=fix_install,
+                category="sync",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                name="sync:stignore-critical-rules",
+                description="Critical ignore rules in the effective ruleset",
+                passed=not crit,
+                detail=(
+                    "; ".join(f.detail for f in crit)
+                    if crit
+                    else f"all present (read from {diag.source})"
+                ),
+                fix=(
+                    "Add the rule to .stignore-shared once (it syncs to every node); on a "
+                    "worker, add it to .stignore above the allowlist."
+                    if crit
+                    else ""
+                ),
+                category="sync",
+            )
+        )
+    return checks
 
 
 def _check_scheduler(home: Path) -> list[Check]:
@@ -329,6 +1069,48 @@ def _check_scheduler(home: Path) -> list[Check]:
             )
         )
     return checks
+
+
+def _check_crontab_targets() -> list[Check]:
+    """Report user crontab entries whose target script does not exist.
+
+    Read-only (``crontab -l`` only). Never fails hard: no crontab is a pass,
+    and an unavailable ``crontab`` binary is ``unknown``. Removal of dead
+    entries is a separate operation, this only reports them.
+    """
+    from skcapstone.cron_audit import audit_crontab, read_crontab
+
+    name, desc = "cron:missing-targets", "Crontab entries point at existing scripts"
+    text, note = read_crontab()
+    if text is None:
+        return [Check(name, desc, True, note, category="cron", unknown=True)]
+    if not text.strip():
+        return [Check(name, desc, True, note or "crontab is empty", category="cron")]
+    try:
+        audit = audit_crontab(text)
+    except Exception as exc:  # parser bug must never break doctor
+        return [
+            Check(name, desc, True, f"crontab parse error: {exc}", category="cron", unknown=True)
+        ]
+    if not audit.findings:
+        detail = f"{audit.entries} entries, all targets exist"
+        if audit.unresolved:
+            detail += f" ({audit.unresolved} unresolvable variable targets skipped)"
+        return [Check(name, desc, True, detail, category="cron")]
+    shown = "; ".join(f"line {f.line_no}: {f.target}" for f in audit.findings[:10])
+    more = len(audit.findings) - 10
+    if more > 0:
+        shown += f"; +{more} more"
+    return [
+        Check(
+            name,
+            desc,
+            False,
+            f"{len(audit.findings)} of {audit.entries} entries missing a target: {shown}",
+            fix="Review `crontab -l`: restore the script or remove the entry.",
+            category="cron",
+        )
+    ]
 
 
 def _systemd_unit_files(unit_dir: Path) -> list[str]:
@@ -613,13 +1395,25 @@ def _check_store_integrity(home: Path) -> list[Check]:
     coord_dir = home / "coordination"
     card_cores = sorted(cards_dir.glob("*/core.json"))
     card_events = sorted(cards_dir.glob("*/events/*.jsonl"))
-    legacy_jsonl = sorted((coord_dir / "archive").glob("*.jsonl")) + sorted(
-        (coord_dir / "card_events").glob("*.jsonl")
-    )
+    archive_jsonl = sorted((coord_dir / "archive").glob("*.jsonl"))
+    overlay_jsonl = sorted((coord_dir / "card_events").glob("*.jsonl"))
     scanned_j, problems_j = _scan_json_store(card_cores, jsonl=False)
-    scanned_l, problems_l = _scan_json_store(card_events + legacy_jsonl, jsonl=True)
-    card_scanned = scanned_j + scanned_l
-    card_problems = problems_j + problems_l
+    scanned_l, problems_l = _scan_json_store(card_events + archive_jsonl, jsonl=True)
+    from skcoord.card_event_recovery import scan_overlay_records
+
+    overlay_problems = scan_overlay_records(home)
+    card_scanned = scanned_j + scanned_l + len(overlay_jsonl)
+    card_problems = (
+        problems_j
+        + problems_l
+        + [
+            (
+                f"{item['file']} line {item['line']}: {item['error_type']}"
+                + (f" card_hint={item['card_hint']}" if item.get("card_hint") else "")
+            )
+            for item in overlay_problems
+        ]
+    )
     checks.append(
         Check(
             name="store:cards",
@@ -628,13 +1422,13 @@ def _check_store_integrity(home: Path) -> list[Check]:
             detail=(
                 f"{card_scanned} file(s) OK"
                 if not card_problems
-                else f"{len(card_problems)} corrupt: {'; '.join(card_problems[:3])}"
+                else f"{len(card_problems)} rejected: {'; '.join(card_problems[:3])}"
             ),
             fix=(
                 ""
                 if not card_problems
-                else "Repair or remove the corrupt store file(s); "
-                "append-only logs must be valid JSON per line"
+                else "Use the supported hash-pinned recovery command for rejected overlay "
+                "records; append-only logs must be schema-valid JSON per line"
             ),
             category="store",
         )
@@ -1278,7 +2072,7 @@ def _check_identity_consistency(home: Path) -> list[Check]:
                 passed=False,
                 unknown=True,
                 detail=(
-                    "UNKNOWN: capauth.canonical_subject not importable: " f"{subject_import_error}"
+                    f"UNKNOWN: capauth.canonical_subject not importable: {subject_import_error}"
                 ),
                 category="identity",
             )
@@ -1371,6 +2165,734 @@ def _check_memory(home: Path) -> list[Check]:
         )
     )
 
+    return checks
+
+
+def _resolve_agents_dir(home: Path) -> Path:
+    """Resolve the ``~/.skcapstone/agents/`` directory for either a
+    shared-root or a single agent-home ``home`` input (mirrors
+    :func:`_resolve_memory_dir`).
+
+    Args:
+        home: Either the shared ``~/.skcapstone`` root, or a single
+            agent's home directory (``~/.skcapstone/agents/<agent>``).
+
+    Returns:
+        Path: The ``agents`` directory containing every agent home on
+        this node.
+    """
+    if home.parent.name == "agents":
+        return home.parent
+    return home / "agents"
+
+
+def _every_agent_with_memory_home(home: Path) -> list[str]:
+    """Every agent name with a ``memory/`` directory on this node.
+
+    Card: skmemory sqlite-only-orphans, 2026-10-16. A drift/timer check
+    scoped to only the currently-active agent would have missed the exact
+    gap that went undetected for six months: the laptop's lumina home had
+    a memory dir and 23,525 drifted rows, but nobody ever ran a check
+    against it specifically. These checks are fleet-wide per node instead.
+
+    Args:
+        home: Either the shared ``~/.skcapstone`` root or a single
+            agent's home directory.
+
+    Returns:
+        list[str]: Agent names, sorted, excluding any without a
+        ``memory/`` subdirectory.
+    """
+    agents_dir = _resolve_agents_dir(home)
+    if not agents_dir.exists():
+        return []
+    names = []
+    for entry in sorted(agents_dir.iterdir()):
+        if entry.is_dir() and (entry / "memory").is_dir():
+            names.append(entry.name)
+    return names
+
+
+#: Where the skmemory services get their stack settings. systemd --user
+#: imports ``environment.d`` into every unit, and the skmemory/skwhisper units
+#: add ``pg.env`` as an ``EnvironmentFile``. An interactive shell sees neither
+#: unless something exports them, and a stale export in a dotfile (nor,
+#: 2026-10-27: ``~/.bashrc`` still carried the pre-rotation pg password) makes
+#: every agent read as ``degraded`` while the services are healthy.
+SKMEMORY_ENV_FILES = (
+    "~/.config/environment.d/*.conf",
+    "~/.config/skmemory/pg.env",
+)
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    """Parse a systemd ``KEY=VALUE`` env file. Comments and blanks are skipped."""
+    out: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", ";")) or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key:
+            out[key] = value
+    return out
+
+
+def _skmemory_service_env() -> dict[str, str]:
+    """The ``SKMEMORY_*`` settings the skmemory services actually run with.
+
+    Layered like systemd does it: ``environment.d`` files in lexical order,
+    then ``pg.env`` on top. Only ``SKMEMORY_*`` keys are taken and empty
+    values are ignored (``pg.env`` deliberately leaves the DSN to
+    ``environment.d``). These OVERRIDE the inherited shell values, so doctor
+    measures memory health with the same credentials the services use, not
+    whatever an old dotfile exported. A host with none of these files gets
+    an empty dict and the inherited environment is used unchanged.
+    """
+    env: dict[str, str] = {}
+    for pattern in SKMEMORY_ENV_FILES:
+        expanded = Path(pattern).expanduser()
+        paths = sorted(expanded.parent.glob(expanded.name)) if "*" in pattern else [expanded]
+        for path in paths:
+            if not path.is_file():
+                continue
+            for key, value in _parse_env_file(path).items():
+                if key.startswith("SKMEMORY_") and value:
+                    env[key] = value
+    return env
+
+
+def _skmemory_health_json(
+    agent: str, timeout: float = DRIFT_AGENT_TIMEOUT_SECONDS
+) -> Optional[dict]:
+    """Run ``skmemory health`` for ``agent`` as a subprocess.
+
+    skmemory resolves its active agent's paths from environment variables
+    at MODULE IMPORT time (cached for the life of the process), so an
+    in-process loop over multiple agents cannot work here -- the same
+    reasoning ``scripts/skmemory-sync-audit.sh`` already applies. Each
+    agent gets its own subprocess with all three selectors set (the
+    fail-closed resolver refuses when they disagree).
+
+    Args:
+        agent: The agent name to check (``SKAGENT`` value).
+        timeout: Seconds before the call is abandoned.
+
+    Returns:
+        Optional[dict]: The parsed JSON health payload, or ``None`` if the
+        ``skmemory`` CLI is missing, the call failed, or its output could
+        not be parsed as JSON.
+    """
+    skmemory_bin = shutil.which("skmemory")
+    if not skmemory_bin or timeout <= 0:
+        return None
+    try:
+        env = dict(os.environ)
+        env.update(_skmemory_service_env())
+        env.update(SKAGENT=agent, SKCAPSTONE_AGENT=agent, SKMEMORY_AGENT=agent)
+        result = subprocess.run(
+            [skmemory_bin, "health"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+        return json.loads(result.stdout or "{}")
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+
+
+@dataclass
+class _DriftScope:
+    """Which agent folders the memory checks cover on this run."""
+
+    #: Agents measured with ``skmemory health`` (active + registered).
+    measured: list[str]
+    #: Unregistered memory folders swept read-only (``--all-agents`` only).
+    swept: list[str]
+    #: Unregistered memory folders left out (default mode only).
+    skipped: list[str]
+    #: How many of the unregistered folders are ephemeral worker seats.
+    seats: int
+    #: Registered memory profiles, or ``None`` when the registry is unreadable.
+    registered: Optional[set]
+    active: str
+    #: Registered profiles the strict resolver rejects, with the reason.
+    broken: dict = field(default_factory=dict)
+
+
+def _drift_scope(home: Path, all_agents: bool = False) -> _DriftScope:
+    """Decide which agents the memory drift and sync-timer checks look at.
+
+    Default: the active agent (``--agent`` / SKAGENT / SKCAPSTONE_AGENT /
+    SKMEMORY_AGENT) plus every registered memory profile, intersected with
+    the folders that actually have a ``memory/`` dir. That still covers the
+    2026-10-16 case this check was written for (a REGISTERED agent nobody
+    happened to be running as) without walking thousands of fleet seats.
+
+    Only active and registered agents are measured with ``skmemory health``:
+    for anything else skmemory's fail-closed resolver refuses the profile and
+    reports on the ``template`` agent instead, so the number would describe
+    the wrong corpus (measured on chiap04, 2026-10-27).
+    """
+    from .agent_scope import (
+        active_agent_from_env,
+        is_ephemeral_seat,
+        registered_memory_profiles,
+        resolvable_memory_profiles,
+    )
+
+    agents_dir = _resolve_agents_dir(home)
+    with_memory = _every_agent_with_memory_home(home)
+    registered = registered_memory_profiles(agents_dir.parent)
+    healthy, broken = resolvable_memory_profiles(agents_dir.parent)
+    active = active_agent_from_env()
+    # Registered entries that do not resolve are NOT measured: skmemory would
+    # answer for `template` instead. They are named in the scope summary. The
+    # active agent is always measured, so asking for a broken one fails loudly.
+    wanted = healthy | ({active} if active else set())
+    measured = [a for a in with_memory if a in wanted]
+    rest = [a for a in with_memory if a not in wanted]
+    seats = sum(1 for a in rest if is_ephemeral_seat(agents_dir / a, registered, active))
+    return _DriftScope(
+        measured=measured,
+        swept=rest if all_agents else [],
+        skipped=[] if all_agents else rest,
+        seats=seats,
+        registered=registered,
+        active=active,
+        broken={k: v for k, v in broken.items() if k != active},
+    )
+
+
+def _readonly_flat_drift(memory_dir: Path) -> dict:
+    """Flat-file vs SQLite-index drift for one memory dir, without skmemory.
+
+    Used by ``--all-agents`` for folders skmemory cannot be pointed at (see
+    :func:`_drift_scope`). Opens ``index.db`` read-only and never creates
+    anything, unlike constructing a ``SQLiteBackend``, which makes the tier
+    dirs and an empty index as a side effect. Mirrors
+    ``SQLiteBackend.drift_check``: a row whose file moved to ``archive/`` is
+    cold storage, not drift, and 12-char shortform file names count.
+    """
+    import sqlite3
+
+    tiers = ("short-term", "mid-term", "long-term")
+    flat: set[str] = set()
+    for tier in tiers:
+        tier_dir = memory_dir / tier
+        if tier_dir.is_dir():
+            flat.update(f.stem for f in tier_dir.glob("*.json"))
+    archive_dir = memory_dir / "archive"
+    archived = {f.stem for f in archive_dir.rglob("*.json")} if archive_dir.is_dir() else set()
+
+    index = memory_dir / "index.db"
+    rows: list[tuple] = []
+    if index.is_file():
+        conn = sqlite3.connect(f"file:{index}?mode=ro", uri=True, timeout=2)
+        try:
+            rows = conn.execute("SELECT id, layer, file_path FROM memories").fetchall()
+        finally:
+            conn.close()
+
+    ids: set[str] = set()
+    sqlite_only = 0
+    for memory_id, layer, file_path in rows:
+        ids.add(memory_id)
+        short = str(memory_id)[:12].replace("-", "")
+        if file_path and Path(file_path).exists():
+            continue
+        if short in flat and (memory_dir / str(layer) / f"{short}.json").exists():
+            continue
+        if memory_id in archived or short in archived:
+            continue
+        sqlite_only += 1
+    shorts = {str(i)[:12].replace("-", "") for i in ids}
+    flat_only = sum(1 for stem in flat if stem not in ids and stem not in shorts)
+    return {
+        "flat_total": len(flat),
+        "sqlite_total": len(ids),
+        "sqlite_only": sqlite_only,
+        "flat_only": flat_only,
+        "has_index": index.is_file(),
+    }
+
+
+def _drift_check_from_health(agent: str, health: Optional[dict]) -> Check:
+    """Turn one ``skmemory health`` payload into a ``memory:drift`` check."""
+    name = f"memory:drift:{agent}"
+    description = f"Memory drift ({agent})"
+    if health is None:
+        return Check(
+            name=name,
+            description=description,
+            passed=True,
+            unknown=True,
+            detail="could not run `skmemory health` for this agent (missing, failed or timed out)",
+            category="memory",
+        )
+
+    primary = health.get("primary", {}) if isinstance(health, dict) else {}
+    primary = primary if isinstance(primary, dict) else {}
+
+    # skmemory answers for whichever agent its resolver lands on. When the
+    # profile is stale or unregistered it lands on `template`, and that
+    # corpus's numbers look like catastrophic drift for the agent we asked
+    # about. Refuse to report someone else's memory as this agent's.
+    base_path = primary.get("base_path")
+    if base_path:
+        resolved = Path(base_path).parent.name
+        if resolved and resolved != agent:
+            return Check(
+                name=name,
+                description=description,
+                passed=False,
+                detail=(
+                    f"skmemory resolved {agent!r} to {resolved!r} ({base_path}); "
+                    "this agent's memory was NOT measured"
+                ),
+                fix=(
+                    f"SKAGENT={agent} skmemory profile status  "
+                    "(profile unregistered or stale on this host)"
+                ),
+                category="memory",
+            )
+
+    sync = primary.get("sync", {}) if isinstance(primary.get("sync"), dict) else {}
+    status = health.get("status") or ("ok" if primary.get("ok") else "degraded")
+    sqlite_only = sync.get("sqlite_only", 0) or 0
+    flat_only = sync.get("flat_only", 0) or 0
+    vector = health.get("vector", {}) if isinstance(health, dict) else {}
+    pg_only = vector.get("pg_only", 0) if isinstance(vector, dict) else 0
+    pg_only = pg_only or 0
+
+    clean = (
+        status not in ("degraded", "red") and sqlite_only == 0 and flat_only == 0 and pg_only == 0
+    )
+    return Check(
+        name=name,
+        description=description,
+        passed=clean,
+        detail=(
+            f"status={status} sqlite_only={sqlite_only} "
+            f"flat_only={flat_only} pg_only={pg_only}"
+            + (" pg=unreachable" if isinstance(vector, dict) and vector.get("ok") is False else "")
+        ),
+        fix=("" if clean else _drift_fix(agent, sqlite_only, flat_only, pg_only, vector)),
+        category="memory",
+    )
+
+
+def _drift_fix(agent: str, sqlite_only: int, flat_only: int, pg_only: int, vector) -> str:
+    """The remediation for one agent's drift, never one that writes flat files.
+
+    Flat JSON is the source of truth. ``skmemory sync`` (and ``export-flat``,
+    and a plain ``reindex``, which runs export-flat first) materialise every
+    SQLite-only row into the flat tiers, and SQLite only holds a ~150-char
+    preview, so wherever skmem-pg lacks the full text they write truncated
+    stubs INTO the source of truth (skmemory postmortem 2026-10-16). So:
+
+    - pg unreachable: fix the credentials first, the counts are not real.
+    - SQLite-only rows: recover, do not rebuild. Nothing is suggested to run.
+    - flat-only files: ``reindex --force`` rebuilds the index purely from the
+      flat files and writes nothing to them; safe because no SQLite-only
+      row exists to drop.
+    - pg-only rows: report only; pruning is the reconcile timer's job, under
+      its archive-aware guard.
+    """
+    vector = vector if isinstance(vector, dict) else {}
+    if vector and vector.get("ok") is False:
+        return (
+            "skmem-pg unreachable for this agent; check SKMEMORY_PG_DSN "
+            "(~/.config/environment.d/skmemory.conf) and the skmem-pg container. "
+            "Drift counts are not trustworthy until pg answers"
+        )
+    if sqlite_only:
+        return (
+            f"{sqlite_only} SQLite-only row(s) hold only a ~150-char preview. Do NOT run "
+            "`skmemory sync`, `export-flat` or `reindex` (they write truncated stubs into "
+            "the flat source of truth). Recover full content from skmem-pg first: see "
+            "skmemory docs/postmortems/2026-10-16-sqlite-only-orphans.md"
+        )
+    if flat_only:
+        return (
+            f"SKAGENT={agent} skmemory reindex --force  "
+            "(rebuilds index.db from the flat files only; never writes them)"
+        )
+    if pg_only:
+        return (
+            f"{pg_only} pg row(s) with no flat file: inspect before any prune "
+            "(archived memories look like orphans to old reconcile code); never force-prune"
+        )
+    return f"SKAGENT={agent} skmemory health  (status degraded with zero drift: read its detail)"
+
+
+def _progress(msg: str) -> None:
+    """One progress line on stderr (stdout may be carrying --json-out)."""
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _check_memory_drift(
+    home: Path,
+    all_agents: bool = False,
+    budget: float = DRIFT_BUDGET_SECONDS,
+    workers: int = DRIFT_WORKERS,
+) -> list[Check]:
+    """Per-agent, per-node memory drift: sqlite_only/flat_only/pg_only.
+
+    Card: skmemory sqlite-only-orphans, 2026-10-16. The drift NUMBER
+    already existed in skmemory's ``health()`` payload (and PR #32 even
+    added an explicit top-level ``status`` computed from it), but nothing
+    in the estate's own gating looked at it fleet-wide -- the only
+    consumer was a weekly audit script that, for six months, found zero
+    active timers to even run against (see the postmortem). This check
+    closes that gap for ``skcapstone doctor``: it fails loudly, per agent,
+    whenever drift or a rescued-preview stub marker is present.
+
+    Scope and bounds (2026-10-27): on chiap04 this used to run one
+    ``skmemory health`` per memory folder, 1,272 of them at 2 to 7 s each,
+    and doctor never finished. Now the default covers the active agent and
+    the registered memory profiles (see :func:`_drift_scope`), the calls run
+    in a small pool, and the whole check stops at ``budget`` seconds,
+    reporting what it did not reach as ``unknown``. ``all_agents`` adds a
+    read-only, in-process sweep of every other memory folder; only folders
+    with a problem get their own check, the rest are counted.
+
+    Args:
+        home: Either the shared ``~/.skcapstone`` root or a single
+            agent's home directory.
+        all_agents: Also sweep unregistered memory folders.
+        budget: Total wall-clock seconds for this check.
+        workers: Concurrent ``skmemory health`` subprocesses.
+
+    Returns:
+        list[Check]: One check per measured agent, one per swept folder with
+        a problem, and a ``memory:drift:scope`` summary.
+    """
+    import concurrent.futures as cf
+    import time
+
+    scope = _drift_scope(home, all_agents=all_agents)
+    if not scope.measured and not scope.swept and not scope.skipped:
+        return []
+
+    started = time.monotonic()
+    deadline = started + max(0.0, budget)
+    timings: dict[str, float] = {}
+
+    def _measure(agent: str) -> Optional[dict]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        t0 = time.monotonic()
+        try:
+            return _skmemory_health_json(
+                agent, timeout=min(DRIFT_AGENT_TIMEOUT_SECONDS, remaining)
+            )
+        finally:
+            timings[agent] = time.monotonic() - t0
+
+    checks: list[Check] = []
+    results: dict[str, Check] = {}
+    if scope.measured:
+        pool = cf.ThreadPoolExecutor(max_workers=max(1, min(workers, len(scope.measured))))
+        futures = {pool.submit(_measure, a): a for a in scope.measured}
+        done, _pending = cf.wait(futures, timeout=max(0.0, deadline - time.monotonic()) + 1)
+        for fut, agent in futures.items():
+            if fut in done and not fut.cancelled() and fut.exception() is None:
+                results[agent] = _drift_check_from_health(agent, fut.result())
+            else:
+                fut.cancel()
+                results[agent] = Check(
+                    name=f"memory:drift:{agent}",
+                    description=f"Memory drift ({agent})",
+                    passed=True,
+                    unknown=True,
+                    detail=f"not checked: drift budget of {budget:.0f}s exhausted",
+                    category="memory",
+                )
+        # Running calls carry their own timeout, capped at the deadline.
+        pool.shutdown(wait=True, cancel_futures=True)
+        checks.extend(results[a] for a in scope.measured)
+
+    swept_problems = 0
+    swept_done = 0
+    unreached = 0
+    agents_dir = _resolve_agents_dir(home)
+    last_note = time.monotonic()
+    for i, agent in enumerate(scope.swept, 1):
+        if time.monotonic() >= deadline:
+            unreached = len(scope.swept) - i + 1
+            break
+        t0 = time.monotonic()
+        try:
+            drift = _readonly_flat_drift(agents_dir / agent / "memory")
+        except Exception as exc:  # sqlite errors, permissions, races with sync
+            drift = None
+            err = str(exc)[:120]
+        timings[agent] = time.monotonic() - t0
+        swept_done += 1
+        if drift is None:
+            swept_problems += 1
+            checks.append(
+                Check(
+                    name=f"memory:drift:{agent}",
+                    description=f"Memory drift ({agent}, read-only sweep)",
+                    passed=True,
+                    unknown=True,
+                    detail=f"could not read memory index: {err}",
+                    category="memory",
+                )
+            )
+        elif drift["sqlite_only"] or drift["flat_only"]:
+            swept_problems += 1
+            checks.append(
+                Check(
+                    name=f"memory:drift:{agent}",
+                    description=f"Memory drift ({agent}, read-only sweep)",
+                    passed=False,
+                    detail=(
+                        f"unregistered; sqlite_only={drift['sqlite_only']} "
+                        f"flat_only={drift['flat_only']} flat={drift['flat_total']} "
+                        f"indexed={drift['sqlite_total']}"
+                    ),
+                    # `skmemory profile sync` rebuilds the whole registry from
+                    # the folders that carry config/skmemory.yaml, so a bare
+                    # run unregisters every profile without one (7 of 13 on
+                    # noroc2027, 2026-10-27). Always dry-run it first.
+                    fix=(
+                        "not a registered memory profile: run `skmemory profile sync "
+                        "--dry-run` first (sync rebuilds the registry from folders with "
+                        "config/skmemory.yaml and DROPS any registered profile without "
+                        "one), then register it; a worker seat goes via "
+                        "`skcapstone agents stale --archive`"
+                    ),
+                    category="memory",
+                )
+            )
+        if time.monotonic() - last_note >= 5:
+            _progress(f"  memory drift sweep: {i}/{len(scope.swept)} folders")
+            last_note = time.monotonic()
+
+    elapsed = time.monotonic() - started
+    measured_bad = sum(
+        1 for a in scope.measured if not results[a].passed and not results[a].unknown
+    )
+    measured_unknown = sum(1 for a in scope.measured if results[a].unknown)
+    parts = [
+        f"measured {len(scope.measured)} agent(s) with skmemory "
+        f"({measured_bad} drifted, {measured_unknown} unknown)"
+    ]
+    if scope.registered is None:
+        parts.append("profile registry unreadable, so only the active agent is in scope")
+    if scope.broken:
+        names = ", ".join(f"{k} ({v})" for k, v in sorted(scope.broken.items()))
+        parts.append(
+            f"{len(scope.broken)} registered profile(s) do not resolve and were not "
+            f"measured (skmemory would report `template` for them): {names}"
+        )
+    if all_agents:
+        parts.append(
+            f"swept {swept_done}/{len(scope.swept)} other folder(s) read-only "
+            f"({swept_problems} with problems, {scope.seats} worker seats)"
+        )
+        if unreached:
+            parts.append(f"{unreached} not reached within the {budget:.0f}s budget")
+        slowest = sorted(timings.items(), key=lambda kv: kv[1], reverse=True)[:5]
+        if slowest:
+            parts.append("slowest: " + ", ".join(f"{a} {t:.1f}s" for a, t in slowest))
+    elif scope.skipped:
+        parts.append(
+            f"skipped {len(scope.skipped)} other memory folder(s) "
+            f"({scope.seats} ephemeral worker seats); --all-agents sweeps them"
+        )
+    parts.append(f"{elapsed:.1f}s")
+    checks.append(
+        Check(
+            name="memory:drift:scope",
+            description="Memory drift scope",
+            passed=not unreached,
+            unknown=bool(unreached),
+            detail="; ".join(parts),
+            category="memory",
+        )
+    )
+    return checks
+
+
+def _check_memory_sync_timer(home: Path) -> list[Check]:
+    """Every agent with a memory home on this node must have an ENABLED
+    ``skmemory-sync@<agent>.timer``.
+
+    Card: skmemory sqlite-only-orphans, 2026-10-16. skmemory has shipped
+    this timer (and an installer for it) since v0.9.8 (2026-04-25); nothing
+    in this repo's own ``scripts/install.sh`` ever called that installer,
+    so an agent home could exist with zero sync coverage for six months
+    with no check anywhere catching it. ``scripts/install.sh`` now installs
+    and enables this timer for every agent home it provisions; this check
+    is the gate that catches a skipped install or a timer that later got
+    disabled.
+
+    Args:
+        home: Either the shared ``~/.skcapstone`` root or a single
+            agent's home directory.
+
+    Returns:
+        list[Check]: One check per active or registered agent with a
+        memory home on this node (see :func:`_drift_scope`), in the
+        ``systemd`` category. Empty on non-Linux or when no
+        ``systemctl --user`` session is available (same degrade-gracefully
+        rule as :func:`_check_systemd_runtime`).
+    """
+    checks: list[Check] = []
+    if platform.system() != "Linux":
+        return checks
+    from . import systemd as sysd
+
+    if not sysd.systemd_available():
+        return checks
+
+    # Same scope as the drift check's measured set: worker seats never get a
+    # sync timer by design, so walking all of them only manufactured
+    # failures (and one systemctl call per folder).
+    for agent in _drift_scope(home).measured:
+        unit = f"skmemory-sync@{agent}.timer"
+        try:
+            result = subprocess.run(
+                ["systemctl", "--user", "is-enabled", unit],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            state = (result.stdout or "").strip() or "disabled"
+        except (OSError, subprocess.TimeoutExpired):
+            state = "unknown"
+
+        if state == "unknown":
+            checks.append(
+                Check(
+                    name=f"memory:sync_timer:{agent}",
+                    description=f"skmemory-sync timer ({agent})",
+                    passed=True,
+                    unknown=True,
+                    detail="could not query systemctl --user is-enabled",
+                    category="systemd",
+                )
+            )
+            continue
+
+        enabled = state == "enabled"
+        checks.append(
+            Check(
+                name=f"memory:sync_timer:{agent}",
+                description=f"skmemory-sync timer ({agent})",
+                passed=enabled,
+                detail=f"state={state}",
+                fix=(
+                    ""
+                    if enabled
+                    else f"systemctl --user enable --now {unit}  (or re-run scripts/install.sh)"
+                ),
+                category="systemd",
+            )
+        )
+    return checks
+
+
+_IDLE_CAPABLE_SCHEDULERS = ("bfq", "cfq")
+_NON_DISK_PREFIXES = ("loop", "ram", "zram", "sr", "dm-", "md")
+
+
+def _check_io_priority(
+    sys_block: Path = Path("/sys/block"),
+    unit_dir: Optional[Path] = None,
+) -> list[Check]:
+    """Background sync must actually run at idle IO priority.
+
+    Syncthing (``syncthing.service.d/nice.conf``) and ``skmemory-sync@`` set
+    ``IOSchedulingClass=idle``. The kernel ignores that unless the disk uses
+    bfq, so on a spinning disk with ``none`` or ``mq-deadline`` both jobs
+    compete at full priority. noroc2027 (QEMU HDD, scheduler ``none``, and no
+    syncthing drop-in) sat at ~90% IO pressure and load 35 on 4 cores,
+    2026-11-12. SSD/NVMe are not checked: idle priority matters far less there.
+
+    Returns:
+        One ``io:scheduler:<disk>`` check per spinning disk, plus
+        ``io:syncthing_dropin`` when syncthing is installed. Empty off Linux.
+    """
+    checks: list[Check] = []
+    if platform.system() != "Linux":
+        return checks
+
+    try:
+        disks = sorted(p for p in sys_block.iterdir() if not p.name.startswith(_NON_DISK_PREFIXES))
+    except OSError:
+        disks = []
+    for disk in disks:
+        try:
+            rotational = (disk / "queue" / "rotational").read_text().strip()
+            sched_raw = (disk / "queue" / "scheduler").read_text().strip()
+        except OSError:
+            continue
+        if rotational != "1":
+            continue
+        # USB sticks often report rotational=1; sync data does not live there.
+        try:
+            if "/usb" in str(disk.resolve()):
+                continue
+        except OSError:
+            pass
+        m = re.search(r"\[([^\]]+)\]", sched_raw)
+        active = m.group(1) if m else sched_raw
+        ok = active in _IDLE_CAPABLE_SCHEDULERS
+        checks.append(
+            Check(
+                name=f"io:scheduler:{disk.name}",
+                description=f"IO scheduler honours idle priority ({disk.name}, spinning)",
+                passed=ok,
+                detail=f"scheduler={active}",
+                fix=(
+                    ""
+                    if ok
+                    else "re-run scripts/install.sh "
+                    "(installs systemd/udev/60-ioscheduler-bfq.rules), "
+                    f"or now: echo bfq | sudo tee /sys/block/{disk.name}/queue/scheduler"
+                ),
+                category="systemd",
+            )
+        )
+
+    if shutil.which("syncthing"):
+        udir = unit_dir if unit_dir is not None else Path.home() / ".config" / "systemd" / "user"
+        dropin = udir / "syncthing.service.d" / "nice.conf"
+        present = dropin.is_file()
+        checks.append(
+            Check(
+                name="io:syncthing_dropin",
+                description="Syncthing runs at idle CPU/IO priority",
+                passed=present,
+                detail=str(dropin) if present else "missing",
+                fix=(
+                    ""
+                    if present
+                    else "re-run scripts/install.sh, or copy "
+                    "systemd/syncthing.service.d/nice.conf to "
+                    f"{dropin.parent}/ then: systemctl --user daemon-reload && "
+                    "systemctl --user restart syncthing"
+                ),
+                category="systemd",
+            )
+        )
     return checks
 
 

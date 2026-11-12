@@ -1,0 +1,1 @@
+- Card `3640fd2c`: release the RAM charge of collected native builder units that finished before their live invocation was observed. Recovery requires the exact consumed start, unique builder unit, one attributed journal start and a later terminal event. Source claims and custody remain intact.

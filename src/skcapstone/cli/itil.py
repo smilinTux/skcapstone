@@ -368,6 +368,22 @@ def register_itil_commands(main: click.Group) -> None:
                 note=note,
                 create_kedb=create_kedb,
             )
+            # Same no-op-reads-as-success hole the incident path already
+            # guards. Problems gate only on _PROBLEM_TRANSITIONS, with none of
+            # the extra CAB/note gates a change carries, so naming the illegal
+            # transition is the whole story here.
+            if new_status and prb.status.value != new_status:
+                from ..itil import _PROBLEM_TRANSITIONS
+
+                allowed = sorted(_PROBLEM_TRANSITIONS.get(prb.status.value, set()))
+                console.print(
+                    f"\n  [yellow]No change:[/yellow] {prb.id} is still "
+                    f"[bold]{prb.status.value}[/bold] - "
+                    f"{prb.status.value} -> {new_status} is not a legal transition.\n"
+                    f"  Allowed from {prb.status.value}: "
+                    f"{', '.join(allowed) if allowed else '(terminal state)'}\n"
+                )
+                return
             console.print(f"\n  [green]Updated:[/green] {prb.id} -> {prb.status.value}\n")
             if prb.kedb_id:
                 console.print(f"  [dim]KEDB entry: {prb.kedb_id}[/dim]\n")
@@ -502,6 +518,52 @@ def register_itil_commands(main: click.Group) -> None:
                 new_status=new_status,
                 note=note,
             )
+            # A refused transition is folded away, leaving status unchanged.
+            # Without this check the command prints a green "Updated:" line for
+            # a no-op, which reads as success. The incident path has guarded
+            # this for a while; changes did not, and the gap cost a live
+            # session: five successive transitions each printed
+            # "Updated: chg-... -> reviewing" while nothing moved at all.
+            #
+            # Unlike an incident, a change can be refused for a reason OTHER
+            # than an illegal transition, so this names the ACTUAL one. A
+            # blanket "not a legal transition" would be wrong for
+            # reviewing -> approved, which IS in _CHANGE_TRANSITIONS and is
+            # refused by the CAB guard instead - the precise case that made the
+            # silent no-op so expensive to diagnose.
+            if new_status and chg.status.value != new_status:
+                from ..itil import _CHANGE_TRANSITIONS
+
+                current = chg.status.value
+                allowed = sorted(_CHANGE_TRANSITIONS.get(current, set()))
+                if new_status not in allowed:
+                    reason = f"{current} -> {new_status} is not a legal transition."
+                    hint = "Allowed from %s: %s" % (
+                        current,
+                        ", ".join(allowed) if allowed else "(terminal state)",
+                    )
+                elif new_status == "approved" and current in ("proposed", "reviewing"):
+                    reason = "approval cannot be granted by a status update."
+                    hint = (
+                        "A qualifying CAB approval is required: a human vote "
+                        "(agent 'human', or role owner/approver) from someone other than "
+                        "the change's preparer. See 'itil cab authorize' and "
+                        "'itil cab vote --authorization'."
+                    )
+                elif (current, new_status) in (("deployed", "verified"), ("failed", "closed")):
+                    reason = f"{current} -> {new_status} requires a note."
+                    hint = (
+                        "Re-run with --note recording the post-implementation "
+                        "review or the rollback."
+                    )
+                else:
+                    reason = f"{current} -> {new_status} was refused."
+                    hint = "Inspect the change timeline; the folded record is the authority."
+                console.print(
+                    f"\n  [yellow]No change:[/yellow] {chg.id} is still "
+                    f"[bold]{current}[/bold] - {reason}\n  {hint}\n"
+                )
+                return
             console.print(f"\n  [green]Updated:[/green] {chg.id} -> {chg.status.value}\n")
         except ValueError as exc:
             console.print(f"\n  [red]Error:[/red] {exc}\n")

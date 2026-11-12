@@ -1,0 +1,1 @@
+Fix `agents spawn --provider local`: pass the `home`/`work_dir` arguments `LocalProvider` actually accepts, and abort with a clear error instead of silently falling back to a dry-run deployment when the provider backend fails to initialize.

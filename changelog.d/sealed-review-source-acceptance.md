@@ -1,0 +1,1 @@
+- Native review acceptance validates sealed producer/reviewer claims and the policy digest used at launch, even after claims are released or live policy changes.

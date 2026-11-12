@@ -69,6 +69,88 @@ before changing `README.md`, `SOP.md`, `SECURITY.md`, or `CHANGELOG.md`:
 
 ---
 
+## Settings: one declaration per fact
+
+**A number in prose with no assertion behind it is a defect.** That is the whole rule.
+It exists because a doc once contradicted *itself*, a table said 32, a paragraph three
+paragraphs up said 4, and nothing detected it, because nothing checks prose against
+config. Three readers in a row reasoned from the stale half.
+
+Every fleet and gateway setting is registered in
+[`docs/fleet/SETTINGS-REGISTRY.md`](docs/fleet/SETTINGS-REGISTRY.md). Adding one:
+
+1. **A default that ships with the code** → a named constant in `src/` or `scripts/`,
+   one row in registry §1, and a **paired** tier-3 assertion in `SOP.md` that extracts
+   the number from the code *and* from the registry and compares them. Not a `grep -q`
+   for a literal: a literal grep passes when both sides are edited to the same wrong
+   value, and fails to notice when only the doc moves.
+2. **A per-node value** → a node spec label (`skfleet label <node> <key>=<value>`).
+   Not a constant, not a systemd drop-in, not a new file.
+3. **A per-host runtime value** → a systemd `Environment=`, plus a dated row in
+   registry §2 carrying the command that re-measures it.
+4. **A gateway pool ceiling** → the gateway YAML on the owning host, with a dated
+   rationale comment naming who measured what, plus a dated row in registry §2.
+
+Anything CI cannot reach (another host's YAML, a systemd unit, a deployed artifact) is
+recorded as a **dated measurement with a re-measure command**, never as a standing
+claim, and is stated in the registry and **nowhere else**. A second copy is the thing
+that rots; tier 3 asserts the single-declaration property for the values that have
+already drifted once.
+
+Writing the assertion: it goes in the `<!-- docs-evidence -->` block at the bottom of
+`SOP.md`, as `- name:` / `run:` (a one-line shell command, run from the repo root, exit
+0 = still true). Prove it can fail before you open the PR, break the config, watch it
+go red, put it back. An assertion nobody has seen fail is an assertion nobody has
+tested. To forbid a superseded value in prose, use `scripts/docs/prose_grep.sh`, which
+strips `SOP.md`'s own evidence block so the check does not match itself.
+
+---
+
+## Observability invariant (read this before adding any check)
+
+**A green that can be produced by absence is not a green.**
+
+Any signal a consumer treats as a pass MUST be able to distinguish *observed and
+healthy* from *not observed*. If the two states are indistinguishable downstream,
+the signal is not a gate, it is decoration, and it will certify whatever it
+stopped looking at.
+
+This is not theoretical. On 2026-09-19 the same defect landed three times in one
+day in three disguises, and **not one of them reported red**. They reported
+absent, skipped, or truncated, and every consumer rendered that as green:
+
+| Signal | What it did | What it looked like |
+|---|---|---|
+| `docs / docs-check` | unresolvable `uses:` ref, so the workflow died before creating a job and published **no check run at all** | not failing, so healthy |
+| a `skipif`-gated test | gated on a binary no runner has, so it can never fail the build | a green test |
+| `gh pr list --limit 60` | returned exactly the limit | a complete list |
+
+The rules that follow from it, all of which CI now enforces:
+
+1. **Absence is its own outcome, never a pass.** Give it a distinct exit path.
+   `scripts/ci/required-checks.sh` is the reference implementation: it reports
+   `ABSENT` separately from pending and `exit 2`s when branch protection is
+   unreadable rather than assuming a list.
+2. **"I could not look" must never render as "I looked and it was fine."**
+   A guard that cannot reach its evidence exits non-zero. See
+   `scripts/ci/workflow_refs.py` exit 2.
+3. **Report what you could not read.** A summary computed from partial input
+   must say so (`CardStore.dropped`, skcoord #126).
+4. **A count is not an identity.** Never conclude from "N checks, 0 failing";
+   ask which *required contexts* are present and green. Counting cannot see a
+   missing row.
+5. **A number in prose with no assertion behind it is a defect.** Put it in
+   `docs/fleet/SETTINGS-REGISTRY.md` or back it with a `docs-evidence` check.
+6. **A guard that has never been observed failing is a guess.** Every gate in
+   this repo ships a negative control that deliberately breaks it and proves it
+   goes red (`docs_check.py --self-test`, `workflow_refs.py --self-test`).
+7. **A guard cannot be its own witness.** Never let the only check on X live
+   inside X. The workflow-ref guard runs in `unit tests` and `shim-imports`,
+   two required contexts with no cross-repo `uses:` of their own, precisely
+   because a broken `docs-check` ref cannot be caught by `docs-check`.
+
+---
+
 ## Review path
 
 1. Open a PR against `main` with a clear description and the compliance checklist from
@@ -77,8 +159,14 @@ before changing `README.md`, `SOP.md`, `SECURITY.md`, or `CHANGELOG.md`:
 3. At least one maintainer review. Security-sensitive changes (daemon HTTP surface,
    auth, secret handling, self-healing) get an extra security-focused pass.
 4. Squash or rebase-merge once approved; keep `main` linear and releasable.
-5. User-visible changes add a `CHANGELOG.md` entry (Keep-a-Changelog, under
-   `[Unreleased]` until the next tagged release).
+5. User-visible changes add a changelog entry. **Add a new
+   `changelog.d/<slug>.md` fragment rather than editing `CHANGELOG.md`.** One file
+   per PR means two concurrent PRs never touch the same lines, so the rebase
+   conflict a single shared changelog guarantees becomes structurally impossible;
+   fragments are folded in by `python scripts/changelog_fragments.py`. Write the
+   fragment exactly as you would the `## Unreleased` bullet, Keep-a-Changelog
+   style. Editing `CHANGELOG.md` directly still satisfies the gate and is still
+   right for a release-assembly commit. Full workflow: `changelog.d/README.md`.
 
 ---
 

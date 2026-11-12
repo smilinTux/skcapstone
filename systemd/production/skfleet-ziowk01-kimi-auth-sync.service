@@ -1,0 +1,6 @@
+[Unit]
+Description=Push the Kimi CLI credential to the ZIOWK01 worker credential slot
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/sync-kimi-auth-ziowk01.sh

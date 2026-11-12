@@ -1,0 +1,1 @@
+- Card `c9691b8b`: preserve an existing source-only producer review when an operator adds supplemental native semantic qualification evidence. Source, claim, instructions, outcomes and review-card evidence remain fenced.

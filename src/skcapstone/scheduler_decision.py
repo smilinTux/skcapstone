@@ -26,6 +26,7 @@ class SchedulerFacts:
     sensitive_category: bool = False
     dependency: bool = False
     awaiting_review: bool = False
+    claim_ceiling: bool = False
     backoff: bool = False
     attempt_limit: bool = False
     host_pin_elsewhere: bool = False
@@ -80,6 +81,11 @@ _PRECEDENCE = (
     ("sensitive_category", lambda f: f.sensitive_category),
     ("dependency", lambda f: f.dependency),
     ("awaiting_review", lambda f: f.awaiting_review),
+    # claim_ceiling is monotonic and permanent, unlike ordinary backoff, which
+    # is expected to self-correct. It is folded into blocked_backoff too, so
+    # a ceiling-hit card has both facts true; it must take precedence so the
+    # primary_reason names the permanent exclusion, not the generic one.
+    ("claim_ceiling", lambda f: f.claim_ceiling),
     ("backoff", lambda f: f.backoff),
     ("attempt_limit", lambda f: f.attempt_limit),
     ("host_pin_elsewhere", lambda f: f.host_pin_elsewhere),

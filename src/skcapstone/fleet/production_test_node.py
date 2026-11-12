@@ -1,0 +1,327 @@
+"""Qualified Vitest and native Node inputs for the existing test sandbox."""
+
+from __future__ import annotations
+
+import json
+import os
+import platform
+import re
+import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from xml.etree import ElementTree
+
+from . import production_node_test_recipe as native
+from . import production_test_plan as plan
+
+SCHEMA_V1 = "skfleet.qualified-node-test-profile/v1"
+SCHEMA_V2 = "skfleet.qualified-node-test-profile/v2"
+SCHEMA = "skfleet.qualified-node-test-profile/v3"
+
+
+def system_node(root: Path = Path("/")) -> Path:
+    """Use governed local Node when present, retaining the existing system fallback."""
+    local = root / "usr/local/bin/node"
+    return local if local.is_file() else root / "usr/bin/node"
+
+
+NODE = system_node()
+# Node-local, outside Syncthing, which can normalize read-only directory modes.
+ARTIFACT_ROOT = Path.home() / ".local/share/skcapstone/test-dependencies"
+SOURCE_FILES = (
+    "package.json",
+    "package-lock.json",
+    "apps/web/package.json",
+    "apps/web/vite.config.ts",
+    "apps/web/tsconfig.json",
+    "apps/web/eslint.config.js",
+)
+
+
+def is_node(profile: dict | None) -> bool:
+    """Identify the explicit variant, leaving Python profiles unchanged."""
+    return isinstance(profile, dict) and profile.get("schema") in {SCHEMA_V1, SCHEMA_V2, SCHEMA}
+
+
+def checks(recipe: dict) -> list[dict]:
+    """Compile fixed Vitest checks or bounded native Node commands."""
+    if isinstance(recipe, dict) and "node_test" in recipe:
+        return native.checks(recipe)
+    if not isinstance(recipe, dict) or set(recipe) != {"vitest"}:
+        raise plan.TestEvidenceError("unsupported Node recipe")
+    tests = recipe["vitest"]
+    if (
+        not isinstance(tests, dict)
+        or not 1 <= len(tests) <= 256
+        or any(type(n) is not int or not 1 <= n <= 100000 for n in tests.values())
+        or any(
+            not isinstance(p, str)
+            or len(p) > 240
+            or not re.fullmatch(r"src/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.test\.tsx?", p)
+            for p in tests
+        )
+    ):
+        raise plan.TestEvidenceError("invalid Node per-file coverage")
+    base = "/work/node_modules/"
+    return [
+        {
+            "id": "vitest",
+            "argv": [
+                str(NODE),
+                base + "vitest/vitest.mjs",
+                "run",
+                "--configLoader",
+                "runner",
+                "--no-cache",
+                "--maxWorkers",
+                "1",
+                "--reporter=junit",
+                "--outputFile=/output/vitest.xml",
+            ],
+        },
+        {"id": "typecheck", "argv": [str(NODE), base + "typescript/bin/tsc", "-b"]},
+        {"id": "lint", "argv": [str(NODE), base + "eslint/bin/eslint.js", "."]},
+    ]
+
+
+#: Successful digests remembered inside one artifact_digest_memo() scope.
+_DIGEST_MEMO: dict[str, str] | None = None
+
+
+@contextmanager
+def artifact_digest_memo() -> Iterator[None]:
+    """Hash each Node artifact at most once inside one bounded batch.
+
+    Profile harvest validates every sealed plan, and every Node plan rehashes
+    the same content-addressed dependency tree (~1.6s each): measured on
+    chiap08 2026-10-09, 41 rehashes of the same artifacts in one harvest.
+    Inside this scope a path that hashed successfully returns that digest; a
+    failure is never remembered, so it is recomputed and raised again. Outside
+    any scope nothing is remembered. Scopes nest; the outermost one owns it.
+    The governed Node binary hash (~120MB read per plan) is remembered the
+    same way.
+    """
+    global _DIGEST_MEMO
+    outer = _DIGEST_MEMO
+    if outer is None:
+        _DIGEST_MEMO = {}
+    try:
+        yield
+    finally:
+        _DIGEST_MEMO = outer
+
+
+def artifact_digest(path: Path) -> str:
+    """Hash bounded immutable owned content, allowing only internal relative links."""
+    memo = _DIGEST_MEMO
+    if memo is not None:
+        key = os.fspath(path)
+        if key not in memo:
+            memo[key] = _artifact_digest(path)
+        return memo[key]
+    return _artifact_digest(path)
+
+
+def _node_digest() -> str:
+    """Hash the governed Node binary (~120MB), once per artifact_digest_memo scope."""
+    memo = _DIGEST_MEMO
+    if memo is None:
+        return plan.sha(NODE.read_bytes())
+    key = "\0node\0" + os.fspath(NODE)
+    if key not in memo:
+        memo[key] = plan.sha(NODE.read_bytes())
+    return memo[key]
+
+
+def _artifact_digest(path: Path) -> str:
+    """Walk and hash one artifact tree; see artifact_digest."""
+    rows, total = [], 0
+    if path.is_symlink() or not path.is_dir():
+        raise plan.TestEvidenceError("Node artifact is not a real directory")
+    for item in [path, *sorted(path.rglob("*"))]:
+        info = item.lstat()
+        name = str(item.relative_to(path))
+        if info.st_uid != os.getuid():
+            raise plan.TestEvidenceError("Node artifact owner mismatch")
+        if stat.S_ISLNK(info.st_mode):
+            target = os.readlink(item)
+            try:
+                resolved = item.resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                raise plan.TestEvidenceError("Node artifact link is broken or cyclic") from exc
+            if Path(target).is_absolute() or not resolved.is_relative_to(path.resolve()):
+                raise plan.TestEvidenceError("Node artifact link escapes")
+            rows.append((name, "link", target))
+            continue
+        if info.st_mode & 0o222:
+            raise plan.TestEvidenceError("Node artifact is writable")
+        if stat.S_ISDIR(info.st_mode):
+            rows.append((name, "dir", info.st_mode & 0o777))
+        elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+            total += info.st_size
+            if total > 1024**3 or len(rows) > 100000:
+                raise plan.TestEvidenceError("Node artifact exceeds bound")
+            rows.append((name, info.st_mode & 0o777, plan.sha(item.read_bytes())))
+        else:
+            raise plan.TestEvidenceError("Node artifact contains special files")
+    return plan.sha(json.dumps(rows, separators=(",", ":")).encode())
+
+
+def artifact_path(environment: dict) -> Path:
+    """Resolve a content identity under the controller root, never a supplied path."""
+    identity = environment.get("artifact_sha256")
+    if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity):
+        raise plan.TestEvidenceError("invalid Node artifact identity")
+    plan.private_dir(ARTIFACT_ROOT)
+    return ARTIFACT_ROOT / identity
+
+
+def qualified_environment(workspace: Path) -> dict:
+    """Resolve an already-qualified local Node artifact for an exact source."""
+    source = {}
+    source_files = SOURCE_FILES if (workspace / "apps/web").exists() else native.SOURCE_FILES
+    for relative in source_files:
+        path = workspace / relative
+        if path.is_symlink() or not path.is_file():
+            raise plan.TestEvidenceError("Node qualification source is incomplete")
+        source[relative] = plan.sha(path.read_bytes())
+    for artifact in sorted(ARTIFACT_ROOT.iterdir()) if ARTIFACT_ROOT.is_dir() else ():
+        if artifact.is_symlink() or not artifact.is_dir():
+            continue
+        try:
+            value = {
+                "node_sha256": plan.sha(NODE.read_bytes()),
+                "platform": [platform.system(), platform.machine()],
+                "artifact_sha256": artifact_digest(artifact),
+                "source_sha256": source,
+            }
+            validate_environment(value, workspace)
+        except (OSError, ValueError, RuntimeError):
+            continue
+        return value
+    raise plan.TestEvidenceError("no qualified Node dependency artifact matches source")
+
+
+def validate_environment(environment: dict, workspace: Path | None = None) -> None:
+    """Recheck the pinned runtime/artifact and optional exact candidate configuration."""
+    try:
+        _validate_environment(environment, workspace)
+    except (OSError, RuntimeError, KeyError, TypeError, ValueError) as exc:
+        raise plan.TestEvidenceError(str(exc)) from exc
+
+
+def _validate_environment(environment: dict, workspace: Path | None) -> None:
+    """Validate one environment; normalize invalid inputs at the public boundary."""
+    if (
+        not isinstance(environment, dict)
+        or set(environment) != {"node_sha256", "platform", "artifact_sha256", "source_sha256"}
+        or environment["platform"] != [platform.system(), platform.machine()]
+        or environment["node_sha256"] != _node_digest()
+        or not isinstance(environment["source_sha256"], dict)
+        or set(environment["source_sha256"]) not in (set(SOURCE_FILES), set(native.SOURCE_FILES))
+        or any(
+            not isinstance(v, str) or not re.fullmatch(r"[0-9a-f]{64}", v)
+            for v in environment["source_sha256"].values()
+        )
+    ):
+        raise plan.TestEvidenceError("qualified Node environment changed")
+    artifact = artifact_path(environment)
+    if artifact_digest(artifact) != environment["artifact_sha256"]:
+        raise plan.TestEvidenceError("qualified Node dependencies changed")
+    root_node = set(environment["source_sha256"]) == set(native.SOURCE_FILES)
+    if root_node:
+        for relative in ("package.json", "package-lock.json"):
+            manifest = artifact / relative
+            if (
+                manifest.is_symlink()
+                or plan.sha(manifest.read_bytes()) != environment["source_sha256"][relative]
+            ):
+                raise plan.TestEvidenceError("native Node dependency manifests changed")
+    mounts = ("node_modules",) if root_node else ("node_modules", "apps/web/node_modules")
+    for relative in mounts:
+        if (artifact / relative).is_symlink() or not (artifact / relative).is_dir():
+            raise plan.TestEvidenceError("Node dependency mount is missing or redirected")
+    if workspace is None:
+        return
+    for relative, expected in environment["source_sha256"].items():
+        path = workspace / relative
+        if (
+            path.is_symlink()
+            or not path.resolve().is_relative_to(workspace.resolve())
+            or (plan.sha(path.read_bytes()) != expected)
+        ):
+            raise plan.TestEvidenceError("Node package, lock or configuration changed")
+    if root_node:
+        if (workspace / "apps/web").exists():
+            raise plan.TestEvidenceError("native Node environment has a web workspace")
+        return
+    scripts = json.loads((workspace / "apps/web/package.json").read_bytes())["scripts"]
+    if (
+        not isinstance(scripts, dict)
+        or any(
+            scripts.get(k) != v
+            for k, v in {"test": "vitest run", "typecheck": "tsc -b", "lint": "eslint ."}.items()
+        )
+        or any(
+            k in scripts
+            for k in (
+                "pretest",
+                "posttest",
+                "pretypecheck",
+                "posttypecheck",
+                "prelint",
+                "postlint",
+            )
+        )
+    ):
+        raise plan.TestEvidenceError("Node package scripts do not match qualified commands")
+
+
+def junit_counts(raw: bytes, profile: dict) -> dict:
+    """Require exact flat Vitest file suites, identities and positive per-file counts."""
+    if len(raw) > plan.MAX_OUTPUT or b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
+        raise plan.TestEvidenceError("invalid Node JUnit size or entities")
+    try:
+        raw.decode("utf-8")
+        if b"\x00" in raw:
+            raise ValueError("JUnit must use UTF-8")
+        root = ElementTree.fromstring(raw)
+        minima = profile["recipe"]["vitest"]
+        counts, identities = {}, set()
+        if root.tag != "testsuites" or any(s.tag != "testsuite" for s in root):
+            raise ValueError("expected flat Vitest suites")
+        for suite in root:
+            name = suite.get("name", "")
+            if name.startswith("/work/apps/web/"):
+                name = name[len("/work/apps/web/") :]
+            if name not in minima or name in counts:
+                raise ValueError("unexpected or duplicate file")
+            cases = list(suite.findall("testcase"))
+            if (
+                any(c.tag not in {"testcase", "system-out", "system-err"} for c in suite)
+                or any(int(suite.get(k, "-1")) != 0 for k in ("failures", "errors", "skipped"))
+                or int(suite.get("tests", "-1")) != len(cases)
+            ):
+                raise ValueError("invalid suite totals or failure")
+            for case in cases:
+                classname = case.get("classname", "").removeprefix("/work/apps/web/")
+                identity = (name, case.get("name"))
+                if (
+                    classname != name
+                    or not identity[1]
+                    or identity in identities
+                    or any(c.tag not in {"system-out", "system-err"} for c in case)
+                ):
+                    raise ValueError("invalid, duplicate, failed or skipped testcase")
+                identities.add(identity)
+            counts[name] = len(cases)
+        if set(counts) != set(minima) or any(counts[n] < v for n, v in minima.items()):
+            raise ValueError("missing or undercounted coverage")
+        totals = {"tests": len(identities), "failures": 0, "errors": 0, "skipped": 0}
+        for key, expected in totals.items():
+            if key in root.attrib and int(root.attrib[key]) != expected:
+                raise ValueError("invalid root totals")
+    except (ValueError, KeyError, TypeError, ElementTree.ParseError) as exc:
+        raise plan.TestEvidenceError("Node JUnit coverage rejected: " + str(exc)) from exc
+    return {"total": len(identities), "per_file": counts, "failures": 0, "errors": 0, "skipped": 0}

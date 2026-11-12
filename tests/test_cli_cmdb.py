@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 from skcoord.cmdb import CMDBManager
+from skcoord.discovery_drift import DriftFinding
 
 from skcapstone.cli import main
 
@@ -240,6 +241,28 @@ def test_local_record_run_persists_artifact_without_applying(home: Path) -> None
     assert (
         artifact_json["completeness"]["complete"] is False
     ), "a dry-run artifact must not look like a successful apply to `cmdb status`"
+
+
+@needs_discovery
+def test_local_artifact_carries_a_drift_summary(home: Path) -> None:
+    """SKBrain's CmdbDriftBounded reads drift from the checksummed artifact only."""
+    (home / "registry").mkdir(parents=True)
+    (home / "registry" / "svc.json").write_text(json.dumps({"name": "svc"}))
+    findings = [
+        DriftFinding("ci-a", "declared_not_observed", "a"),
+        DriftFinding("ci-b", "stored_not_discovered", "b"),
+        DriftFinding("ci-c", "stored_not_discovered", "c"),
+    ]
+
+    with patch("skcapstone.cmdb_discovery.drift", return_value=findings):
+        run("reconcile", "--no-local", "--apply", "--json")
+
+    artifact = json.loads(next((home / "cmdb" / "reconcile-runs").glob("*.json")).read_text())
+    assert artifact["drift"] == {
+        "count": 3,
+        "by_kind": {"declared_not_observed": 1, "stored_not_discovered": 2},
+        "by_severity": {"high": 1, "medium": 2, "low": 0},
+    }
 
 
 @needs_discovery
@@ -594,3 +617,44 @@ def test_secure_runner_resolves_only_vault_metadata(
     assert "StrictHostKeyChecking=yes" in command
     assert str(identity) in " ".join(command)
     assert "fixture-key-path-only" not in " ".join(command)
+
+
+def test_network_apply_refusal_names_the_incomplete_targets(
+    home: Path, monkeypatch: pytest.MonkeyPatch, secure_runner
+) -> None:
+    """The refusal must say which target and collector failed: it writes no artifact."""
+    from types import SimpleNamespace
+
+    orchestration = _Orchestration(home, complete=False)
+    scan = _Scan(False)
+    scan.deadline_exceeded = False
+    scan.failure_budget_exceeded = False
+    scan.declared_failures = ["collect_fleet_objects:OSError"]
+    scan.targets = [
+        SimpleNamespace(host="noroc2027", complete=True, failures=[], coverage=[]),
+        SimpleNamespace(
+            host="192.168.0.41",
+            complete=False,
+            failures=["collect_units:transport_unavailable", "collect_cron:transport_unavailable"],
+            coverage=[],
+        ),
+        SimpleNamespace(
+            host="192.168.0.100",
+            complete=False,
+            failures=[],
+            coverage=[SimpleNamespace(collector="collect_docker", status="unavailable")],
+        ),
+    ]
+    orchestration.scan_network = lambda _h, _t, factory: (factory("nor"), scan)[1]
+    monkeypatch.setattr("skcapstone.cli.cmdb._orchestration", lambda: orchestration)
+
+    result = run("reconcile", "--network", "--credential", "nor=skvault://cmdb/nor", "--apply")
+
+    assert result.exit_code != 0
+    out = " ".join(result.output.split())
+    assert "network scan is incomplete" in out
+    assert "192.168.0.41: collect_units:transport_unavailable" in out
+    assert "192.168.0.100: collect_docker:unavailable" in out
+    assert "declared: collect_fleet_objects:OSError" in out
+    assert "noroc2027" not in out
+    assert not (home / "cmdb" / "reconcile-runs").exists()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from click.testing import CliRunner
 
 from skcapstone.cli import main
@@ -30,6 +31,57 @@ def test_coord_kanban_text_summary(tmp_path):
     result = CliRunner().invoke(main, ["coord", "kanban", "--home", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert "feature" in result.output.lower()
+
+
+def test_coord_kanban_excludes_archived_and_include_archived_restores(tmp_path):
+    """Card 2f054aa5: archived cards leave the active view; flag restores all."""
+    import json
+
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="11fe0001", title="Active card", created_by="opus"))
+    board.create_task(Task(id="c01d0001", title="Cold done card", created_by="opus"))
+    board.complete_task("opus", "c01d0001")
+    aged = datetime.now(timezone.utc) + timedelta(days=30)
+    archived = board.archive_done_tasks(older_than_days=14, now=aged)
+    assert "c01d0001" in archived
+
+    active = CliRunner().invoke(main, ["coord", "kanban", "--home", str(tmp_path), "--json"])
+    assert active.exit_code == 0, active.output
+    grid = json.loads(active.stdout)
+    ids = {row["id"] for columns in grid.values() for rows in columns.values() for row in rows}
+    assert "11fe0001" in ids
+    assert "c01d0001" not in ids
+
+    full = CliRunner().invoke(
+        main,
+        ["coord", "kanban", "--home", str(tmp_path), "--json", "--include-archived"],
+    )
+    assert full.exit_code == 0, full.output
+    grid_full = json.loads(full.stdout)
+    ids_full = {
+        row["id"] for columns in grid_full.values() for rows in columns.values() for row in rows
+    }
+    assert ids_full == ids | {"c01d0001"}
+
+
+def test_coord_kanban_archive_keeps_dependency_claims_working(tmp_path):
+    """Archived done dependencies must not block claiming dependents."""
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="dec00001", title="Done dependency", created_by="opus"))
+    board.complete_task("opus", "dec00001")
+    board.create_task(
+        Task(id="0a0b0001", title="Dependent", created_by="opus", dependencies=["dec00001"])
+    )
+    aged = datetime.now(timezone.utc) + timedelta(days=30)
+    assert "dec00001" in board.archive_done_tasks(older_than_days=14, now=aged)
+
+    result = CliRunner().invoke(
+        main,
+        ["coord", "claim", "0a0b0001", "--home", str(tmp_path), "--agent", "opus"],
+    )
+    assert result.exit_code == 0, result.output
 
 
 def test_coord_status_labels_old_active_record_as_stale_projection(tmp_path):
@@ -165,3 +217,36 @@ def test_coord_maintain_runs_both_sweeps(tmp_path):
     assert result.exit_code == 0, result.output
     assert "mt1" in board.archived_ids()  # done archived
     assert "mt2" in board.archived_ids()  # stale-open archived
+
+
+def test_coord_kanban_json_uses_folded_dependencies(tmp_path):
+    """Kanban must render the authoritative dependency amendment fold."""
+    import json
+
+    from skcapstone.card_store import CardCore, CardStore
+
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="gate0002", title="Incomplete gate"))
+    store.create(CardCore(id="target02", title="Folded dependency target"))
+    store.append_event(
+        "target02",
+        "add_dependency",
+        "governance",
+        dependency="gate0002",
+        reason="test gate",
+    )
+
+    result = CliRunner().invoke(main, ["coord", "kanban", "--home", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0, result.output
+    grid = json.loads(result.output)
+    cards = [
+        card
+        for columns in grid.values()
+        for column_cards in columns.values()
+        for card in column_cards
+    ]
+    target = next(card for card in cards if card["id"] == "target02")
+    assert target["dependencies"] == ["gate0002"]
+    with pytest.raises(ValueError, match="incomplete dependencies: gate0002"):
+        Board(tmp_path).claim_task("worker", "target02")

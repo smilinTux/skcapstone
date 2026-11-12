@@ -1,0 +1,1 @@
+- Card `4ceb0aa3`: add an explicit retained-owner native Codex route that disables Codex's inner sandbox only inside enforced fleet bubblewrap, with native admission/profile checks and no direct-host fallback. Required candidate tests remain in the independent sealed test executor.

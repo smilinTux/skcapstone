@@ -266,7 +266,7 @@ pip install -e ".[all]"          # runtime + every optional sibling (capauth, sk
 - **Build a wheel:** `python -m build` → `dist/skcapstone-<version>-*.whl`, where
   `<version>` is derived from the git tag at build time (see §9). Do not expect a
   literal you can predict from the tree.
-- **Console scripts: there are five**, not three (`pyproject.toml`
+- **Console scripts: there are eight** (`pyproject.toml`
   `[project.scripts]`):
 
   | Script | Target |
@@ -276,6 +276,13 @@ pip install -e ".[all]"          # runtime + every optional sibling (capauth, sk
   | `crush` | `skcapstone.crush_shim:main` |
   | `skfleet` | `skcapstone.fleet.cli:main` |
   | `skoperator` | `skcapstone.operator_seat.cli:main` |
+  | `skfleet-claim-expiry` | `skcapstone.fleet.claim_expiry_cli:main` |
+  | `skmail` | `skcapstone.fleet.skmail:main` |
+  | `skmail_writer` | `skcapstone.fleet.skmail.skmail_writer:main` |
+
+`skmail --version` reports the installed skcapstone version. The old
+`scripts/fleet/skmail` path delegates to the packaged implementation;
+`skmail_writer.py` remains installed for existing writer callers.
 
 Verify with `skcapstone --version`, and expect a **setuptools-scm** string such as
 `0.15.15.dev25+g90df5e0` on a dev checkout, not a clean release number. See §9.
@@ -292,7 +299,7 @@ workflows with confusingly similar names and only one of them runs tests:
 
 | Workflow | What it actually runs | Is it a test gate? |
 |---|---|---|
-| `pytest.yml` | `python -m pytest tests/ --strict-markers -m "not integration and not e2e"` on 3.11 + 3.12 | **yes, this is the gate** |
+| `pytest.yml` | `python -m pytest tests/ --strict-markers -m "not integration and not e2e"` on 3.12 | **yes, this is the gate** |
 | `ci.yml` | `black --check src/ tests/`, `ruff check src/`, `scripts/check-no-shim-imports.sh`, `python -m build` + `twine check` | **no. It runs zero tests** |
 
 Do not cite `ci.yml` as evidence that tests passed. A green `ci.yml` means the code is
@@ -312,6 +319,9 @@ pytest --cov=skcapstone                                                     # wi
   registered markers plus `--strict-markers` (so a typo'd marker errors instead of
   silently selecting nothing). Run them explicitly: `pytest -m integration` /
   `pytest -m e2e`.
+- **Coverage upload:** Codecov is optional (`fail_ci_if_error: false` and step-only
+  `continue-on-error: true`), including action bootstrap failures. Test commands and
+  test jobs remain mandatory; a coverage upload error never masks a pytest failure.
 - **Gate rule:** a release is blocked unless `pytest.yml` is green **and** `ci.yml` lint
   passes. Do not tag a version whose Build/Test steps here do not reproduce.
 
@@ -321,11 +331,21 @@ pytest --cov=skcapstone                                                     # wi
 
 skcapstone ships as **both** a service (the daemon) and a Python package.
 
+**Card completion contract.** A source card is done when an independent review
+PASS names the exact commit, the tests are green on that same commit, and the
+reviewed code is merged on `origin/main`. An operator closes it with
+`skcapstone coord accept <source_card> --agent <operator> --repo-path <clone>`
+(`src/skcapstone/simple_accept.py`). Builds run in lanes, reviews in reviewer
+panes. Nothing else gates completion.
+
 **Package release (PyPI).** ⚠️ **Do not edit a version number anywhere.** There is no
 `version` field to bump in `pyproject.toml` (it is `dynamic = ["version"]`) and this
 repo has **no `package.json`** to mirror it into. The **tag is** the version.
 
-1. Add a dated `CHANGELOG.md` entry (Keep-a-Changelog).
+1. Record a changelog entry. Day to day that is a new `changelog.d/<slug>.md`
+   fragment (see `changelog.d/README.md`); fold pending fragments into
+   `CHANGELOG.md` with `python scripts/changelog_fragments.py` before cutting a
+   version you name by hand. Keep-a-Changelog style either way.
 2. `pytest.yml` green + `ci.yml` lint clean (§4).
 3. Merge to `main`. `.github/workflows/publish.yml` **cuts the next patch tag itself**
    when HEAD is not already tagged, then builds and publishes that tagged version in
@@ -382,13 +402,23 @@ workflow; it does not receive a generic privileged shell. The write-free shadow
 unit and the apply unit are deliberately distinct. The packaged apply unit is
 `src/skcapstone/data/systemd/skcapstone-cmdb-reconcile-network.service`; its
 `ConditionPathExists` gate requires an owner-reviewed launcher at
-`~/.config/skcapstone/cmdb-network-apply`. The launcher is mode `0700`, contains
-only exact fleet targets and `skvault://` references, and ends in:
+`~/.config/skcapstone/cmdb-network-apply`. Everything ships in source:
 
-```bash
-exec "$HOME/.skenv/bin/skcapstone" cmdb apply --network \
-  --credential HOST=skvault://REFERENCE  # repeated for every exact target
-```
+- `src/skcapstone/data/cmdb-network-apply.sh`: the launcher. Install it, after
+  review, as `~/.config/skcapstone/cmdb-network-apply` with mode `0700`. It only
+  runs `skcapstone-cmdb-network apply`.
+- `scripts/skcapstone-cmdb-network {apply|shadow}`: the runner, installed into
+  `~/.skenv/bin`. It reads `~/.config/skcapstone/cmdb-network-targets` (one
+  `HOST=skvault://REFERENCE` per line, owner-only, no group or world write),
+  refuses anything else, and runs
+  `cmdb reconcile --network [--apply] --record-run --credential ...` through
+  `sk-cron-run` under a non-blocking lock.
+- `skcapstone-cmdb-reconcile-shadow.service`: the write-free shadow
+  (`skcapstone-cmdb-network shadow`), gated on the targets file.
+- `skcapstone-cmdb-reconcile-network.timer`: the scheduled network apply at
+  `01/3:47`, 90 minutes from the legacy local timer's `00/3:17` on both sides.
+  It is installed and enabled only as a gate 4 cutover step, never by a
+  package install or pull.
 
 Never put credential values in the launcher, unit, change record, or artifact.
 Before start, `skcapstone cmdb operator act apply-cmdb-reconcile --change-id ID`
@@ -483,6 +513,16 @@ Standard:
   Every `127.0.0.1:7777` URL elsewhere in this document is written as
   `127.0.0.1:<port>`; substitute the resolved port.
 
+**Fleet deploy (code onto hosts).** Separate from the PyPI release above, and the
+rule is absolute: **main is what runs.** Every change goes branch, push, PR, CI green,
+merge to `main`, then `skcapstone fleet rollout` from main (dry run, canary, rest).
+Arm auto-merge when you open the PR (`gh pr merge --auto --rebase <branch>`) so a
+green PR lands without anyone coming back for it. Never copy files into
+`~/.skenv`, never `pip install -e` a worktree on a live host, never commit to a repo
+whose `origin` is a local path. A host down right now gets the emergency path, which
+still installs only a pushed commit. Full runbook with worked examples:
+[`docs/fleet/DEPLOY-FROM-MAIN.md`](docs/fleet/DEPLOY-FROM-MAIN.md).
+
 ---
 
 ## 6. Configuration / Usage
@@ -541,6 +581,24 @@ See [`docs/MCP_TOPOLOGY.md`](./docs/MCP_TOPOLOGY.md).
 | `CAPAUTH_API_URL` | remote CapAuth validation endpoint |
 | `SKCOMMS_TURN_SECRET` | HMAC secret for coturn credentials |
 | `SKCAPSTONE_DESKTOP_NOTIFY` | opt-in (default off); when enabled, the loop fires a gated desktop notification on each generated response |
+
+**Fleet dispatcher gateway environment (`scripts/fleet/skfleet-rotate.py`).** The
+rotate dispatcher that farms coord cards out to worker lanes uses the deployed
+production policy with gateway-controlled capacity; legacy mode uses per-host
+environment targets. **Every fleet and gateway setting is registered in
+[`docs/fleet/SETTINGS-REGISTRY.md`](./docs/fleet/SETTINGS-REGISTRY.md)**, one
+authoritative declaration per fact, repo defaults CI-asserted against the code and
+estate values recorded as dated measurements. Read it before adding a setting
+anywhere. The canonical design docs are
+[`docs/fleet/lane-admission-health.md`](./docs/fleet/lane-admission-health.md) and
+[`docs/fleet/model-lane-routing.md`](./docs/fleet/model-lane-routing.md); the facts
+that have actually caused outages:
+
+| Variable | Effect |
+|---|---|
+| `SKFLEET_GATEWAY_URL` | **Required, no default.** The SKGateway ROOT origin with **no `/v1` suffix**: `http://host:port`, never `http://host:port/v1`. `/health` and `/queue` are served at the gateway root, so a `/v1` value 404s both probes, every lane reads `unknown`, and fail-closed lane admission blocks every card. Measured on chi 2026-09-18: the `/v1` form on the rotate hosts produced three days of zero dispatch while the gateway itself was healthy. `gateway_root()` in `src/skcapstone/fleet_lane_health.py` now normalizes the path away; write the root form anyway. |
+| Production policy / legacy lane targets | With `PRODUCTION_POLICY`, SKGateway is the capacity authority. Enabled lanes use the policy scan budget (default 256) for per-cycle candidate scanning, not a fixed worker ceiling; disabled kimi has target 0. `TARGET`, `GLM_TARGET`, `QWEN_TARGET`, and `MAX_LAUNCH` use that scan budget. Without production policy, legacy `SKFLEET_TARGET` and `SKFLEET_GLM_TARGET` are required non-negative integers, `SKFLEET_QWEN_TARGET` defaults to 6, `SKFLEET_KIMI_TARGET` to 0, and `SKFLEET_MAX_LAUNCH` to 11. |
+| Lane model variables | Each lane must resolve to a model the gateway actually advertises: codex `SKFLEET_CODEX_LANE_MODEL` (default `sk-codex-mid`), glm per card size `sk-glm-s`/`sk-glm-m`/`sk-glm-l` via `SKFLEET_GLM_MODEL_<S\|M\|L\|XL>`, kimi `kimi-for-coding` (`k3` for `[XL]` cards). Sized cards route through the gateway capability buckets `sk-s`/`sk-m`/`sk-l`/`sk-xl` (`SKFLEET_MODEL_<size>` overrides); a bucket or model the gateway does not advertise **fails closed** and dispatches nothing, deliberately, instead of silently downgrading. |
 
 **Secrets sourcing (hard rules).** LLM provider API keys are read from the
 **environment** (or the operator's shell profile / a systemd `EnvironmentFile`) — never
@@ -666,6 +724,8 @@ skcapstone coord parity --check         # re-verify (exit non-zero on any residu
 | CI is green but a test regression shipped | You read `ci.yml`, which **runs no tests** (black, ruff, shim-import check, build). The test gate is `pytest.yml`. See §4. |
 | `git push` / `git log origin/main` behaves unexpectedly | This repo has **two remotes**: `origin` (GitHub, `smilinTux/skcapstone`) and `laptop` (`192.168.0.41:clawd/skcapstone-repos/skcapstone`). Always qualify the remote; a bare `main` may not mean what you assume. |
 | Patching `skcapstone.coordination` / `.itil` / `.card_store` has no effect | Those are transparent re-export shims over **skcoord**. Edit and patch there. See §2. |
+| Fleet launches zero workers cycle after cycle, gateway healthy | `SKFLEET_GATEWAY_URL` first: it must be the gateway ROOT origin with no `/v1` suffix. The `/v1` form 404s the `/health` and `/queue` probes, every lane reads `unknown`, and fail-closed admission blocks every card (chi, 2026-09-18: three days of zero dispatch, 373 consecutive NOOP cycles). See §6 and `docs/fleet/lane-admission-health.md`. |
+| Zero dispatch right after an SKGateway restart or fresh install | Expected: gateway backends are fail-closed and read `unknown` until a real request has been served, so a cold gateway serves nothing until warmed. Send one warm-up completion per capacity domain, then confirm `observed: true` on `$SKFLEET_GATEWAY_URL/health`. See `docs/fleet/lane-admission-health.md`. |
 
 ---
 
@@ -717,10 +777,10 @@ skcapstone coord parity --check         # re-verify (exit non-zero on any residu
   a property of capauth / sk_pgp, not this repo.
 
 <!-- docs-evidence
-verified: 2026-08-20
+verified: 2026-10-20
 checks:
-  - name: all five console scripts exist and there are still exactly five (section 3)
-    run: test $(grep -cE '^[a-z-]+ = "skcapstone\.' pyproject.toml) -eq 5 && grep -qxF 'skcapstone = "skcapstone.cli:main"' pyproject.toml && grep -qxF 'skfleet = "skcapstone.fleet.cli:main"' pyproject.toml && grep -qxF 'skoperator = "skcapstone.operator_seat.cli:main"' pyproject.toml
+  - name: all eight console scripts match the inventory in section 3
+    run: python3 -c 'import tomllib; assert tomllib.load(open("pyproject.toml","rb"))["project"]["scripts"] == {"skcapstone":"skcapstone.cli:main","skcapstone-mcp":"skcapstone.mcp_server:main","crush":"skcapstone.crush_shim:main","skfleet":"skcapstone.fleet.cli:main","skoperator":"skcapstone.operator_seat.cli:main","skfleet-claim-expiry":"skcapstone.fleet.claim_expiry_cli:main","skmail":"skcapstone.fleet.skmail:main","skmail_writer":"skcapstone.fleet.skmail.skmail_writer:main"}'
   - name: the two disagreeing DEFAULT_PORT constants are still what section 5 describes
     run: grep -qxF 'DEFAULT_PORT = 7777' src/skcapstone/daemon.py && grep -qxF 'DEFAULT_PORT = int(os.environ.get("SKCAPSTONE_PORT", "9383"))' src/skcapstone/__init__.py
   - name: the per-agent port map still matches the ports section 5 tells operators to expect
@@ -736,7 +796,7 @@ checks:
   - name: version stays setuptools-scm derived, no literal, and still no package.json
     run: grep -qxF 'dynamic = ["version"]' pyproject.toml && ! grep -qE '^version\s*=' pyproject.toml && ! test -f package.json
   - name: pytest.yml is still the real test gate and is not masked
-    run: grep -qF 'python -m pytest tests/' .github/workflows/pytest.yml && grep -qF 'not integration and not e2e' .github/workflows/pytest.yml && ! grep -vE '^\s*#' .github/workflows/pytest.yml | grep -qE '\|\| true|continue-on-error:\s*true'
+    run: grep -qF 'python -m pytest tests/' .github/workflows/pytest.yml && grep -qF 'not integration and not e2e' .github/workflows/pytest.yml && ! grep -vE '^\s*#' .github/workflows/pytest.yml | grep -qE '\|\| true' && ! awk '/^  [^ ]/ {coverage=0} /^      - / {coverage=($0 == "      - name: Upload coverage")} !coverage && $0 !~ /^[[:space:]]*#/ {print}' .github/workflows/pytest.yml | grep -qE 'continue-on-error:\s*true'
   - name: ci.yml still runs NO tests, as section 4 warns
     run: ! grep -qE '^\s+run:.*pytest' .github/workflows/ci.yml
   - name: skcoord is still a hard dep and coordination is still a shim over it
@@ -747,4 +807,46 @@ checks:
     run: grep -qF 'export PATH="$HOME/.skenv/bin:$PATH"' src/skcapstone/codex_setup.py && grep -qF 'export SK_CODEX_YOLO="${SK_CODEX_YOLO:-1}"' src/skcapstone/codex_setup.py && grep -qF 'def ensure_pi_setup(' src/skcapstone/codex_setup.py
   - name: ambiguous multi-agent installs are never resolved alphabetically
     run: grep -qF 'return candidates[0] if len(candidates) == 1 else None' src/skcapstone/__init__.py && ! grep -qF 'DEFAULT_AGENT = (os.environ.get("SK_DEFAULT_AGENT") or "lumina")' src/skcapstone/__init__.py
+  - name: SKFLEET_GATEWAY_URL is required and the root-origin normalizer section 6 cites exists
+    run: grep -qF '"SKFLEET_GATEWAY_URL is required"' scripts/fleet/skfleet-rotate.py && grep -qE '^def gateway_root\(' src/skcapstone/fleet_lane_health.py
+  - name: deployed gateway capacity and legacy targets match section 6
+    run: python3 scripts/check-production-capacity-contract.py
+  - name: the codex lane default model is still sk-codex-mid, per section 6
+    run: grep -qF '"model":os.environ.get("SKFLEET_CODEX_LANE_MODEL","sk-codex-mid")' scripts/fleet/skfleet-rotate.py
+  - name: glm size levels and kimi models are still what section 6 documents
+    run: grep -qF '_GLM_LEVEL_DEFAULTS={"S":"sk-glm-s","M":"sk-glm-m","L":"sk-glm-l","XL":"sk-glm-l"}' scripts/fleet/skfleet-rotate.py && grep -qF '"k3" if match and match.group(1)=="XL" else "kimi-for-coding"' scripts/fleet/skfleet-rotate.py
+  - name: no workflow `uses:` ref is an abbreviated sha (the 2026-09-19 09:29Z break)
+    run: ! grep -rqE "uses:[[:space:]]*[^[:space:]]+@[0-9a-f]{7,39}([[:space:]]|$)" .github/workflows/
+  - name: every cross-repo reusable workflow is pinned to a full 40-hex sha, never a branch
+    run: test "$(grep -rhoE "uses:[[:space:]]*[^./[:space:]][^[:space:]]*/\.github/workflows/[^[:space:]]+" .github/workflows/ | wc -l)" = "$(grep -rhoE "uses:[[:space:]]*[^./[:space:]][^[:space:]]*/\.github/workflows/[^[:space:]]*@[0-9a-f]{40}" .github/workflows/ | wc -l)"
+  - name: the workflow-ref guard runs from a context that survives a broken cross-repo ref
+    run: grep -qF 'python scripts/ci/workflow_refs.py --resolve' .github/workflows/ci.yml && test -f tests/test_workflow_ref_pins.py && ! grep -qE 'uses:[[:space:]]+[^./[:space:]][^[:space:]]*/\.github/workflows/' .github/workflows/pytest.yml .github/workflows/ci.yml
+  - name: settings registry exists and is the one place fleet/gateway settings are declared
+    run: R=docs/fleet/SETTINGS-REGISTRY.md; test -f $R && grep -qxF '## Where a new setting goes' $R && grep -qxF '## 1. Repo facts, CI-asserted, never hand-drifted' $R && grep -qxF '## 2. Estate facts, measured, not in this repo, not CI-reachable' $R && grep -qxF '## 3. Derived artifacts, never hand-edit' $R && grep -qF 'A number in prose with no assertion behind it is a defect.' $R
+  - name: builder ceiling - the code constant and the settings registry state the same number
+    run: C=$(grep -oP '^BUILDER_CAPACITY = \K[0-9]+' src/skcapstone/fleet/builder_dispatch.py); D=$(grep -F 'BUILDER_CAPACITY' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[0-9]+(?=\*\*)'); test -n "$C" && test "$C" = "$D"
+  - name: codex lane model - the dispatcher default and the settings registry agree
+    run: C=$(grep -oP 'SKFLEET_CODEX_LANE_MODEL","\K[a-z0-9.-]+' scripts/fleet/skfleet-rotate.py); D=$(grep -F 'SKFLEET_CODEX_LANE_MODEL' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[a-z0-9.-]+(?=\*\*)'); test -n "$C" && test "$C" = "$D"
+  - name: qwen and kimi lane target defaults - dispatcher and settings registry agree
+    run: Q=$(grep -oP 'SKFLEET_QWEN_TARGET", default="\K[0-9]+' scripts/fleet/skfleet-rotate.py); K=$(grep -oP 'SKFLEET_KIMI_TARGET", default="\K[0-9]+' scripts/fleet/skfleet-rotate.py); QD=$(grep -F 'SKFLEET_QWEN_TARGET' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[0-9]+(?=\*\*)'); KD=$(grep -F 'SKFLEET_KIMI_TARGET' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[0-9]+(?=\*\*)'); test -n "$Q" && test "$Q" = "$QD" && test -n "$K" && test "$K" = "$KD"
+  - name: both daemon ports - the two constants and the settings registry agree
+    run: P=$(grep -oP 'SKCAPSTONE_PORT", "\K[0-9]+' src/skcapstone/__init__.py); S=$(grep -oP '^DEFAULT_PORT = \K[0-9]+' src/skcapstone/daemon.py); PD=$(grep -F 'src/skcapstone/__init__.py' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[0-9]+(?=\*\*)'); SD=$(grep -F 'src/skcapstone/daemon.py' docs/fleet/SETTINGS-REGISTRY.md | grep -oP '\*\*\K[0-9]+(?=\*\*)'); test -n "$P" && test -n "$S" && test "$P" = "$PD" && test "$S" = "$SD"
+  - name: the two gateways are never conflated - chi is never given the nor port
+    run: ! ./scripts/docs/prose_grep.sh 'chiap01:18780|chiap01[^0-9]{1,12}18780' docs/ SOP.md README.md
+  - name: chi gateway pool ceilings are declared in the settings registry and nowhere else
+    run: test $(grep -rlE 'codex[^|]*\|[[:space:]]*32[[:space:]]*\|' docs/ SOP.md README.md | wc -l) -eq 1 && grep -qE 'codex[^|]*\|[[:space:]]*32[[:space:]]*\|' docs/fleet/SETTINGS-REGISTRY.md
+  - name: no doc still claims the superseded codex pool ceiling of 4 or 16
+    run: ! ./scripts/docs/prose_grep.sh 'codex[^.]{0,60}(pool|ceiling|slots?|max concurrent)[^.]{0,30}(4|16)([^0-9]|$)|(pool|ceiling|slots?)[^.]{0,30}codex[^.]{0,30}(4|16)([^0-9]|$)' docs/ SOP.md README.md
+  - name: every estate-fact section in the settings registry carries a re-measure command
+    run: test $(grep -cE '^Re-measure: ' docs/fleet/SETTINGS-REGISTRY.md) -ge 3
+  - name: the three no-default fleet env vars still have no default in the dispatcher
+    run: grep -qE '^ *TARGET=_required_lane_target\("SKFLEET_TARGET"\)$' scripts/fleet/skfleet-rotate.py && grep -qE '^ *GLM_TARGET=_required_lane_target\("SKFLEET_GLM_TARGET"\)$' scripts/fleet/skfleet-rotate.py && grep -qF '"SKFLEET_GATEWAY_URL is required"' scripts/fleet/skfleet-rotate.py
+  - name: no document contradicts ITSELF on a registered fact (the table-versus-prose bug)
+    run: python3 scripts/docs/check_self_consistency.py
+  - name: the codex lane model is never written as the bare sk-codex that disagreed with its own file
+    run: ! ./scripts/docs/prose_grep.sh '`sk-codex`' docs/ SOP.md README.md
+  - name: kimi gateway ceilings are declared in the settings registry and nowhere else
+    run: ! ./scripts/docs/prose_grep.sh 'kimi[^.]{0,40}max: *(28|14)([^0-9]|$)|max: *(28|14)[^.]{0,40}kimi' docs/ SOP.md README.md
+  - name: every repo pin of the codex lane model is the same string
+    run: test $(grep -rhoE '"sk-codex-[a-z]+"' src/ scripts/ | sort -u | wc -l) -eq 1
 -->

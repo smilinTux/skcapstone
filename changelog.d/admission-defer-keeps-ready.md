@@ -1,0 +1,1 @@
+- fleet: a READY card whose local launch is deferred by node admission is moved back to READY after its claim release, instead of being parked in backlog.

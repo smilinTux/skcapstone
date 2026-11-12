@@ -10,11 +10,70 @@ as a deletion. None of it was visible until someone went looking.
 Read-only. Never commits, never pushes. Reports and, with --skmail, files a
 message so the gap is on the record rather than in someone's memory.
 """
-import argparse, glob, json, os, subprocess, sys, datetime
 
-def git(repo, *a):
-    r = subprocess.run(["git", "-C", repo] + list(a), capture_output=True, text=True)
-    return r.stdout.strip() if r.returncode == 0 else ""
+import argparse
+import datetime
+import glob
+import json
+import os
+import subprocess
+import sys
+
+
+def git(repo, *args):
+    """Run a required git command and preserve operational failures."""
+    command = ["git", "-C", repo, *args]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+        raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
+    return result.stdout.strip()
+
+
+def git_config(repo, key):
+    """Read optional git configuration, distinguishing absence from failure."""
+    command = ["git", "-C", repo, "config", "--get", key]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode == 0:
+        return result.stdout.strip()
+    if result.returncode == 1:
+        return None
+    detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+    raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
+
+
+def git_branch(repo):
+    """Return the branch label and whether HEAD is validly detached."""
+    command = ["git", "-C", repo, "symbolic-ref", "--quiet", "--short", "HEAD"]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode == 0:
+        return result.stdout.strip(), False
+    if result.returncode == 1:
+        git(repo, "rev-parse", "--verify", "HEAD^{commit}")
+        return "HEAD (detached)", True
+    detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+    raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
+
+
+def git_upstream(repo, branch):
+    """Return the verified upstream ref, or None when it was validly pruned."""
+    upstream = git(repo, "for-each-ref", "--format=%(upstream)", "refs/heads/%s" % branch)
+    if not upstream:
+        return None
+    command = ["git", "-C", repo, "show-ref", "--verify", "--quiet", upstream]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode == 1:
+        return None
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+        raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
+    command = ["git", "-C", repo, "rev-parse", "--verify", "--quiet", "%s^{commit}" % upstream]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode == 0:
+        return upstream
+    detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+    raise RuntimeError("%s failed: %s" % (" ".join(command), detail))
+
 
 def scan(roots):
     findings = []
@@ -24,40 +83,68 @@ def scan(roots):
                 continue
             name = os.path.basename(d.rstrip("/"))
             porcelain = git(d, "status", "--porcelain")
-            lines = [l for l in porcelain.split("\n") if l.strip()]
-            modified = [l for l in lines if l[:2].strip() in ("M", "MM", "AM")]
-            untracked = [l for l in lines if l.startswith("??")]
-            deleted = [l for l in lines if l[:2].strip() in ("D", "AD")]
-            branch = git(d, "rev-parse", "--abbrev-ref", "HEAD")
-            unpushed = git(d, "log", "--oneline", "@{u}..") if git(d, "rev-parse", "--abbrev-ref", "@{u}") else "NO_UPSTREAM"
-            behind = git(d, "rev-list", "--count", "HEAD..@{u}") if unpushed != "NO_UPSTREAM" else ""
+            lines = [line for line in porcelain.split("\n") if line.strip()]
+            modified = [line for line in lines if line[:2].strip() in ("M", "MM", "AM")]
+            untracked = [line for line in lines if line.startswith("??")]
+            deleted = [line for line in lines if line[:2].strip() in ("D", "AD")]
+            branch, detached = git_branch(d)
+            remote = None if detached else git_config(d, "branch.%s.remote" % branch)
+            merge = None if detached else git_config(d, "branch.%s.merge" % branch)
+            has_upstream = not detached and remote is not None and merge is not None
+            upstream = git_upstream(d, branch) if has_upstream else None
+            if upstream is not None:
+                unpushed = git(d, "log", "--oneline", "%s.." % upstream)
+            else:
+                unpushed = "NO_UPSTREAM"
+            behind = (
+                git(d, "rev-list", "--count", "HEAD..%s" % upstream)
+                if upstream is not None
+                else ""
+            )
             issues = []
             # every tracked file deleted is the signature of an emptied worktree
             tracked = git(d, "ls-files")
             n_tracked = len(tracked.split("\n")) if tracked else 0
             if deleted and n_tracked and len(deleted) >= max(5, int(n_tracked * 0.8)):
-                issues.append("EMPTIED_WORKTREE: %d of %d tracked files deleted" % (len(deleted), n_tracked))
+                issues.append(
+                    "EMPTIED_WORKTREE: %d of %d tracked files deleted" % (len(deleted), n_tracked)
+                )
             if untracked:
                 issues.append("untracked=%d" % len(untracked))
             if modified:
                 issues.append("modified=%d" % len(modified))
             if unpushed and unpushed != "NO_UPSTREAM":
                 issues.append("unpushed=%d" % len(unpushed.split("\n")))
-            if unpushed == "NO_UPSTREAM" and branch not in ("main", "master"):
+            if unpushed == "NO_UPSTREAM" and not detached and branch not in ("main", "master"):
                 issues.append("branch has no upstream")
             if behind and behind != "0":
                 issues.append("behind_upstream=%s" % behind)
             if issues:
-                findings.append({
-                    "repo": name, "path": d, "branch": branch, "issues": issues,
-                    "untracked_sample": [l[3:] for l in untracked[:5]],
-                })
+                findings.append(
+                    {
+                        "repo": name,
+                        "path": d,
+                        "branch": branch,
+                        "issues": issues,
+                        "untracked_sample": [line[3:] for line in untracked[:5]],
+                    }
+                )
     return findings
+
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--roots", nargs="*", default=["~/work/*/", "~/skgateway-codex/", "~/clawd/skcapstone-repos/*/"])
+    ap.add_argument(
+        "--roots",
+        nargs="*",
+        default=["~/work/*/", "~/skgateway-codex/", "~/clawd/skcapstone-repos/*/"],
+    )
     ap.add_argument("--skmail", action="store_true", help="file a message when findings exist")
+    ap.add_argument(
+        "--report-only",
+        action="store_true",
+        help="return success after reporting findings (operational errors still fail)",
+    )
     ap.add_argument("--to", default="jarvis")
     a = ap.parse_args()
 
@@ -80,28 +167,38 @@ def main():
     if a.skmail:
         base = os.path.expanduser("~/.skcapstone/coordination/skmail.d")
         os.makedirs(base, exist_ok=True)
-        body = ["Work-durability sweep on %s found %d repositories holding work that is not"
-                % (host, len(findings)),
-                "durable yet. Uncommitted or unpushed work is destroyed without trace by the",
-                "next pull or checkout in a shared checkout.", ""]
+        body = [
+            "Work-durability sweep on %s found %d repositories holding work that is not"
+            % (host, len(findings)),
+            "durable yet. Uncommitted or unpushed work is destroyed without trace by the",
+            "next pull or checkout in a shared checkout.",
+            "",
+        ]
         for f in findings:
             body.append("%s [%s]: %s" % (f["repo"], f["branch"], ", ".join(f["issues"])))
             for s in f["untracked_sample"]:
                 body.append("    untracked: %s" % s)
         if crit:
-            body += ["", "CRITICAL: %s look like EMPTIED WORKTREES (nearly every tracked file"
-                     % ", ".join(crit),
-                     "staged as deleted). Do NOT commit those. Restore with git checkout -- . and",
-                     "find out what emptied them."]
-        rec = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-               "from": "skwork-sweep@%s" % host, "to": a.to,
-               "re": "WORK-DURABILITY-SWEEP-%s-%d-REPOS" % (host.upper(), len(findings)),
-               "priority": "critical" if crit else "normal",
-               "body": "\n".join(body)}
+            body += [
+                "",
+                "CRITICAL: %s look like EMPTIED WORKTREES (nearly every tracked file"
+                % ", ".join(crit),
+                "staged as deleted). Do NOT commit those. Restore with git checkout -- . and",
+                "find out what emptied them.",
+            ]
+        rec = {
+            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "from": "skwork-sweep@%s" % host,
+            "to": a.to,
+            "re": "WORK-DURABILITY-SWEEP-%s-%d-REPOS" % (host.upper(), len(findings)),
+            "priority": "critical" if crit else "normal",
+            "body": "\n".join(body),
+        }
         with open(os.path.join(base, "%s.jsonl" % a.to), "a") as fh:
             fh.write(json.dumps(rec) + "\n")
         print("  filed skmail to %s" % a.to)
-    return 1
+    return 0 if a.report_only else 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

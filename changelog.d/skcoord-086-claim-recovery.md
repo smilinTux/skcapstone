@@ -1,0 +1,1 @@
+- Card `096e9846`: require skcoord 0.1.86 so governed claims can discard stale projections to voided tasks; pin CI to exercise the published claim-recovery release.

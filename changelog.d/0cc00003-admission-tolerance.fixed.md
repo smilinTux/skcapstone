@@ -1,0 +1,1 @@
+Admission (active_resource_units) no longer aborts the whole host when one fleet/test-runs entry is non-private (for example mode 755 from Syncthing). Terminal and expired entries are skipped before any privacy judgement; a live non-private entry is logged and charged conservatively for that unit only.

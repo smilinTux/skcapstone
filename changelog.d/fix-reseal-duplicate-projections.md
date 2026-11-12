@@ -1,0 +1,1 @@
+- Accept identical synced copies of the original PASS projection during governed acceptance reseal, while refusing conflicting copies and preserving native event, custody, and history fences.

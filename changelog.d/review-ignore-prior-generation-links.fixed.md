@@ -1,0 +1,1 @@
+Review publication ignores pr/commit/head links that an earlier generation wrote before the current producer claim, so rebuilt cards with a fresh typed PASS_FOR_REVIEW verdict reach review instead of failing on stale bindings.

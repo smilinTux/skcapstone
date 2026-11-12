@@ -1,0 +1,13 @@
+{
+  "tested_capstone_commit": "dc31b1a02076286ffa36062a2520aaf15e1df4cb",
+  "skcoord_source_pin": "47cf3b1d6cbfbda5a07f32ae3a9ed9ad59de6217",
+  "logs": {
+    "fixed-51.log": "36d3ed098ef1eb8fcaa638ed960ae6a23c5b08649c5f98348a7c80d8b65e1e34",
+    "full-suite-retained.log": "68cdc889ceb22b223a6ffff2f9f866d8e7bb5f97f30694340897362b89324b17",
+    "full-suite-retained.xml": "a354a1fffa3f37695c34989dd45d742eb7145d0115cd7f1777c23e880c20f228",
+    "retained-policy-tests.log": "87ef86efb84014e80b002e4b14afaad132506d08e2a64da596b08d980d704afe",
+    "skcoord-full-final.log": "79748f51b3ff16c16a8f6b4bd37f469b41a10c221b89c6682a5fcbf8c093e3da",
+    "skcoord-main-race.log": "b4370af3bbe9bddcffa40067cdb1c7ed4419d7434551673d8c174ddfd5f08531",
+    "full-build-retained.log": "b9044c0ee6f7cfb312375d3b63ea6ddc7b2fa7b66a680a8e93ca4d8dd6d52a14"
+  }
+}

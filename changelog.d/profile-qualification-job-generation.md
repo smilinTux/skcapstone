@@ -1,0 +1,1 @@
+- Profile qualification job identity now includes the exact qualification implementation, allowing corrected code to retry a prior failed job without rewriting its immutable failure record.

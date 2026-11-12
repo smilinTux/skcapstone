@@ -1,0 +1,1 @@
+Sealed test commands name the harness files of the qualified prefix, so the worker (qualify-env interpreter) and its validator (sknoded under ~/.skenv) compute identical sandbox commands and passing qualifications are no longer rejected as "native command or raw output mismatch".

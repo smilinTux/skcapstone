@@ -1,0 +1,10 @@
+[Unit]
+Description=Keep the ZIOWK01 worker Cursor credential current
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

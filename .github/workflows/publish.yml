@@ -11,13 +11,23 @@ permissions:
 
 # Trusted Publishing (OIDC) is configured on PyPI for this project:
 #   owner=smilinTux  workflow=publish.yml  environment=pypi
-# No PyPI token is used in the publish path. The same honest Python 3.11 and
-# 3.12 suite required on pull requests also gates tag creation and publication.
-concurrency:
-  # Never let two releases race: a second push to main waits rather than
-  # computing the same "next" tag from a stale view of the tag list.
-  group: publish-${{ github.ref }}
-  cancel-in-progress: false
+# No PyPI token is used in the publish path. The same honest Python 3.12
+# suite required on pull requests also gates tag creation and publication.
+# NOTE: the serialization lives on the `tag` job, NOT here at workflow level.
+# A workflow-level group is held by EVERY job in the run, including
+# `pypi-publish`, which waits on the `pypi` environment's required reviewers.
+# An unapproved deployment therefore holds the slot indefinitely and starves
+# every later run: run 34092921687 (2026-09-07) sat in `waiting` for two weeks
+# and 99 of the following 100 publish runs were cancelled without ever
+# creating a job, with zero successes and no release tag cut since v0.15.167.
+# Scoping the group to `tag` keeps the property that comment asked for while
+# leaving a pending approval unable to block anything but itself.
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -p -e -o pipefail {0}
+env:
+  BASH_ENV: ""
 
 jobs:
   tests:
@@ -30,6 +40,14 @@ jobs:
     needs: tests
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Never let two releases race: a second push to main waits here rather than
+    # computing the same "next" tag from a stale view of the tag list. This is
+    # the only step that needs serializing, and unlike a workflow-level group it
+    # is released as soon as the tag is cut, rather than being held through the
+    # environment approval on pypi-publish.
+    concurrency:
+      group: publish-tag-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     outputs:
@@ -133,6 +151,7 @@ jobs:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.tag.outputs.version }}
         run: |
           set -euo pipefail
+          python scripts/ci/test_environment.py
           python -m pip install --upgrade setuptools_scm >/dev/null
           v="$(python -m setuptools_scm 2>/dev/null || echo unknown)"
           echo "version to publish: $v"
@@ -141,7 +160,9 @@ jobs:
               echo "::error::refusing to publish a non-release version: $v"
               exit 1 ;;
           esac
-      - run: python -m pip install --upgrade build twine
+      - run: |
+          python scripts/ci/test_environment.py
+          python -m pip install --upgrade build twine
       - run: python -m build
         env:
           SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.tag.outputs.version }}

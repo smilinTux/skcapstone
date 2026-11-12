@@ -1,0 +1,22 @@
+{
+  "kind": "cronjob",
+  "labels": {
+    "epic": "CR-7.3"
+  },
+  "name": "skmem-pg-backup",
+  "spec": {
+    "command": "deploy/ops/skmem-pg-backup.sh",
+    "conditions": [
+      "MissedRun",
+      "BackupFresh"
+    ],
+    "nodeSelector": {
+      "always-on": "true"
+    },
+    "note": "One local skmem-pg dump, replaced nightly (SKMEM_BACKUP_RETAIN=1). Off-site is deliberately none: skmem-pg is rebuilt from the flat files, which memory-backup ships off-site. Installed by skos deploy/schedule/jobs.yaml as sk-cron-run skmem-pg-backup.",
+    "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
+    "schedule": "@daily",
+    "source": "skmemory/docs/BACKUP_SOP.md",
+    "window": "03:15"
+  }
+}

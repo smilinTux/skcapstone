@@ -19,9 +19,21 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # merge_group: prerequisite for a GitHub merge queue (not yet enabled).
+  # No step here reads pull_request/PR-number context (checkout, black,
+  # ruff, the shim-import checks, and the wheel/sdist build all operate on
+  # the checked-out tree only), so this job needs no other change to behave
+  # correctly under merge_group.
+  merge_group:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -p -e -o pipefail {0}
+env:
+  BASH_ENV: ""
 
 jobs:
   lint:
@@ -38,7 +50,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install lint tools
-        run: pip install "black==26.5.1" "ruff==0.15.4"
+        run: |
+          python scripts/ci/test_environment.py
+          python -m pip install "black==26.5.1" "ruff==0.15.4"
       - name: Check formatting
         run: black --check src/ tests/
       - name: Lint
@@ -62,6 +76,18 @@ jobs:
         run: bash scripts/check-no-shim-imports.sh
       - name: No raw CardStore write instructions
         run: python scripts/check-coord-write-guidance.py
+      # Does every workflow ref actually resolve? This job is the right host
+      # for the question because it has NO cross-repo `uses:` of its own, so
+      # it still runs when a cross-repo ref is broken. The gate it protects
+      # (docs / docs-check) cannot check its own ref: a workflow whose `uses:`
+      # will not resolve dies before creating a job and publishes no check run
+      # at all, so it goes ABSENT rather than red. That happened twice on
+      # 2026-09-19. Exit 2 (could not reach the API) fails this step on
+      # purpose: "I could not look" must never render as "I looked".
+      - name: Workflow refs resolve
+        run: python scripts/ci/workflow_refs.py --resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   build:
     runs-on: ubuntu-latest
@@ -78,9 +104,11 @@ jobs:
           python-version: "3.12"
       - name: Build wheel and sdist
         run: |
-          pip install build
+          python scripts/ci/test_environment.py
+          python -m pip install build
           python -m build
       - name: Check dist
         run: |
-          pip install twine
+          python scripts/ci/test_environment.py
+          python -m pip install twine
           twine check dist/*

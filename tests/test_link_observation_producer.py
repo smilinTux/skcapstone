@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from skcapstone.forgejo import SKGIT_REPOSITORY
 from skcapstone.link_observation_feed import load_observation_feed
 from skcapstone.link_observation_producer import (
     ProducerError,
@@ -114,6 +115,61 @@ def test_clean_and_failed_prs_produce_typed_feed() -> None:
         producer=producer(),
     )
     assert failed_payload["records"][0]["observation"]["ci_state"] == "failure"
+
+
+@pytest.mark.parametrize("checks", [None, [], [None], ["success"], [{"status": "success"}, None]])
+def test_missing_or_malformed_checks_never_infer_success(checks):
+    value = row()
+    value.pop("statusCheckRollup")
+    value["checks"] = checks
+    payload, _ = build_feed(
+        FakeConnector([value]),
+        repositories=["smilinTux/skcapstone"],
+        lineage=lineage(),
+        producer=producer(),
+    )
+    assert payload["records"][0]["observation"]["ci_state"] == "unknown"
+
+
+def test_cross_forge_number_requires_independent_mapping_evidence():
+    manifest = lineage()
+    github_key = "smilinTux/skcapstone#17"
+    manifest["records"][f"{SKGIT_REPOSITORY}#17"] = dict(manifest["records"][github_key])
+    payload, result = build_feed(
+        FakeConnector([row()]),
+        repositories=["smilinTux/skcapstone", SKGIT_REPOSITORY],
+        lineage=manifest,
+        producer=producer(),
+    )
+    assert result.records == 1
+    assert payload["records"][0]["observation"]["repository"] == "smilinTux/skcapstone"
+
+
+def test_private_connector_failure_preserves_previous_multi_forge_feed(tmp_path):
+    manifest = tmp_path / "lineage.json"
+    write_lineage(manifest)
+    output = tmp_path / "feed.json"
+    previous = b'{"previous": "verified feed"}\n'
+    output.write_bytes(previous)
+    calls = []
+
+    class Connector:
+        def list_open(self, repository):
+            calls.append(repository)
+            if repository == SKGIT_REPOSITORY:
+                raise ProducerError("connector_unavailable")
+            return [row()]
+
+    with pytest.raises(ProducerError, match="connector_unavailable"):
+        produce(
+            connector=Connector(),
+            repositories=["smilinTux/skcapstone", SKGIT_REPOSITORY],
+            lineage_path=manifest,
+            output_path=output,
+            producer=producer(),
+        )
+    assert calls == ["smilinTux/skcapstone", SKGIT_REPOSITORY]
+    assert output.read_bytes() == previous
 
 
 def test_github_rest_nested_head_and_base_shas_are_supported() -> None:
@@ -311,3 +367,20 @@ def test_non_boolean_reviewer_eligibility_is_blocked_before_feed_emission(tmp_pa
             output_path=tmp_path / "feed.json",
             producer=producer(),
         )
+
+
+def test_slow_forge_reads_do_not_look_like_a_clock_ahead(monkeypatch) -> None:
+    import skcapstone.link_observation_producer as module
+
+    base = datetime.now(timezone.utc)
+    clock = iter([base] + [base + timedelta(seconds=60)] * 50)
+    monkeypatch.setattr(module, "_now", lambda: next(clock))
+    stamped = (base + timedelta(seconds=50)).isoformat()
+    payload, result = build_feed(
+        FakeConnector([row(snapshot_at=stamped)]),
+        repositories=["smilinTux/skcapstone"],
+        lineage=lineage(),
+        producer=producer(),
+    )
+    assert result.healthy is True
+    assert len(payload["records"]) == 1

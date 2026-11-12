@@ -1,0 +1,1 @@
+Profile qualification offers claim each card under its own claimant (`<dispatcher>-requal-<card>`), so claiming several cards per cycle no longer demotes the earlier claims and makes builders refuse them as "remote qualification claim changed".

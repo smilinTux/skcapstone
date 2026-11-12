@@ -16,6 +16,12 @@ _UNIT_RULES: list[tuple[str, str]] = [
     ("skcomms*", "skcomms"),
     ("skcapstone*", "core"),
     ("sknoded*", "core"),
+    # The lifecycle seat units ship in skcapstone's own data/systemd and are
+    # laid down by skcapstone's install.sh, so "core" is the backend that
+    # actually provides them. Without this rule every required skfleet unit
+    # resolved to UNSUPPORTED and surfaced as needs_manual, which is the
+    # opposite of useful for units the repo itself installs.
+    ("skfleet-*", "core"),
     ("skgateway*", "core"),
     ("skchat*", "skchat"),
     ("livekit-server*", "skchat"),
@@ -30,6 +36,7 @@ _UNIT_RULES: list[tuple[str, str]] = [
 ]
 
 _TIER: dict[str, int] = {
+    "binaries": 0,
     "packages": 1,
     "capauth-authz": 2,
     "skcomms": 3,
@@ -38,6 +45,18 @@ _TIER: dict[str, int] = {
     "agent": 6,
     UNSUPPORTED: 9,
 }
+
+
+def ships_core_unit(name: str) -> bool:
+    """Return whether this distribution owns and packages a systemd unit."""
+
+    return (Path(__file__).parents[1] / "data" / "systemd" / name).is_file()
+
+
+def _packaged_core_unit(name: str) -> Path:
+    """Resolve one reviewed unit from this installed distribution."""
+
+    return Path(__file__).parents[1] / "data" / "systemd" / name
 
 
 def tier_of(backend_id: str) -> int:
@@ -64,13 +83,15 @@ def resolve(name: str, kind: str) -> str:
 
     Args:
         name: The unit or package name.
-        kind: The kind: "unit" or "package".
+        kind: The kind: "unit", "package" or "binary".
 
     Returns:
         The backend ID (e.g., "core", "skchat", "agent") or UNSUPPORTED.
     """
     if kind == "package":
         return "packages"
+    if kind == "binary":
+        return "binaries"
     for glob, backend in _UNIT_RULES:
         if fnmatch.fnmatch(name, glob):
             return backend
@@ -153,14 +174,59 @@ def default_backends(runner: Callable = subprocess.run) -> dict[str, Callable]:
     """
     repos = _repos_root()
 
-    def _enable_units(names: list[str]) -> tuple[str, str]:
-        """Run `systemctl --user enable <name>` for each name, stopping on failure."""
+    def _activate_units(names: list[str], *, enable: bool, start: bool) -> tuple[str, str]:
+        """Enable/start requested units, stopping at the first failed command."""
         status, detail = "ok", ""
         for name in names:
-            status, detail = _run(runner, ["systemctl", "--user", "enable", name], dry_run=False)
-            if status == "failed":
-                break
+            for verb, requested in (("enable", enable), ("start", start)):
+                if requested:
+                    status, detail = _run(
+                        runner, ["systemctl", "--user", verb, name], dry_run=False
+                    )
+                    if status == "failed":
+                        return status, detail
         return status, detail
+
+    def _core_unit_names(names: list[str]) -> list[str]:
+        unit_names = set(names)
+        unit_names.update(
+            name.removesuffix(".timer") + ".service" for name in names if name.endswith(".timer")
+        )
+        return sorted(unit_names)
+
+    def _core_copy_commands(names: list[str]) -> list[list[str]]:
+        unit_dir = (
+            Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser() / "systemd/user"
+        )
+        return [
+            [
+                "install",
+                "-D",
+                "-m",
+                "0644",
+                str(_packaged_core_unit(name)),
+                str(unit_dir / name),
+            ]
+            for name in _core_unit_names(names)
+            # Install only what is absent. An existing unit file is never
+            # rewritten here: its contents belong to the rollout's canonical
+            # unit step (which applies the systemd/production overlay) and to
+            # the drift gate. Overwriting it with the packaged base copy, on a
+            # stale "missing" from a lagging inventory, stripped
+            # SKFLEET_PRODUCTION_POLICY from sknoded.service on every
+            # production node the rollout reached (chi, 2026-11-09).
+            if ships_core_unit(name) and not (unit_dir / name).exists()
+        ]
+
+    def _install_core_units(names: list[str]) -> tuple[str, str]:
+        """Copy requested core units (and timer services), then reload systemd."""
+        for command in _core_copy_commands(names):
+            status, detail = _run(runner, command, dry_run=False)
+            if status == "failed":
+                return status, detail
+        if not _core_copy_commands(names):
+            return "ok", ""
+        return _run(runner, ["systemctl", "--user", "daemon-reload"], dry_run=False)
 
     def packages(names: list[str], *, dry_run: bool, enable: bool, start: bool) -> tuple[str, str]:
         # install.sh recognizes --dev/--force/--non-interactive; it has no
@@ -189,20 +255,35 @@ def default_backends(runner: Callable = subprocess.run) -> dict[str, Callable]:
         # unit enablement is a separate systemctl step.
         cmd = ["bash", str(repos / "skcomms" / "scripts" / "bootstrap.sh"), "--no-service"]
         status, detail = _run(runner, cmd, dry_run=dry_run)
-        if status == "ok" and enable:
-            status, detail = _enable_units(names)
+        if status == "ok" and (enable or start):
+            status, detail = _activate_units(names, enable=enable, start=start)
         return status, detail
 
     def core(names: list[str], *, dry_run: bool, enable: bool, start: bool) -> tuple[str, str]:
-        # Same underlying installer as "packages", run the same way
-        # (--non-interactive: never prompt, never let install.sh touch
-        # systemd itself). "core" is what actually enables/starts units,
-        # and it does so explicitly via systemctl below (the installer
-        # itself takes no --enable flag).
+        # Preserve the established installer for externally-owned names, but
+        # refresh this distribution's reviewed units with the narrow packaged
+        # resource copier so unrelated bootstrap state is never mutated.
         cmd = ["bash", str(repos / "skcapstone" / "scripts" / "install.sh"), "--non-interactive"]
-        status, detail = _run(runner, cmd, dry_run=dry_run)
-        if status == "ok" and enable:
-            status, detail = _enable_units(names)
+        external_names = [name for name in names if not ships_core_unit(name)]
+        if dry_run:
+            copy_commands = _core_copy_commands(names)
+            commands = ([cmd] if external_names else []) + copy_commands
+            if copy_commands:
+                commands.append(["systemctl", "--user", "daemon-reload"])
+            commands.extend(
+                ["systemctl", "--user", verb, name]
+                for name in names
+                for verb, requested in (("enable", enable), ("start", start))
+                if requested
+            )
+            return "would-write", " && ".join(" ".join(command) for command in commands)
+        status, detail = "ok", ""
+        if external_names:
+            status, detail = _run(runner, cmd, dry_run=False)
+        if status == "ok":
+            status, detail = _install_core_units(names)
+        if status == "ok" and (enable or start):
+            status, detail = _activate_units(names, enable=enable, start=start)
         return status, detail
 
     def agent(names: list[str], *, dry_run: bool, enable: bool, start: bool) -> tuple[str, str]:
@@ -237,7 +318,21 @@ def default_backends(runner: Callable = subprocess.run) -> dict[str, Callable]:
         cmd = ["bash", str(repos / "capauth" / "deploy" / "capauth-service" / "deploy.sh")]
         return _run(runner, cmd, dry_run=dry_run)
 
+    def binaries(names: list[str], *, dry_run: bool, enable: bool, start: bool) -> tuple[str, str]:
+        # Pinned static binaries (fleet/binaries.py): download, verify the
+        # in-code sha256, install atomically into ~/.local/bin. No units, so
+        # enable/start are no-ops. Never shells out, so `runner` is unused.
+        from .binaries import install
+
+        status, detail = "ok", ""
+        for name in names:
+            status, detail = install(name, dry_run=dry_run)
+            if status == "failed":
+                break
+        return status, detail
+
     return {
+        "binaries": binaries,
         "packages": packages,
         "skchat": skchat,
         "skcomms": skcomms,

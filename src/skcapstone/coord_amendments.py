@@ -111,7 +111,22 @@ def amend_criteria(home: Path, task_id: str, criteria: list[str], agent: str = "
     store = CardStore(home)
     if store.fold(task_id) is None:
         raise ValueError(f"CardStore card {task_id} has no foldable core")
-    store.append_event(task_id, "amend_criteria", agent or "mcp", criteria=list(criteria))
+    expected = list(criteria)
+    store.append_event(task_id, "amend_criteria", agent or "mcp", criteria=expected)
+
+    # Do not trust the append call as proof that the amendment landed. Read the
+    # authoritative fold back and fail loudly unless it exposes the exact
+    # replacement list. This catches a writer that silently discards the event
+    # and an installed skcoord that can append the event but cannot fold it.
+    folded = store.fold(task_id)
+    if folded is None:
+        raise ValueError(f"card {task_id} has no foldable core after criteria amendment")
+    actual = list(folded.acceptance_criteria)
+    if actual != expected:
+        raise RuntimeError(
+            f"criteria amendment for card {task_id} did not persist: "
+            f"authoritative fold returned {actual!r}, expected {expected!r}"
+        )
 
 
 def _base_acceptance_criteria(home: Path, task_id: str) -> list[str]:

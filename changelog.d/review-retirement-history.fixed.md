@@ -1,0 +1,1 @@
+Keep expired unused review offers retired after a later generation claims the card. Validate historical claim activity only through the recorded retirement time while preserving exact launch, archive and receipt proofs.

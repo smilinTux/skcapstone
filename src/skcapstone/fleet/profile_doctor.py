@@ -29,17 +29,23 @@ from __future__ import annotations
 import fnmatch
 from dataclasses import dataclass, field
 
+from .binaries import pinned
+
 #: Findings that mean "this node is doing something it was told not to".
-ERROR_CATEGORIES = ("forbidden_units", "forbidden_packages")
+ERROR_CATEGORIES = ("forbidden_units", "forbidden_packages", "forbidden_binaries")
 #: Findings that mean "this node has not finished becoming what it should be".
-WARN_CATEGORIES = ("missing_required_units", "missing_required_packages")
+WARN_CATEGORIES = (
+    "missing_required_units",
+    "missing_required_packages",
+    "missing_required_binaries",
+)
 #: Findings that mean "the manifest and reality disagree, probably the manifest".
-INFO_CATEGORIES = ("unexpected_units", "unexpected_packages")
+INFO_CATEGORIES = ("unexpected_units", "unexpected_packages", "unexpected_binaries")
 
 
 @dataclass(frozen=True)
 class DriftReport:
-    """The six-way difference between what a node has and what it should have.
+    """The nine-way difference between what a node has and what it should have.
 
     Every field is a sorted list of names, so two reports over unchanged
     inputs compare equal and can be diffed across runs.
@@ -51,6 +57,9 @@ class DriftReport:
     missing_required_packages: list[str] = field(default_factory=list)
     forbidden_packages: list[str] = field(default_factory=list)
     unexpected_packages: list[str] = field(default_factory=list)
+    missing_required_binaries: list[str] = field(default_factory=list)
+    forbidden_binaries: list[str] = field(default_factory=list)
+    unexpected_binaries: list[str] = field(default_factory=list)
 
     @property
     def severity(self) -> str:
@@ -77,6 +86,9 @@ class DriftReport:
             "missing_required_packages": list(self.missing_required_packages),
             "forbidden_packages": list(self.forbidden_packages),
             "unexpected_packages": list(self.unexpected_packages),
+            "missing_required_binaries": list(self.missing_required_binaries),
+            "forbidden_binaries": list(self.forbidden_binaries),
+            "unexpected_binaries": list(self.unexpected_binaries),
             "severity": self.severity,
         }
 
@@ -147,7 +159,21 @@ def diff(inventory: dict, profile: dict) -> DriftReport:
         packages_present, profile.get("packages") or {}, []
     )
 
+    # Binaries: forbidden/unexpected look at ANY observed version, but a
+    # required binary only counts as present at its exact pinned version, so
+    # bumping the pin in binaries.CATALOG surfaces as missing_required and
+    # the installer upgrades it.
+    observed_bins = inventory.get("binaries") or {}
+    _, forbidden_bins, unexpected_bins = _diff_one(
+        sorted(observed_bins), profile.get("binaries") or {}, []
+    )
+    at_pin = {name for name, ver in observed_bins.items() if ver == pinned(name)}
+    missing_bins = sorted(set((profile.get("binaries") or {}).get("required", [])) - at_pin)
+
     return DriftReport(
+        missing_required_binaries=missing_bins,
+        forbidden_binaries=forbidden_bins,
+        unexpected_binaries=unexpected_bins,
         missing_required_units=missing_units,
         forbidden_units=forbidden_units,
         unexpected_units=unexpected_units,

@@ -22,6 +22,15 @@ NOW = datetime(2026, 9, 9, 9, 0, tzinfo=timezone.utc)
 ROOT = Path(__file__).parents[1]
 
 
+def wrapper_properties() -> str:
+    """Bind synthetic unit properties to the fixture's exact wrapper generation."""
+    return (
+        f"InvocationID={'d' * 32}\n"
+        "ExecStart={ path=/bin/python3 ; argv[]=/bin/python3 /bin/skfleet-worker-wrapper.py "
+        "--card deadbeef --owner worker --claim-revision generation-1 -- bash -lc child ; }\n"
+    )
+
+
 def observation(tmp_path: Path, **changes: object) -> LivenessObservation:
     """Build complete synthetic evidence for one exact worker generation."""
     values: dict[str, object] = {
@@ -59,6 +68,7 @@ def observation(tmp_path: Path, **changes: object) -> LivenessObservation:
         "workspace_head": "a" * 40,
         "workspace_custody_at": NOW,
         "workspace_custody_sha256": "b" * 64,
+        "invocation_id": "d" * 32,
     }
     values.update(changes)
     return LivenessObservation(**values)  # type: ignore[arg-type]
@@ -80,6 +90,8 @@ def authoritative_fixture(tmp_path: Path, row: LivenessObservation) -> None:
                 "cgroup": row.cgroup,
                 "card_id": row.card_id,
                 "claim_revision": row.claim_generation,
+                "owner": row.owner,
+                "invocation_id": row.invocation_id,
                 "terminal_marker": row.terminal_marker,
                 "workspace_path": row.workspace_path,
                 "workspace_repository": row.workspace_repository,
@@ -117,6 +129,7 @@ def test_collector_preserves_terminal_exec_identity_with_empty_cgroup(
                 "host": "chiap08",
                 "card_id": "deadbeef",
                 "claim_revision": "generation-1",
+                "invocation_id": "d" * 32,
                 "unit": unit,
                 "session_id": "codex-auto-deadbeef",
                 "beat_at": NOW.isoformat(),
@@ -145,13 +158,11 @@ def test_collector_preserves_terminal_exec_identity_with_empty_cgroup(
 
     def runner(argv: list[str]) -> SimpleNamespace:
         assert "show" in argv
-        authorizing = "Id," in argv[-1]
         return SimpleNamespace(
             returncode=0,
-            stdout=(
-                f"Id={unit}\nExecMainPID=123\nControlGroup=\nActiveState=inactive\n"
-                if authorizing
-                else "ExecMainPID=123\nControlGroup=\nActiveState=inactive\n"
+            stdout=wrapper_properties()
+            + (
+                "ExecMainPID=123\nControlGroup=\nActiveState=inactive\n"
                 f"WorkingDirectory={workspace}\n"
             ),
         )
@@ -194,6 +205,7 @@ def test_collector_rejects_zero_or_missing_exec_main_pid(
                 "agent": "worker",
                 "card_id": "deadbeef",
                 "claim_revision": "generation-1",
+                "invocation_id": "d" * 32,
                 "unit": unit,
                 "pid": 123,
                 "process_tree": [123],
@@ -208,12 +220,11 @@ def test_collector_rejects_zero_or_missing_exec_main_pid(
     def runner(_argv: list[str]) -> SimpleNamespace:
         return SimpleNamespace(
             returncode=0,
-            stdout=f"{pid_property}ControlGroup=\nActiveState=inactive\nWorkingDirectory=\n",
+            stdout=wrapper_properties()
+            + f"{pid_property}ControlGroup=\nActiveState=inactive\nWorkingDirectory=\n",
         )
 
-    row = runtime.collect_observations(tmp_path, runner=runner, cgroup_root=tmp_path)[0]
-    assert row.pid is None
-    assert row.process_identity is None
+    assert runtime.collect_observations(tmp_path, runner=runner, cgroup_root=tmp_path) == ()
 
 
 def test_collector_preserves_malformed_cgroup_as_failed_authority(
@@ -229,6 +240,7 @@ def test_collector_preserves_malformed_cgroup_as_failed_authority(
                 "agent": "worker",
                 "card_id": "deadbeef",
                 "claim_revision": "generation-1",
+                "invocation_id": "d" * 32,
                 "unit": unit,
                 "pid": 123,
                 "process_tree": [123],
@@ -244,7 +256,8 @@ def test_collector_preserves_malformed_cgroup_as_failed_authority(
     def runner(_argv: list[str]) -> SimpleNamespace:
         return SimpleNamespace(
             returncode=0,
-            stdout="ExecMainPID=123\nControlGroup=\nActiveState=inactive\nWorkingDirectory=\n",
+            stdout=wrapper_properties()
+            + "ExecMainPID=123\nControlGroup=\nActiveState=inactive\nWorkingDirectory=\n",
         )
 
     row = runtime.collect_observations(tmp_path, runner=runner, cgroup_root=tmp_path)[0]
@@ -265,7 +278,8 @@ def test_authorization_rejects_zero_missing_or_stale_exec_identity(
         if "show" in argv:
             return SimpleNamespace(
                 returncode=0,
-                stdout=(
+                stdout=wrapper_properties()
+                + (
                     f"Id={row.unit}\nExecMainPID={exec_main_pid}\n"
                     "ControlGroup=\nActiveState=inactive\n"
                 ),
@@ -320,7 +334,7 @@ def test_each_mismatched_authority_dimension_fails_closed(
                 f"Id={trusted.unit}\nExecMainPID={trusted.pid}\n"
                 f"ControlGroup={trusted.cgroup}\nActiveState=inactive\n"
             )
-            return SimpleNamespace(returncode=0, stdout=body)
+            return SimpleNamespace(returncode=0, stdout=wrapper_properties() + body)
         return SimpleNamespace(returncode=3, stdout=trusted.cgroup)
 
     assert not runtime.authorize_observation(
@@ -350,7 +364,8 @@ def test_final_authorization_freshly_rereads_empty_cgroup(
         if "show" in argv:
             return SimpleNamespace(
                 returncode=0,
-                stdout=(
+                stdout=wrapper_properties()
+                + (
                     f"Id={row.unit}\nExecMainPID={row.pid}\n"
                     f"ControlGroup={row.cgroup}\nActiveState=inactive\n"
                 ),
@@ -383,7 +398,8 @@ def test_final_authorization_rejects_cgroup_toctou(
         if "show" in argv:
             return SimpleNamespace(
                 returncode=0,
-                stdout=(
+                stdout=wrapper_properties()
+                + (
                     f"Id={row.unit}\nExecMainPID={row.pid}\n"
                     f"ControlGroup={row.cgroup}\nActiveState=inactive\n"
                 ),
@@ -411,7 +427,8 @@ def test_final_authorization_rejects_unreadable_or_missing_cgroup(
         if "show" in argv:
             return SimpleNamespace(
                 returncode=0,
-                stdout=(
+                stdout=wrapper_properties()
+                + (
                     f"Id={row.unit}\nExecMainPID={row.pid}\n"
                     f"ControlGroup={row.cgroup}\nActiveState=inactive\n"
                 ),
@@ -491,17 +508,30 @@ def test_production_cycle_invokes_all_four_real_adapters(
     result = runtime.run_production_cycle(
         tmp_path,
         observations=(terminal, assistance),
-        projections=(WorkerProjection("worker", "deadbeef", "generation-1", "active"),),
+        projections=(
+            WorkerProjection(
+                "worker",
+                "deadbeef",
+                "generation-1",
+                "active",
+                terminal.unit,
+                terminal.pid,
+                terminal.invocation_id,
+            ),
+        ),
         agent="producer",
         actions_factory=Actions,
         now=NOW,
     )
     assert result.receipts
     assert any("work.help.request" in command for command in commands)
-    assert any("worker_liveness" in command for command in commands)
+    assert any("worker-liveness" in command for command in commands)
     assert any(command[-2:] == ["stop", terminal.unit] for command in commands)
-    assert (tmp_path / "evidence" / "fleet-liveness" / "metrics.json").is_file()
-    assert (tmp_path / "evidence" / "fleet-liveness" / "retirements.sqlite3").is_file()
+    import socket
+
+    host = socket.gethostname().split(".")[0].lower()
+    assert (tmp_path / "evidence" / "fleet-liveness" / f"metrics.{host}.json").is_file()
+    assert (tmp_path / "evidence" / "fleet-liveness" / f"retirements.{host}.sqlite3").is_file()
 
 
 def test_timer_entrypoint_uses_relocated_fleet_root(
@@ -519,7 +549,10 @@ def test_timer_entrypoint_uses_relocated_fleet_root(
 
     runtime.run_production_cycle(observations=(), projections=(), actions_factory=Actions, now=NOW)
     assert captured == [fleet_root.parent]
-    assert (fleet_root.parent / "evidence" / "fleet-liveness" / "metrics.json").is_file()
+    import socket
+
+    host = socket.gethostname().split(".")[0].lower()
+    assert (fleet_root.parent / "evidence" / "fleet-liveness" / f"metrics.{host}.json").is_file()
 
     tree = ast.parse((ROOT / "scripts/fleet/skfleet-rotate.py").read_text(encoding="utf-8"))
     calls = [
@@ -531,3 +564,71 @@ def test_timer_entrypoint_uses_relocated_fleet_root(
     ]
     assert len(calls) == 1
     assert calls[0].args == []
+
+
+def test_child_activity_is_never_the_wrapper_beats_own_timestamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The field named "child activity" must not be the supervisor's timer.
+
+    ``collect_observations`` used to set ``child_activity_at=heartbeat_at``.
+    The wrapper beat is a ``while :; do ...; sleep N; done`` loop that runs
+    beside ``pi`` and writes ``disposition=RUNNING`` as a string literal, so
+    that assignment defined the child's activity as the shell timer's own
+    stamp.  No independent measurement of the child existed anywhere in the
+    observation.
+
+    It also made one signal look like two.  ``_latest_activity`` takes
+    ``max(heartbeat_at, child_activity_at)``, which reads as corroboration
+    and was a single source counted twice.  Card ``139ec63d`` is the cost:
+    6h19m43s held, 77 consecutive ``worker_liveness=active`` rows, zero files
+    ever written to its workspace.
+
+    Contract 24 of docs/fleet/2026-09-19-learnings.md: a status field computed
+    by the supervisor describes the supervisor.  Only a field the supervised
+    process itself had to produce describes the supervised process.  Until
+    such a measurement exists this is None, which is the fail-closed answer
+    and leaves ``_latest_activity`` reading exactly the beat it always did.
+    """
+    unit = "skfleet-worker-codex-deadbeef.service"
+    beat_path = tmp_path / "fleet" / "beats" / "worker.json"
+    beat_path.parent.mkdir(parents=True)
+    beat_path.write_text(
+        json.dumps(
+            {
+                "agent": "worker",
+                "card_id": "deadbeef",
+                "claim_revision": "generation-1",
+                "invocation_id": "d" * 32,
+                "unit": unit,
+                "pid": 123,
+                "process_tree": [123],
+                "cgroup": f"/user.slice/{unit}",
+                "emitter": "wrapper",
+                "disposition": "RUNNING",
+                "beat_at": NOW.timestamp(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runtime, "_claim_revision", lambda *_: "generation-1")
+    monkeypatch.setattr(runtime, "workspace_custody", lambda *_: None)
+
+    def runner(_argv: list[str]) -> SimpleNamespace:
+        return SimpleNamespace(
+            returncode=0,
+            stdout=wrapper_properties()
+            + "ExecMainPID=123\nControlGroup=\nActiveState=active\nWorkingDirectory=\n",
+        )
+
+    row = runtime.collect_observations(tmp_path, runner=runner, cgroup_root=tmp_path)[0]
+    assert row.heartbeat_at is not None, "the beat itself must still be read"
+    assert row.child_activity_at is None
+
+
+def test_the_collector_does_not_assign_the_beat_to_child_activity() -> None:
+    """Assert the assignment itself, so it cannot quietly come back."""
+    source = (ROOT / "src" / "skcapstone" / "fleet" / "worker_liveness_runtime.py").read_text(
+        encoding="utf-8"
+    )
+    assert "child_activity_at=heartbeat_at" not in source

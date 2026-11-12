@@ -989,3 +989,12 @@ class TestTransportCheckNoThreadLeak:
             _check_transport()
         # Cleanup must happen in the finally, regardless of what the check found.
         fake.stop.assert_called_once()
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_crontab():
+    """Never read the live crontab from doctor tests."""
+    from unittest.mock import patch as _patch
+
+    with _patch("skcapstone.cron_audit.read_crontab", return_value=("", "")):
+        yield

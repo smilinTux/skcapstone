@@ -50,7 +50,7 @@ def test_claim_blocked_task_with_force_lists_every_gate_and_exits_nonzero(tmp_pa
     """--force remains accepted but cannot bypass any dependency gate."""
     board = _chain_board(tmp_path)
     board.create_task(Task(id="dd000004", title="review dependency"))
-    board.claim_task("reviewer", "dd000004")
+    board.claim_task("test-reviewer", "dd000004")
     transition_task(tmp_path, task_id="dd000004", column="review", actor="ops")
     board.create_task(Task(id="ee000005", title="human dependency", tags=["human-gate"]))
     board.create_task(
@@ -146,7 +146,7 @@ def test_add_dependency_command_blocks_then_allows_after_completed_gate(tmp_path
             "--home",
             str(tmp_path),
             "--agent",
-            "reviewer",
+            "test-reviewer",
         ],
     )
     assert added.exit_code == 0, added.output
@@ -154,26 +154,27 @@ def test_add_dependency_command_blocks_then_allows_after_completed_gate(tmp_path
 
     blocked = runner.invoke(
         _main(),
-        ["coord", "claim", "b2e00002", "--home", str(tmp_path), "--agent", "implementer"],
+        ["coord", "claim", "b2e00002", "--home", str(tmp_path), "--agent", "test-implementer"],
     )
     assert blocked.exit_code == 1
     assert "a1e00001" in blocked.output
 
-    board.claim_task("reviewer", "a1e00001")
-    board.complete_task("reviewer", "a1e00001")
+    board.claim_task("test-reviewer", "a1e00001")
+    board.complete_task("test-reviewer", "a1e00001")
     eligible = runner.invoke(
         _main(),
-        ["coord", "claim", "b2e00002", "--home", str(tmp_path), "--agent", "implementer"],
+        ["coord", "claim", "b2e00002", "--home", str(tmp_path), "--agent", "test-implementer"],
     )
     assert eligible.exit_code == 0, eligible.output
 
 
-def test_release_claim_command_is_owner_and_revision_specific(tmp_path: Path):
+def test_release_claim_command_is_owner_and_revision_specific(tmp_path: Path, monkeypatch):
     board = Board(tmp_path)
     board.ensure_dirs()
     board.create_task(Task(id="a1e10001", title="release target"))
     board.claim_task("probe", "a1e10001")
     revision = current_claim_precondition(tmp_path, "a1e10001", "probe")
+    monkeypatch.delenv("SKFLEET_CARD_ID", raising=False)
     runner = CliRunner()
     args = [
         "coord",
@@ -184,7 +185,7 @@ def test_release_claim_command_is_owner_and_revision_specific(tmp_path: Path):
         "--expected-claim-revision",
         revision,
         "--agent",
-        "repair",
+        "fleet-liveness-reaper",
         "--home",
         str(tmp_path),
     ]
@@ -200,6 +201,167 @@ def test_release_claim_command_is_owner_and_revision_specific(tmp_path: Path):
         if event.get("action") == "release_claim"
     ]
     assert len(releases) == 1
+
+
+def test_production_worker_cannot_release_another_cards_claim(tmp_path: Path, monkeypatch):
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="deadbeef", title="worker assignment"))
+    board.create_task(Task(id="feedbeef", title="other task"))
+    board.claim_task("pi-glm-builder-chiap01-feedbeef", "feedbeef")
+    revision = current_claim_precondition(tmp_path, "feedbeef", "pi-glm-builder-chiap01-feedbeef")
+    monkeypatch.setenv("SKFLEET_CARD_ID", "deadbeef")
+    monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path))
+    monkeypatch.setenv("SKFLEET_OPERATOR_ROLE", "coord-custody")
+    for actor in ("pi-glm-chiap08-deadbeef", "lumina"):
+        result = CliRunner().invoke(
+            _main(),
+            [
+                "coord",
+                "release-claim",
+                "feedbeef",
+                "--owner",
+                "pi-glm-builder-chiap01-feedbeef",
+                "--expected-claim-revision",
+                revision,
+                "--agent",
+                actor,
+                "--home",
+                str(tmp_path),
+            ],
+        )
+        assert isinstance(result.exception, ValueError)
+        assert "may only mutate custody of its dispatched card" in str(result.exception)
+    assert (
+        current_claim_precondition(tmp_path, "feedbeef", "pi-glm-builder-chiap01-feedbeef")
+        == revision
+    )
+
+
+def test_production_worker_cannot_claim_or_move_another_card(tmp_path: Path, monkeypatch):
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="deadbeef", title="worker assignment"))
+    board.create_task(Task(id="feedbeef", title="other task"))
+    monkeypatch.setenv("SKFLEET_CARD_ID", "deadbeef")
+    monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path))
+    runner = CliRunner()
+    for command in (
+        ["coord", "claim", "feedbeef", "--agent", "pi-glm-chiap08-deadbeef"],
+        ["coord", "move", "feedbeef", "doing", "--agent", "pi-glm-chiap08-deadbeef"],
+    ):
+        result = runner.invoke(_main(), [*command, "--home", str(tmp_path)])
+        assert isinstance(result.exception, ValueError)
+        assert "may only mutate custody of its dispatched card" in str(result.exception)
+    view = next(view for view in board.get_task_views() if view.task.id == "feedbeef")
+    assert CardStore(tmp_path).fold("feedbeef").owner is None
+    assert view.status.value == "open"
+
+
+def test_worker_card_operator_role_allows_explicit_custody_scope(tmp_path: Path, monkeypatch):
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(
+        Task(
+            id="deadbeef",
+            title="operator worker assignment",
+            meta={"operator_role": "coord-custody"},
+        )
+    )
+    board.create_task(Task(id="feedbeef", title="other task"))
+    board.claim_task("pi-glm-builder-chiap01-feedbeef", "feedbeef")
+    revision = current_claim_precondition(tmp_path, "feedbeef", "pi-glm-builder-chiap01-feedbeef")
+    monkeypatch.setenv("SKFLEET_CARD_ID", "deadbeef")
+    monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path))
+    result = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "release-claim",
+            "feedbeef",
+            "--owner",
+            "pi-glm-builder-chiap01-feedbeef",
+            "--expected-claim-revision",
+            revision,
+            "--agent",
+            "pi-glm-chiap08-deadbeef",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert (
+        current_claim_precondition(tmp_path, "feedbeef", "pi-glm-builder-chiap01-feedbeef") is None
+    )
+
+
+def test_production_worker_can_release_its_own_claim(tmp_path: Path, monkeypatch):
+    owner = "pi-glm-builder-chiap01-deadbeef"
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="deadbeef", title="worker assignment"))
+    board.claim_task(owner, "deadbeef")
+    revision = current_claim_precondition(tmp_path, "deadbeef", owner)
+    monkeypatch.setenv("SKFLEET_CARD_ID", "deadbeef")
+    monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path))
+    result = CliRunner().invoke(
+        _main(),
+        [
+            "coord",
+            "release-claim",
+            "deadbeef",
+            "--owner",
+            owner,
+            "--expected-claim-revision",
+            revision,
+            "--agent",
+            owner,
+            "--home",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_release_claim_restores_review_until_explicit_backlog_move(tmp_path: Path):
+    """Exact review release restores its lane; a later operator move pauses it."""
+
+    board = Board(tmp_path)
+    board.ensure_dirs()
+    board.create_task(Task(id="a1e10005", title="review target", tags=["review", "seat-seraph"]))
+    store = CardStore(tmp_path)
+    for key, value in {
+        "producer_identity": "producer",
+        "candidate_evidence_sha256": "a" * 64,
+        "link_source_card": "source01",
+        "link_head_revision": "b" * 40,
+    }.items():
+        store.append_event("a1e10005", "link", "producer", link_key=key, link_value=value)
+    transition_task(tmp_path, task_id="a1e10005", column="review", actor="producer")
+    board.claim_task("test-reviewer", "a1e10005")
+    revision = current_claim_precondition(tmp_path, "a1e10005", "test-reviewer")
+    args = [
+        "coord",
+        "release-claim",
+        "a1e10005",
+        "--owner",
+        "test-reviewer",
+        "--expected-claim-revision",
+        revision,
+        "--agent",
+        "test-repair",
+        "--home",
+        str(tmp_path),
+    ]
+
+    result = CliRunner().invoke(_main(), args)
+    assert result.exit_code == 0, result.output
+    assert CardStore(tmp_path).fold("a1e10005").status.value == "review"
+
+    transition_task(tmp_path, task_id="a1e10005", column="backlog", actor="operator")
+    replay = CliRunner().invoke(_main(), args)
+    assert replay.exit_code == 0, replay.output
+    assert CardStore(tmp_path).fold("a1e10005").status.value == "backlog"
 
 
 def test_release_claim_uses_authoritative_claim_when_agent_projection_is_stale(
@@ -228,7 +390,7 @@ def test_release_claim_uses_authoritative_claim_when_agent_projection_is_stale(
             "--expected-claim-revision",
             revision,
             "--agent",
-            "repair",
+            "test-repair",
             "--home",
             str(tmp_path),
         ],
@@ -257,7 +419,7 @@ def test_release_claim_requires_expected_revision(tmp_path: Path):
             "--owner",
             "probe",
             "--agent",
-            "repair",
+            "test-repair",
             "--home",
             str(tmp_path),
         ],

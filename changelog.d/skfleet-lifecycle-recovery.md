@@ -1,0 +1,1 @@
+- Card `0988e231`: governed recovery now preserves inert systemd mask symlinks and retires exact expired review offers that never acquired a claim or launched.

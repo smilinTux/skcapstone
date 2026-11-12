@@ -1,0 +1,11 @@
+[Unit]
+Description=SKFleet worktree GC timer (daily, spread across hosts)
+Documentation=https://github.com/smilinTux/skcapstone/blob/main/docs/fleet/WORKTRUNK.md
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=2h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

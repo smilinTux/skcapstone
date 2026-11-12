@@ -1,0 +1,1 @@
+- Card `58fa3ad0`: Verify an already completed native test against its exact sealed successor plan path after a runtime rollout; previously the verifier rebuilt the original path, rejected the reservation hash, and could not finish a passed test.

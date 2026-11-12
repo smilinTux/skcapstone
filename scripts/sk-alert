@@ -1,0 +1,757 @@
+#!/usr/bin/env bash
+# sk-alert: the alert primitive for an SKWorld estate.
+#
+# Delivers to every channel this node has configured (Nextcloud Talk, Telegram)
+# with priority levels and de-duplication. Source it for the `sk_alert`
+# function, or call the installed `sk-alert` command.
+#
+#   sk_alert "DOSE 1 stock-out flagged"                 # info  (bell)
+#   sk_alert -l warn  "Citicoline out, Prami unpaired"  # warn
+#   sk_alert -l crit  "Backup failed 3x"                # crit
+#   sk_alert -k noopept-break "Noopept break starts today"  # de-dup, once ever
+#   sk_alert -k disk-low -t 21600 "Disk 92%"            # de-dup, re-alert after 6h
+#
+# THREADING: -k also groups. The first alert for a key starts a Talk thread and
+# every later one replies into it, so a recurring condition reads as one
+# collapsible item instead of twenty near-identical lines. The two flags answer
+# different questions, and recurring conditions want both:
+#   -k alone        de-dup suppresses the repeat, so nothing is there to group
+#   -k with -t      the repeat is sent AND lands in the key's thread
+#   neither         posts flat; there is nothing reliable to group on
+#   sk_alert -g cron/nor/backup --title "cron backup on nor" "..."  # thread, no de-dup
+#   sk_alert -g cron/nor/backup --resolve "backup ok again"   # last word, closes it
+#   sk_alert -g k --table-only "..."     # table row only, nothing delivered
+#   sk_alert --assign chef "chiap08: 216 repos non-durable"  # @mention = work
+#   sk_alert --talk / --no-talk / --no-telegram / --talk-room <token>
+#
+# WHY THIS LIVES IN SKCAPSTONE (moved 2026-10-30)
+# -----------------------------------------------
+# It used to live in ~/.hermes/scripts/lib/skalert.sh, reached through a
+# hand-made symlink in ~/.skenv/bin. That put the estate's alert primitive
+# inside ONE agent runtime, and skcapstone's own ops scripts are its biggest
+# consumers: scripts/skcapstone-gfs-backup.sh, scripts/sync-conflict-guard.sh
+# and scripts/fleet/skfleet-auto-rollout.sh all call it. On any node without
+# Hermes the call silently no-opped, because every caller guards with
+# `[ -x "$bin/sk-alert" ]`.
+#
+# That was not hypothetical. On 2026-10-30 all four chi nodes had skcapstone
+# and none had sk-alert (only chiap04 has Hermes at all), so the
+# skcapstone-conflict-guard timer had been finding Syncthing conflicts across
+# that estate every 24h and telling nobody. The framework cannot depend on a
+# runtime for a primitive it needs itself, so the primitive moved down.
+#
+# ALERTS STAY INSIDE THEIR OWN ESTATE (Chef, 2026-10-22)
+# ------------------------------------------------------
+# chi's alerts go to chi's skhub, nor's go to nor's, and neither crosses. Two
+# things make that true:
+#
+#   1. The SERVER comes from this node's own config, never a constant here, so
+#      the same script posts to skhub.skstack01.douno.it on nor and to
+#      skhub.nativeassetmanagement.com on chi.
+#   2. The ROOM must hold only identities LOCAL to that skhub. Any participant
+#      actorId containing '@' is an identity from another skhub. That is the
+#      tell, and --assign refuses to hand work to one (see below).
+#
+# CONFIG RESOLUTION
+# -----------------
+# First value found wins; nothing below overrides something already set.
+#   1. the environment, as the caller exported it
+#   2. $SKCAPSTONE_HOME/config/alert.env     estate-wide, Syncthing-shared,
+#                                            ROUTING ONLY, never secrets
+#   3. $SKCAPSTONE_HOME/config/alert.secret  node-local, mode 600, excluded
+#                                            from Syncthing AND from the GFS
+#                                            backup, because that archive
+#                                            rsyncs off-site
+#   4. ~/.hermes/.env                        legacy, still true on nor
+#
+# The split matters: ~/.skcapstone is itself a Syncthing folder and is in the
+# backup, so routing can live there and a password cannot.
+#
+# Exit 0 when at least one configured channel accepted the message, or when a
+# de-dup key intentionally suppressed it. Non-zero when every configured
+# channel failed, or when nothing is configured at all. Safe to call from a
+# `set -euo pipefail` script.
+
+# --- config ------------------------------------------------------------------
+SKCAPSTONE_HOME="${SKCAPSTONE_HOME:-$HOME/.skcapstone}"
+
+# Estate routing, then node-local secrets, then the legacy Hermes file, each
+# sourced with `set -a` so plain KEY=value lines become environment.
+# Remember what the caller exported first, because that outranks every file.
+_pre_room="${SKALERT_TALK_ROOM:-}"
+_pre_tdef="${SKALERT_TALK_DEFAULT:-}"
+_pre_chat="${SKALERT_CHAT_ID:-}"
+_pre_url="${NEXTCLOUD_TALK_SERVER_URL:-}"
+_pre_user="${NEXTCLOUD_TALK_USERNAME:-}"
+_pre_pass="${NEXTCLOUD_TALK_APP_PASSWORD:-}"
+_pre_tg="${TELEGRAM_BOT_TOKEN:-}"
+
+for _f in "$SKCAPSTONE_HOME/config/alert.env" \
+          "$SKCAPSTONE_HOME/config/alert.secret" \
+          "${SKALERT_ENV_FILE:-$HOME/.hermes/.env}"; do
+    [[ -r "$_f" ]] || continue
+    set -a; # shellcheck disable=SC1090
+    source "$_f" 2>/dev/null || true
+    set +a
+done
+unset _f
+
+[[ -n "$_pre_room" ]] && SKALERT_TALK_ROOM="$_pre_room" || :
+[[ -n "$_pre_tdef" ]] && SKALERT_TALK_DEFAULT="$_pre_tdef" || :
+[[ -n "$_pre_chat" ]] && SKALERT_CHAT_ID="$_pre_chat" || :
+[[ -n "$_pre_url"  ]] && NEXTCLOUD_TALK_SERVER_URL="$_pre_url" || :
+[[ -n "$_pre_user" ]] && NEXTCLOUD_TALK_USERNAME="$_pre_user" || :
+[[ -n "$_pre_pass" ]] && NEXTCLOUD_TALK_APP_PASSWORD="$_pre_pass" || :
+[[ -n "$_pre_tg"   ]] && TELEGRAM_BOT_TOKEN="$_pre_tg" || :
+unset _pre_room _pre_tdef _pre_chat _pre_url _pre_user _pre_pass _pre_tg
+
+# Telegram target. Deliberately NO default. A recipient baked into the code is
+# how this estate once sent a minor's school schedule to the wrong person for
+# weeks, and it cannot be right for two estates at once. Set SKALERT_CHAT_ID in
+# config/alert.env on the estate that wants Telegram; a node that sets neither
+# it nor TELEGRAM_BOT_TOKEN simply does not use that channel.
+SKALERT_CHAT_ID="${SKALERT_CHAT_ID:-}"
+
+# Nextcloud Talk room for THIS estate. No default either: a wrong room is a
+# cross-estate leak, so a node with no room configured does not post to Talk.
+SKALERT_TALK_ROOM="${SKALERT_TALK_ROOM:-}"
+
+# Whether Talk is on without --talk. nor leaves this unset so Talk stays
+# opt-in there (every existing caller would otherwise start posting to a room).
+# An estate that wants its health alerts in the channel sets it to 1.
+SKALERT_TALK_DEFAULT="${SKALERT_TALK_DEFAULT:-0}"
+
+# State and log live under skcapstone, not under a runtime, so they exist on a
+# node that has no Hermes.
+SKALERT_STATE_DIR="${SKALERT_STATE_DIR:-$SKCAPSTONE_HOME/state/skalert}"
+SKALERT_LOG="${SKALERT_LOG:-$SKCAPSTONE_HOME/logs/skalert.log}"
+
+sk__log() {
+    mkdir -p "$(dirname "$SKALERT_LOG")" 2>/dev/null || true
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$SKALERT_LOG" 2>/dev/null || true
+}
+
+# sk_alert [-l info|warn|crit] [-k dedup_key] [-t ttl_seconds] [-c chat_id] MESSAGE...
+# --- Nextcloud Talk -----------------------------------------------------------
+# Routing comes from config (see CONFIG RESOLUTION above); there is no room or
+# server constant here on purpose, because a wrong room is a cross-estate leak.
+#
+# Before trusting a candidate room, list its participants:
+#   auth="$NEXTCLOUD_TALK_USERNAME:$NEXTCLOUD_TALK_APP_PASSWORD"
+#   curl -u "$auth" -H 'OCS-APIRequest: true' \
+#     "$NEXTCLOUD_TALK_SERVER_URL/ocs/v2.php/apps/spreed/api/v4/room/<token>/participants?format=json"
+# Any actorId containing '@' is an identity from another skhub. That is the tell.
+
+# sk__talk_resolve_mention <agent> <url> <user> <pass> <room>
+#   Resolves an agent name to a mention id the TARGET ROOM actually accepts, and
+#   prints "<source> <id>". Needed because --assign used to just prepend
+#   "@$agent" to the text and hope: if the name was not mentionable there, Talk
+#   rendered it as literal text, so a work handoff looked sent and reached
+#   nobody. It also means --assign chef works, resolving to the local id
+#   (dknestri) rather than a guess.
+#   source is "users" for a local account or "federated_users" for one on
+#   another skhub, which is how the estate boundary is detected.
+sk__talk_resolve_mention() {
+    local who="$1" url="$2" user="$3" pass="$4" room="$5" json
+    json="$(curl -sS -m 20 -u "${user}:${pass}" \
+        -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+        --get --data-urlencode "search=${who}" --data-urlencode "format=json" \
+        "${url}/ocs/v2.php/apps/spreed/api/v1/chat/${room}/mentions" 2>/dev/null)" || return 1
+    printf '%s' "$json" | python3 -I -c '
+import json, sys
+want = sys.argv[1].lower()
+try:
+    cands = json.load(sys.stdin)["ocs"]["data"] or []
+except Exception:
+    sys.exit(1)
+# Prefer an exact hit on the id, its local part, or the display label.
+def keys(c):
+    i = (c.get("id") or "").lower()
+    return {i, i.split("@", 1)[0], (c.get("label") or "").lower()}
+for c in cands:
+    if want in keys(c):
+        print(c.get("source", ""), c.get("id", ""))
+        sys.exit(0)
+# Otherwise a single candidate for a prefix search is unambiguous enough.
+if len(cands) == 1:
+    print(cands[0].get("source", ""), cands[0].get("id", ""))
+    sys.exit(0)
+sys.exit(1)
+' "$who"
+}
+
+# Threading. Chef asked for repeats and follow-ups to group instead of filling
+# the room with near-identical lines, and then (2026-10-30) to be able to reply
+# to an alert and have the estate's agent work on it inside that alert's thread.
+#
+# So each condition gets a REAL Talk thread: the first alert is posted with a
+# threadTitle (which is what creates a thread in Talk 24; a plain replyTo only
+# quotes a message and leaves it in the main timeline), and every later alert
+# for the condition is posted with that thread's id. The alerts are posted as
+# the estate's agent account (lumina on nor, jarvis on chi), so the thread is
+# the agent's own: the Talk bridge treats a person's reply inside an agent's
+# own thread as addressed to it, even in a mention-only room.
+#
+# The grouping key is --thread KEY, or the caller's de-dup key (-k) when there
+# is one, because that is already the estate's name for "the same condition
+# again". Without a key there is nothing reliable to group on (hashing the text
+# would split on an embedded count or percentage), so those post flat.
+#
+# Roots expire after SKALERT_THREAD_TTL of SILENCE (each threaded post refreshes
+# the stamp): a condition that returns months later deserves a new thread, and a
+# root deleted in Talk would otherwise fail every reply forever.
+SKALERT_THREAD_TTL="${SKALERT_THREAD_TTL:-604800}"   # 7 days
+
+# Set by sk__talk_post: the thread root the last post went into (or created).
+SKALERT_LAST_ROOT=""
+
+sk__thread_file() {
+    printf '%s/threads/%s__%s' "$SKALERT_STATE_DIR" \
+        "$(printf '%s' "${SKALERT_TALK_ROOM}" | tr -c 'A-Za-z0-9_.-' '_')" \
+        "$(printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_')"
+}
+
+# sk__thread_root <fingerprint> -> prints a still-valid root id, or nothing
+sk__thread_root() {
+    local f root ts now
+    f="$(sk__thread_file "$1")"
+    [[ -r "$f" ]] || return 1
+    read -r root ts _ < "$f" 2>/dev/null || return 1
+    [[ -n "$root" && -n "$ts" ]] || return 1
+    now="$(date +%s)"
+    if (( now - ts > SKALERT_THREAD_TTL )); then
+        rm -f "$f" 2>/dev/null || true
+        return 1
+    fi
+    printf '%s' "$root"
+}
+
+# sk__thread_title <fingerprint> -> the title the thread was created with
+sk__thread_title() {
+    local f root ts title
+    f="$(sk__thread_file "$1")"
+    [[ -r "$f" ]] || return 1
+    read -r root ts title < "$f" 2>/dev/null || return 1
+    printf '%s' "$title"
+}
+
+# sk__thread_save <fingerprint> <root> [title]
+sk__thread_save() {
+    local f
+    f="$(sk__thread_file "$1")"
+    mkdir -p "$(dirname "$f")" 2>/dev/null || true
+    printf '%s %s %s\n' "$2" "$(date +%s)" "${3:-}" > "$f" 2>/dev/null || true
+}
+
+# sk__default_title <message> -> first line, trimmed to fit a thread title
+sk__default_title() {
+    printf '%s' "$1" | head -n1 | cut -c1-90
+}
+
+# sk__talk_call <method> <path> [json-body] -> prints body, then the HTTP code
+# on the last line. Credentials go in one variable, never inline next to curl.
+sk__talk_call() {
+    local method="$1" path="$2" data="${3:-}" auth
+    auth="${NEXTCLOUD_TALK_USERNAME:-}:${NEXTCLOUD_TALK_APP_PASSWORD:-}"
+    if [[ -n "$data" ]]; then
+        printf '%s' "$data" | curl -sS -m 25 -w '\n%{http_code}' -X "$method" -u "$auth" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            -H 'Content-Type: application/json' --data-binary @- \
+            "${NEXTCLOUD_TALK_SERVER_URL:-}${path}" 2>/dev/null
+    else
+        curl -sS -m 25 -w '\n%{http_code}' -X "$method" -u "$auth" \
+            -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+            "${NEXTCLOUD_TALK_SERVER_URL:-}${path}" 2>/dev/null
+    fi
+}
+
+# sk__talk_post <text> [fingerprint] [title] [resolve]
+#   Posts to this estate's room. With a fingerprint it posts inside that
+#   condition's thread, creating the thread (titled) on first sight. With
+#   resolve=1 the post is the condition's last word: the thread title gets the
+#   check mark the Talk bridge uses for a closed thread, and the root is
+#   forgotten so the next incident opens a fresh thread.
+sk__talk_post() {
+    local text="$1" fp="${2:-}" title="${3:-}" resolve="${4:-0}"
+    SKALERT_LAST_ROOT=""
+    if [[ -z "${NEXTCLOUD_TALK_SERVER_URL:-}" || -z "${NEXTCLOUD_TALK_USERNAME:-}" \
+          || -z "${NEXTCLOUD_TALK_APP_PASSWORD:-}" ]]; then
+        sk__log "TALK skipped (no NEXTCLOUD_TALK_* credentials): $text"
+        return 1
+    fi
+    local path="/ocs/v2.php/apps/spreed/api/v1/chat/${SKALERT_TALK_ROOM}?format=json"
+
+    local root="" known_title=""
+    if [[ -n "$fp" ]]; then
+        root="$(sk__thread_root "$fp" || true)"
+        known_title="$(sk__thread_title "$fp" || true)"
+    fi
+    [[ -z "$title" ]] && title="${known_title:-$(sk__default_title "$text")}"
+    # A recovery with no open thread has nothing to close: post it flat rather
+    # than opening a thread whose only message says it is over.
+    local open_new=1
+    [[ "$resolve" -eq 1 ]] && open_new=0
+
+    # One attempt into the known thread, then (if that root is gone) one that
+    # opens a new thread or posts flat. Posting the alert matters more than
+    # where it lands, so a stale root must never swallow it.
+    local attempt body http id payload
+    for attempt in 1 2; do
+        payload="$(printf '%s' "$text" | SKALERT_THREAD_ID="$root" \
+            SKALERT_THREAD_TITLE="$([[ -n "$fp" && -z "$root" && "$open_new" -eq 1 ]] && printf '%s' "$title")" \
+            python3 -I -c '
+import json, os, sys
+payload = {"message": sys.stdin.read()}
+t = os.environ.get("SKALERT_THREAD_ID") or ""
+title = (os.environ.get("SKALERT_THREAD_TITLE") or "").strip()
+if t.isdigit():
+    payload["threadId"] = int(t)
+elif title:
+    payload["threadTitle"] = title[:200]
+sys.stdout.write(json.dumps(payload))
+')"
+        body="$(sk__talk_call POST "$path" "$payload")" || body=""
+        http="$(printf '%s' "$body" | tail -n1)"
+        if [[ "$http" == "201" || "$http" == "200" ]]; then
+            id="$(printf '%s' "$body" | sed '$d' | python3 -I -c '
+import json, sys
+try:
+    print(json.load(sys.stdin)["ocs"]["data"]["id"])
+except Exception:
+    pass
+' 2>/dev/null)"
+            if [[ -n "$fp" && -z "$root" && -n "$id" && "$open_new" -eq 1 ]]; then
+                # First message of a condition becomes its thread root.
+                sk__thread_save "$fp" "$id" "$title"
+                SKALERT_LAST_ROOT="$id"
+                sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http thread_root=$id key=$fp"
+            elif [[ -n "$root" ]]; then
+                SKALERT_LAST_ROOT="$root"
+                if [[ "$resolve" -eq 1 ]]; then
+                    sk__talk_call PUT \
+                        "/ocs/v2.php/apps/spreed/api/v1/chat/${SKALERT_TALK_ROOM}/threads/${root}?format=json" \
+                        "$(SKALERT_T="✅ ${title#✅ }" python3 -I -c 'import json,os; print(json.dumps({"threadTitle": os.environ["SKALERT_T"][:200]}))')" \
+                        >/dev/null || true
+                    rm -f "$(sk__thread_file "$fp")" 2>/dev/null || true
+                    sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http in_thread=$root key=$fp resolved"
+                else
+                    sk__thread_save "$fp" "$root" "$title"   # refresh the silence clock
+                    sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http in_thread=$root key=$fp"
+                fi
+            else
+                sk__log "TALK ok room=$SKALERT_TALK_ROOM http=$http${fp:+ key=$fp}"
+            fi
+            return 0
+        fi
+        if [[ -n "$root" ]]; then
+            # The root is unusable (deleted, or in another room). Forget it and
+            # retry, which opens a new thread for the condition.
+            sk__log "TALK thread root $root unusable (http=$http); opening a new thread"
+            rm -f "$(sk__thread_file "$fp")" 2>/dev/null || true
+            root=""
+            continue
+        fi
+        break
+    done
+    sk__log "TALK FAILED room=$SKALERT_TALK_ROOM http=$http: $text"
+    return 1
+}
+
+# --- Nextcloud Tables: the queryable history ---------------------------------
+# With SKALERT_TABLE_ID set (config/alert.env; create the table once with
+# sk-alert-table setup) every alert also lands as a row in that table on this
+# estate's skhub: one row per condition (the thread key), updated on each
+# repeat and marked resolved by --resolve; unkeyed alerts get a row each with
+# status "fyi". Columns are found by title, so the table can be reordered or
+# extended in the Tables UI. A Tables failure is logged and never fails the
+# alert: the row is history, the Talk/Telegram post is the delivery.
+SKALERT_TABLE_ID="${SKALERT_TABLE_ID:-}"
+SKALERT_ESTATE="${SKALERT_ESTATE:-}"
+
+# sk__table_upsert <key> <title> <level> <resolve> <message>
+sk__table_upsert() {
+    [[ -n "$SKALERT_TABLE_ID" ]] || return 0
+    if [[ -z "${NEXTCLOUD_TALK_SERVER_URL:-}" || -z "${NEXTCLOUD_TALK_USERNAME:-}" \
+          || -z "${NEXTCLOUD_TALK_APP_PASSWORD:-}" ]]; then
+        sk__log "TABLE skipped (no NEXTCLOUD_TALK_* credentials)"
+        return 1
+    fi
+    local key="$1" title="$2" level="$3" resolve="$4" msg="$5" rowfile="" link="" out
+    if [[ -n "$key" ]]; then
+        rowfile="$SKALERT_STATE_DIR/rows/$(printf '%s' "$SKALERT_TABLE_ID" | tr -c 'A-Za-z0-9_.-' '_')__$(printf '%s' "$key" | tr -c 'A-Za-z0-9_.-' '_')"
+        mkdir -p "$(dirname "$rowfile")" 2>/dev/null || true
+    fi
+    if [[ -n "$SKALERT_LAST_ROOT" && -n "$SKALERT_TALK_ROOM" ]]; then
+        link="${NEXTCLOUD_TALK_SERVER_URL%/}/call/${SKALERT_TALK_ROOM}#message_${SKALERT_LAST_ROOT}"
+    fi
+    out="$(SKT_KEY="$key" SKT_TITLE="$title" SKT_LEVEL="$level" SKT_RESOLVE="$resolve" \
+        SKT_MSG="$msg" SKT_ROWFILE="$rowfile" SKT_LINK="$link" SKT_HOST="$(hostname)" \
+        SKT_ESTATE="$SKALERT_ESTATE" SKT_TABLE="$SKALERT_TABLE_ID" \
+        SKT_URL="${NEXTCLOUD_TALK_SERVER_URL%/}" SKT_USER="$NEXTCLOUD_TALK_USERNAME" \
+        SKT_PASS="$NEXTCLOUD_TALK_APP_PASSWORD" python3 -I -c '
+import base64, json, os, sys, time, urllib.error, urllib.request
+E = os.environ
+base = E["SKT_URL"] + "/index.php/apps/tables/api/1"
+auth = "Basic " + base64.b64encode((E["SKT_USER"] + ":" + E["SKT_PASS"]).encode()).decode()
+
+def call(method, path, body=None):
+    req = urllib.request.Request(base + path, method=method,
+        data=None if body is None else json.dumps(body).encode(),
+        headers={"Authorization": auth, "OCS-APIRequest": "true",
+                 "Accept": "application/json", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read() or b"null")
+
+try:
+    cols = {c["title"]: c for c in call("GET", "/tables/%s/columns" % E["SKT_TABLE"])}
+except Exception as e:
+    print("ERR columns: %s" % e); sys.exit(1)
+
+def put(data, title, value):
+    c = cols.get(title)
+    if c is None or value is None:
+        return
+    if c["type"] == "selection":
+        ids = {o["label"]: o["id"] for o in c.get("selectionOptions") or []}
+        if value not in ids:
+            return
+        value = ids[value]
+    data[str(c["id"])] = value
+
+now_t = time.time()
+now = time.strftime("%Y-%m-%d %H:%M", time.localtime(now_t))
+level = {"critical": "crit", "warning": "warn"}.get(E["SKT_LEVEL"], E["SKT_LEVEL"])
+resolve = E["SKT_RESOLVE"] == "1"
+key, rowfile = E["SKT_KEY"], E["SKT_ROWFILE"]
+row_id, count = None, 0
+if rowfile and os.path.exists(rowfile):
+    try:
+        parts = open(rowfile).read().split()
+        row_id, count = int(parts[0]), int(parts[1])
+    except Exception:
+        row_id, count = None, 0
+status = "resolved" if resolve else ("open" if key else "fyi")
+
+data = {}
+put(data, "Status", status)
+put(data, "Last seen", now)
+put(data, "Last message", E["SKT_MSG"][:4000])
+if E["SKT_LINK"]:
+    put(data, "Talk thread", E["SKT_LINK"])
+if resolve:
+    put(data, "Resolved at", now)
+else:
+    count += 1
+    put(data, "Severity", level if level in ("info", "warn", "crit") else "info")
+    put(data, "Alerts sent", count)
+
+done = None
+if row_id is not None:
+    try:
+        done = call("PUT", "/rows/%d" % row_id, {"data": data})
+    except Exception:
+        done = None   # row deleted in the UI: start a new one
+if done is None:
+    if resolve and not key:
+        sys.exit(0)
+    put(data, "Alert", E["SKT_TITLE"][:200])
+    put(data, "Key", key or None)
+    put(data, "Host", E["SKT_HOST"])
+    put(data, "Estate", E["SKT_ESTATE"] or None)
+    put(data, "First seen", now)
+    if resolve:
+        put(data, "Alerts sent", count or 0)
+    try:
+        done = call("POST", "/tables/%s/rows" % E["SKT_TABLE"], {"data": data})
+    except urllib.error.HTTPError as e:
+        print("ERR create: HTTP %s" % e.code); sys.exit(1)
+    except Exception as e:
+        print("ERR create: %s" % e); sys.exit(1)
+rid = done.get("id") if isinstance(done, dict) else None
+if rowfile:
+    if resolve:
+        try: os.remove(rowfile)
+        except OSError: pass
+    elif rid:
+        with open(rowfile + ".tmp", "w") as f:
+            f.write("%s %s\n" % (rid, count))
+        os.replace(rowfile + ".tmp", rowfile)
+print("ROW %s %s" % (rid, status))
+' 2>&1)"
+    if [[ "$out" == ROW* ]]; then
+        sk__log "TABLE ok table=$SKALERT_TABLE_ID ${out#ROW }${key:+ key=$key}"
+        return 0
+    fi
+    sk__log "TABLE FAILED table=$SKALERT_TABLE_ID${key:+ key=$key}: $(printf '%s' "$out" | tail -n1 | cut -c1-200)"
+    return 1
+}
+
+sk_alert() {
+    local level="info" dkey="" ttl=0 chat="$SKALERT_CHAT_ID" silent_dedup=1
+    local gkey="" title="" resolve=0 table_only=0
+    # Talk defaults to the estate's choice: nor leaves SKALERT_TALK_DEFAULT
+    # unset so Talk stays opt-in there, chi sets it to 1 so estate health lands
+    # in the channel without every caller being edited.
+    local to_talk="${SKALERT_TALK_DEFAULT:-0}"
+    local assign="" no_telegram=0 room_override=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -l|--level) level="$2"; shift 2 ;;
+            -k|--key)   dkey="$2";  shift 2 ;;
+            -t|--ttl)   ttl="$2";   shift 2 ;;
+            -c|--chat)  chat="$2";  shift 2 ;;
+            # --thread groups WITHOUT de-dup, for callers that own their own
+            # repeat policy (sk-cron-run re-alerts every 6h while failing).
+            -g|--thread)   gkey="$2"; shift 2 ;;
+            --title)       title="$2"; shift 2 ;;
+            # --resolve: this alert is the condition's last word. It lands in
+            # the thread, marks the thread title and the table row resolved,
+            # and clears the de-dup stamp so a new incident alerts at once.
+            --resolve)     resolve=1; shift ;;
+            # --table-only: record/refresh the table row, deliver nothing
+            # (backfilling conditions that were already alerted).
+            --table-only)  table_only=1; shift ;;
+            --talk)        to_talk=1; shift ;;
+            --talk-room)   SKALERT_TALK_ROOM="$2"; to_talk=1; room_override=1; shift 2 ;;
+            # --assign hands the alert to an agent as WORK: it @mentions them in
+            # a mention-mode room, which is the only thing Hermes acts on there.
+            --assign)      assign="$2"; to_talk=1; shift 2 ;;
+            --no-telegram) no_telegram=1; to_talk=1; shift ;;
+            --no-talk)     to_talk=0; shift ;;
+            --) shift; break ;;
+            -*) echo "sk_alert: unknown flag $1" >&2; return 2 ;;
+            *) break ;;
+        esac
+    done
+    local msg="$*"
+    [[ -z "$msg" ]] && { echo "sk_alert: empty message" >&2; return 2; }
+    # The thread / table key: an explicit --thread, else the de-dup key.
+    local tkey="${gkey:-$dkey}"
+    # Talk keeps a thread's original title on repeats, so only the table row
+    # needs a fallback here; sk__talk_post resolves the thread's own.
+    local row_title="${title:-$(sk__default_title "$msg")}"
+
+    if [[ "$table_only" -eq 1 ]]; then
+        if [[ -z "$SKALERT_TABLE_ID" ]]; then
+            echo "sk_alert: --table-only needs SKALERT_TABLE_ID in $SKCAPSTONE_HOME/config/alert.env" >&2
+            return 1
+        fi
+        sk__table_upsert "$tkey" "$row_title" "$level" "$resolve" "$msg"
+        return $?
+    fi
+
+    # No token means this node does not do Telegram. Decide nothing here: the
+    # single "was anything configured at all" check below owns that verdict, so
+    # there is one place that can report it and one message to maintain.
+    if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]]; then
+        no_telegram=1
+    fi
+
+    # A resolve clears the de-dup stamp: the next occurrence is a new incident.
+    if [[ "$resolve" -eq 1 && -n "$dkey" ]]; then
+        rm -f "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
+    fi
+    # De-dup: skip if we've alerted on this key within ttl (ttl=0 => once ever).
+    if [[ -n "$dkey" && "$resolve" -ne 1 ]]; then
+        mkdir -p "$SKALERT_STATE_DIR" 2>/dev/null || true
+        local safe stamp now last
+        safe="$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')"
+        stamp="$SKALERT_STATE_DIR/$safe"
+        if [[ -f "$stamp" ]]; then
+            if [[ "$ttl" -le 0 ]]; then
+                sk__log "dedup(once) skip key=$dkey"
+                return 0
+            fi
+            now="$(date +%s)"; last="$(cat "$stamp" 2>/dev/null || echo 0)"
+            if (( now - last < ttl )); then
+                sk__log "dedup(ttl=$ttl) skip key=$dkey"
+                return 0
+            fi
+        fi
+    fi
+
+    local icon
+    case "$level" in
+        crit|critical) icon="🚨" ;;
+        warn|warning)  icon="⚠️" ;;
+        *)             icon="🔔" ;;
+    esac
+
+    local text="${icon} ${msg}"
+
+    # Telegram hard-caps sendMessage at 4096 characters. Anything longer comes
+    # back 400 "message is too long" on BOTH the Markdown attempt and the
+    # plain-text retry, so the alert was dropped entirely. That is how the daily
+    # dream reflection went silent: its report embeds a multi-thousand-token LLM
+    # summary and never fit. Split on line boundaries and send in order instead.
+    local -a chunks=()
+    mapfile -t -d '' chunks < <(SK_ALERT_TEXT="$text" python3 -c '
+import os, sys
+
+LIMIT = 3900  # leaves room under 4096 for the "(n/m)" suffix
+text = os.environ["SK_ALERT_TEXT"]
+parts, cur = [], ""
+for line in text.split("\n"):
+    while len(line) > LIMIT:  # a single oversized line still has to be cut
+        if cur:
+            parts.append(cur)
+            cur = ""
+        parts.append(line[:LIMIT])
+        line = line[LIMIT:]
+    candidate = line if not cur else cur + "\n" + line
+    if len(candidate) > LIMIT:
+        parts.append(cur)
+        cur = line
+    else:
+        cur = candidate
+if cur or not parts:
+    parts.append(cur)
+sys.stdout.write("\0".join(parts))
+')
+
+    local total="${#chunks[@]}" idx=0 chunk payload http body
+    # Talk first, so a Telegram failure cannot swallow the handoff: --assign is
+    # how work reaches an agent, and losing it because the OTHER channel 400'd
+    # would be the worst outcome.
+    local talk_rc=0 tg_rc=0 delivered=0 configured=0
+    # A node with no room configured never posts to Talk. That is the guard
+    # that keeps one estate's alerts out of another estate's skhub.
+    if [[ "$to_talk" -eq 1 && -z "$SKALERT_TALK_ROOM" ]]; then
+        sk__log "TALK skipped (no SKALERT_TALK_ROOM configured for this estate)"
+        to_talk=0
+    fi
+    if [[ "$to_talk" -eq 1 ]]; then
+        configured=$((configured + 1))
+        # An explicit --talk-room is an operator decision, so it is honoured
+        # rather than blocked. But say so when the target holds identities from
+        # another skhub: that is a cross-estate post, and the whole point of the
+        # default is that it never happens by accident.
+        if [[ "$room_override" -eq 1 ]]; then
+            local _foreign _auth
+            # Assemble the credential pair in one variable, the way the rest of
+            # this file does. Spelling it inline as user:password next to `curl`
+            # is the literal shape gitleaks' curl-auth-user rule looks for, and
+            # tripping a secret scanner on a line that holds no secret trains
+            # people to wave the scanner through.
+            _auth="${NEXTCLOUD_TALK_USERNAME:-}:${NEXTCLOUD_TALK_APP_PASSWORD:-}"
+            _foreign="$(curl -sS -m 15 -u "$_auth" \
+                -H 'OCS-APIRequest: true' -H 'Accept: application/json' \
+                "${NEXTCLOUD_TALK_SERVER_URL:-}/ocs/v2.php/apps/spreed/api/v4/room/${SKALERT_TALK_ROOM}/participants?format=json" 2>/dev/null \
+                | python3 -I -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)["ocs"]["data"] or []
+except Exception:
+    sys.exit(0)
+print(" ".join(sorted({p.get("actorId","") for p in d if "@" in (p.get("actorId") or "")})))
+' 2>/dev/null)" || _foreign=""
+            if [[ -n "${_foreign// /}" ]]; then
+                sk__log "CROSS-ESTATE room=$SKALERT_TALK_ROOM foreign=$_foreign :: $msg"
+                echo "sk_alert: note: room $SKALERT_TALK_ROOM includes other estates ($_foreign). Posting anyway, you asked for it." >&2
+            fi
+        fi
+        local talk_text="$msg"
+        if [[ -n "$assign" ]]; then
+            # Resolve the mention against the target room instead of trusting
+            # the name. Two failures have to be loud, because both look like a
+            # delivered handoff otherwise:
+            #   not mentionable  -> Talk posts literal "@name" and nobody is
+            #                       notified
+            #   federated        -> the agent lives on ANOTHER estate's skhub,
+            #                       so delivering there would breach the
+            #                       per-estate rule this file is built around
+            local _res _src _mid
+            _res="$(sk__talk_resolve_mention "$assign" \
+                        "${NEXTCLOUD_TALK_SERVER_URL:-}" \
+                        "${NEXTCLOUD_TALK_USERNAME:-}" \
+                        "${NEXTCLOUD_TALK_APP_PASSWORD:-}" \
+                        "$SKALERT_TALK_ROOM")" || _res=""
+            _src="${_res%% *}"; _mid="${_res#* }"
+            if [[ -z "$_res" ]]; then
+                sk__log "ASSIGN REFUSED agent=$assign room=$SKALERT_TALK_ROOM: not mentionable here"
+                echo "sk_alert: '$assign' is not a member of this estate's alert room ($SKALERT_TALK_ROOM)." >&2
+                echo "sk_alert: alerts do not leave their estate. For an agent on another estate use skmail." >&2
+                return 1
+            fi
+            if [[ "$_src" == "federated_users" ]]; then
+                sk__log "ASSIGN REFUSED agent=$assign id=$_mid: federated, would cross the estate boundary"
+                echo "sk_alert: '$assign' resolves to '$_mid', an identity on another skhub." >&2
+                echo "sk_alert: alerts stay inside their estate. Hand cross-estate work over with skmail." >&2
+                return 1
+            fi
+            talk_text="@${_mid} ${msg}"
+        fi
+        if sk__talk_post "$talk_text" "$tkey" "$title" "$resolve"; then
+            delivered=$((delivered + 1))
+        else
+            talk_rc=1
+        fi
+    fi
+
+    # Telegram is used only when this node actually has both halves. Missing
+    # credentials mean "this estate does not use Telegram", which is a skip and
+    # not a failure: chi alerts to Talk only and must still exit 0.
+    if [[ "$no_telegram" -eq 1 || -z "${TELEGRAM_BOT_TOKEN:-}" || -z "$chat" ]]; then
+        if [[ "$no_telegram" -ne 1 ]] && [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "$chat" ]]; then
+            sk__log "TELEGRAM skipped (no token or no chat id on this node)"
+        fi
+        if [[ "$configured" -eq 0 ]]; then
+            sk__log "NO CHANNEL configured :: $msg"
+            echo "sk_alert: no delivery channel configured on this node." >&2
+            echo "sk_alert: set SKALERT_TALK_ROOM (and Talk credentials), or TELEGRAM_BOT_TOKEN plus SKALERT_CHAT_ID, in $SKCAPSTONE_HOME/config/alert.env" >&2
+            return 1
+        fi
+        [[ -n "$dkey" && "$resolve" -ne 1 ]] && date +%s > "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
+        sk__table_upsert "$tkey" "$row_title" "$level" "$resolve" "$msg" || true
+        sk__log "sent level=$level key=${tkey:-none} channels=$configured delivered=$delivered talk_rc=$talk_rc :: $msg"
+        [[ "$delivered" -gt 0 ]] && return 0
+        return 1
+    fi
+    configured=$((configured + 1))
+    for chunk in "${chunks[@]}"; do
+        idx=$((idx + 1))
+        payload="$chunk"
+        if (( total > 1 )); then
+            payload="$chunk"$'\n'"($idx/$total)"
+        fi
+
+        body="$(curl -sS -m 25 -w '\n%{http_code}' -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${chat}" \
+            --data-urlencode "text=${payload}" \
+            --data-urlencode "parse_mode=Markdown" \
+            --data-urlencode "disable_web_page_preview=true" 2>/dev/null)" || true
+        http="$(printf '%s' "$body" | tail -n1)"
+
+        if [[ "$http" != "200" ]]; then
+            # Markdown can 400 on stray chars — retry this chunk as plain text.
+            body="$(curl -sS -m 25 -w '\n%{http_code}' -X POST \
+                "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                --data-urlencode "chat_id=${chat}" \
+                --data-urlencode "text=${payload}" 2>/dev/null)" || true
+            http="$(printf '%s' "$body" | tail -n1)"
+        fi
+
+        if [[ "$http" != "200" ]]; then
+            # Do not discard a Talk delivery that already succeeded: report the
+            # Telegram failure and let the exit code reflect whether ANY
+            # channel got the message through.
+            sk__log "TELEGRAM FAIL http=$http chunk=$idx/$total :: $msg"
+            echo "sk_alert: telegram send failed (http=$http, chunk $idx/$total)" >&2
+            tg_rc=1
+            break
+        fi
+    done
+    [[ "${tg_rc:-0}" -eq 0 ]] && delivered=$((delivered + 1))
+
+    [[ -n "$dkey" && "$resolve" -ne 1 ]] && date +%s > "$SKALERT_STATE_DIR/$(printf '%s' "$dkey" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null || true
+    sk__table_upsert "$tkey" "$row_title" "$level" "$resolve" "$msg" || true
+    sk__log "sent level=$level key=${tkey:-none} chunks=$total channels=$configured delivered=$delivered talk_rc=$talk_rc tg_rc=${tg_rc:-0} :: $msg"
+    [[ "$delivered" -gt 0 ]] && return 0
+    return 1
+}
+
+# Allow running as a standalone command: sk-alert [flags] MESSAGE
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    sk_alert "$@"
+fi

@@ -199,11 +199,11 @@ class SKRSIRuntime:
         """Project only the controller's proposal metadata, never a claimed verdict."""
 
         def fresh():
-            _, number, _ = ExperimentController(store, agent="tank")._current(experiment_id)
+            _, number, _ = ExperimentController(store, agent="atlas")._current(experiment_id)
             return number == expected_experiment_revision
 
         def operation():
-            state, number, _ = ExperimentController(store, agent="tank")._current(experiment_id)
+            state, number, _ = ExperimentController(store, agent="atlas")._current(experiment_id)
             return {
                 "experiment_id": experiment_id,
                 "state": state,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 from click.testing import CliRunner
@@ -10,7 +11,48 @@ from skcoord.card_store import CardCore
 
 from skcapstone.card_store import CardStore
 from skcapstone.cli import main
-from skcapstone.review_admission import assert_governed_review_claim, governed_review_gate_reasons
+from skcapstone.coord_gate_diagnostic import diagnose
+from skcapstone.fleet.review_capacity import seal_review_capacity_truth
+from skcapstone.review_admission import (
+    assert_governed_review_claim,
+    governed_review_gate_reasons,
+    reviewer_candidate_reasons,
+)
+
+
+def _write_gateway_capacity(
+    home, *, active: int = 0, maximum: int = 1, routes: tuple[str, ...] = ("sk-mid",)
+) -> None:
+    path = home / "evidence" / "fleet-review-routes.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot = seal_review_capacity_truth(
+        {
+            "schema_version": 1,
+            "cycle_id": "diagnostic-test",
+            "observed_at": time.time(),
+            "endpoint": "https://gateway",
+            "error": None,
+            "routes": [
+                {
+                    "logical_route": route,
+                    "model_or_bucket": route,
+                    "provider": "qualified-provider-" + str(index),
+                    "capacity_domain": "qualified-domain-" + str(index),
+                    "size_class": "M",
+                    "policy_tier": "standard",
+                    "state": "healthy",
+                    "max": maximum,
+                    "gateway_active": active,
+                }
+                for index, route in enumerate(routes)
+            ],
+        },
+        {},
+    )
+    path.write_text(
+        json.dumps(snapshot) + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_original_incomplete_review_shape_reports_exact_reasons() -> None:
@@ -18,7 +60,7 @@ def test_original_incomplete_review_shape_reports_exact_reasons() -> None:
 
     assert governed_review_gate_reasons(
         core,
-        ["review", "seat-link"],
+        ["review", "seat-atlas"],
         dependency_blocked=True,
         owned=True,
         capacity_available=False,
@@ -46,6 +88,245 @@ def test_complete_seraph_review_has_no_review_gate_reasons() -> None:
     assert governed_review_gate_reasons(core, ["review", "seat-seraph"]) == ()
 
 
+@pytest.mark.parametrize("seat", ["link", "mero", "seraph"])
+def test_governed_review_accepts_host_neutral_logical_seats(seat: str) -> None:
+    core = {
+        "meta": {
+            "producer_identity": "source-producer",
+            "candidate_evidence_sha256": "a" * 64,
+            "link_source_card": "source01",
+            "link_head_revision": "b" * 40,
+        }
+    }
+
+    assert governed_review_gate_reasons(core, ["review", f"seat-{seat}"]) == ()
+
+
+@pytest.mark.parametrize(
+    ("identity", "seat"),
+    [
+        ("codex-link-aabb0005", "link"),
+        ("pi-mero-worker", "mero"),
+        ("pi-seraph-worker", "seraph"),
+        ("qualified-reviewer", "qualified-route"),
+    ],
+)
+def test_shared_candidate_contract_accepts_qualified_available_fallback(
+    identity: str, seat: str
+) -> None:
+    assert (
+        reviewer_candidate_reasons(
+            identity,
+            producer="source-producer",
+            qualified_seats={"link", "mero", "seraph", "qualified-route"},
+            declared_seat=seat,
+        )
+        == ()
+    )
+
+
+def test_shared_candidate_contract_fails_closed() -> None:
+    assert reviewer_candidate_reasons(
+        "codex-link-aabb0005",
+        producer="link-producer",
+        declared_seat="link",
+    ) == ("producer-self-review",)
+    assert reviewer_candidate_reasons(
+        "unknown-worker",
+        producer="source-producer",
+        declared_seat="unknown",
+    ) == ("unqualified-reviewer",)
+    assert reviewer_candidate_reasons(
+        "pi-seraph-worker",
+        producer="source-producer",
+        declared_seat="seraph",
+        available=False,
+        capacity_available=False,
+    ) == ("reviewer-unavailable", "capacity")
+    assert reviewer_candidate_reasons(
+        "pi-seraph-worker",
+        producer="source-producer",
+        declared_seat="seraph",
+        expected_claim_revision="old-generation",
+        current_claim_revision="new-generation",
+    ) == ("stale-generation",)
+
+
+@pytest.mark.parametrize(
+    "agent",
+    ["codex-link-aabb0006", "pi-mero-worker", "pi-seraph-worker"],
+)
+def test_atomic_claim_accepts_same_logical_reviewer_candidates(tmp_path, agent: str) -> None:
+    _write_gateway_capacity(tmp_path)
+    CardStore(tmp_path).create(
+        CardCore(
+            id="aabb0006",
+            title="[S] cross-seat review",
+            created_by="scheduler",
+            initial_labels=["review", "seat-link"],
+            meta={
+                "producer_identity": "source-producer",
+                "candidate_evidence_sha256": "a" * 64,
+                "link_source_card": "source06",
+                "link_head_revision": "b" * 40,
+            },
+        )
+    )
+
+    assert_governed_review_claim(tmp_path, "aabb0006", agent)
+
+
+def test_gates_and_atomic_claim_share_seat_link_admission(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    _write_gateway_capacity(tmp_path, routes=("sk-mid", "sk-s"))
+    store = CardStore(tmp_path)
+    store.create(
+        CardCore(
+            id="00acc20f",
+            title="[S] cross-seat review reproduction",
+            created_by="scheduler",
+            initial_labels=["review", "seat-link"],
+            meta={
+                "producer_identity": "codex-c1c1e001",
+                "candidate_evidence_sha256": "a" * 64,
+                "link_source_card": "c1c1e001",
+                "link_head_revision": "b" * 40,
+            },
+        )
+    )
+
+    gates = CliRunner().invoke(main, ["coord", "gates", "00acc20f", "--home", str(tmp_path)])
+    assert gates.exit_code == 0, gates.output
+    assert json.loads(gates.output)["eligible"] is True
+
+    claim = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "claim",
+            "00acc20f",
+            "--agent",
+            "codex-link-00acc20f",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+    assert claim.exit_code == 0, claim.output
+    first = store.fold("00acc20f")
+    assert first.owner == "codex-link-00acc20f"
+    assert first.meta["_claim_revision"]
+
+    stale = CliRunner().invoke(
+        main,
+        [
+            "coord",
+            "claim",
+            "00acc20f",
+            "--agent",
+            "pi-seraph-other",
+            "--home",
+            str(tmp_path),
+        ],
+    )
+    assert stale.exit_code == 1
+    after = store.fold("00acc20f")
+    assert after.owner == first.owner
+    assert after.meta["_claim_revision"] == first.meta["_claim_revision"]
+
+
+def test_atomic_claim_uses_all_qualified_size_compatible_gateway_slots(tmp_path) -> None:
+    routes = ("sk-codex-mid", "sk-glm-s", "sk-kimi", "sk-cursor", "sk-qwen")
+    _write_gateway_capacity(tmp_path, maximum=2, routes=routes)
+    CardStore(tmp_path).create(
+        CardCore(
+            id="aabb0007",
+            title="[S] provider-neutral review",
+            created_by="scheduler",
+            initial_labels=["review", "seat-link", "sk-s"],
+            meta={
+                "producer_identity": "source-producer",
+                "candidate_evidence_sha256": "a" * 64,
+                "link_source_card": "source07",
+                "link_head_revision": "b" * 40,
+            },
+        )
+    )
+
+    assert_governed_review_claim(tmp_path, "aabb0007", "codex-link-aabb0007")
+
+
+def test_atomic_claim_admits_configured_logical_reviewer_route(tmp_path) -> None:
+    _write_gateway_capacity(tmp_path)
+    CardStore(tmp_path).create(
+        CardCore(
+            id="aabb0008",
+            title="[S] configured reviewer route",
+            created_by="scheduler",
+            initial_labels=["review", "seat-qualified-route", "sk-s"],
+            meta={
+                "producer_identity": "source-producer",
+                "candidate_evidence_sha256": "a" * 64,
+                "link_source_card": "source08",
+                "link_head_revision": "b" * 40,
+                "qualified_reviewer_seats": ["qualified-route"],
+            },
+        )
+    )
+
+    assert_governed_review_claim(tmp_path, "aabb0008", "qualified-route-worker")
+
+
+def test_atomic_claim_fails_closed_when_gateway_capacity_is_exhausted(tmp_path) -> None:
+    _write_gateway_capacity(tmp_path, active=1, maximum=1)
+    CardStore(tmp_path).create(
+        CardCore(
+            id="aabb0009",
+            title="[S] full gateway review",
+            created_by="scheduler",
+            initial_labels=["review", "seat-seraph", "sk-s"],
+            meta={
+                "producer_identity": "source-producer",
+                "candidate_evidence_sha256": "a" * 64,
+                "link_source_card": "source09",
+                "link_head_revision": "b" * 40,
+            },
+        )
+    )
+
+    with pytest.raises(ValueError, match="capacity"):
+        assert_governed_review_claim(tmp_path, "aabb0009", "pi-seraph-worker")
+
+
+def test_raw_void_event_denies_admission_even_when_folded_meta_is_empty(tmp_path) -> None:
+    store = CardStore(tmp_path)
+    store.create(
+        CardCore(id="8daa0872", title="Voided admission regression", created_by="producer")
+    )
+    store.append_event("8daa0872", "void", "producer", reason="terminal")
+
+    report = diagnose(tmp_path, "8daa0872")
+    assert report["eligible"] is False
+    assert "terminal" in report["reasons"]
+
+
+def test_unvoided_card_is_not_flagged_voided(tmp_path) -> None:
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="8daa0873", title="Healthy", created_by="producer"))
+    assert "terminal" not in diagnose(tmp_path, "8daa0873")["reasons"]
+
+
+def test_voided_dependency_blocks_dependent_diagnostic(tmp_path) -> None:
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="8daa0874", title="Dep", created_by="producer"))
+    store.create(
+        CardCore(id="8daa0875", title="Child", created_by="producer", dependencies=["8daa0874"])
+    )
+    store.append_event("8daa0874", "complete", "producer")
+    assert "dependency" not in diagnose(tmp_path, "8daa0875")["reasons"]
+    store.append_event("8daa0874", "void", "producer", reason="terminal")
+    assert "dependency" in diagnose(tmp_path, "8daa0875")["reasons"]
+
+
 def test_coord_gates_reports_live_review_contract_reasons(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
     monkeypatch.setenv("SKFLEET_SEAT_TARGET", "0")
@@ -55,7 +336,7 @@ def test_coord_gates_reports_live_review_contract_reasons(tmp_path, monkeypatch)
             title="CapAuth candidate review",
             created_by="producer",
             dependencies=["deadbeef"],
-            initial_labels=["review", "seat-link"],
+            initial_labels=["review", "seat-atlas"],
             initial_owner="worker",
             initial_claim_revision="claim-revision",
         )
@@ -76,10 +357,9 @@ def test_coord_gates_reports_live_review_contract_reasons(tmp_path, monkeypatch)
     ]
 
 
-def test_coord_gates_uses_two_seat_seraph_default(tmp_path, monkeypatch) -> None:
+def test_coord_gates_aggregates_all_qualified_gateway_slots(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
-    monkeypatch.delenv("SKFLEET_SEAT_TARGET", raising=False)
-    monkeypatch.delenv("SKFLEET_SERAPH_BATCH_SIZE", raising=False)
+    _write_gateway_capacity(tmp_path, active=1, maximum=3, routes=("sk-mid", "sk-s"))
     metadata = {
         "producer_identity": "producer",
         "candidate_evidence_sha256": "a" * 64,
@@ -90,7 +370,7 @@ def test_coord_gates_uses_two_seat_seraph_default(tmp_path, monkeypatch) -> None
     store.create(
         CardCore(
             id="aabb0001",
-            title="first review",
+            title="[S] first review",
             created_by="scheduler",
             initial_labels=["review", "seat-seraph"],
             initial_owner="pi-seraph-first",
@@ -101,7 +381,7 @@ def test_coord_gates_uses_two_seat_seraph_default(tmp_path, monkeypatch) -> None
     store.create(
         CardCore(
             id="aabb0002",
-            title="second review",
+            title="[S] second review",
             created_by="scheduler",
             initial_labels=["review", "seat-seraph"],
             meta={**metadata, "link_source_card": "source02"},
@@ -112,7 +392,14 @@ def test_coord_gates_uses_two_seat_seraph_default(tmp_path, monkeypatch) -> None
 
     assert result.exit_code == 0, result.output
     report = json.loads(result.output)
-    assert report["capacity"] == {"busy": 1, "target": 2}
+    assert report["capacity"] == {
+        "busy": 0,
+        "target": 4,
+        "available": 4,
+        "reason": "eligible",
+        "revision": report["capacity"]["revision"],
+    }
+    assert len(report["capacity"]["revision"]) == 64
     assert report["eligible"] is True
 
     claim = CliRunner().invoke(
@@ -130,6 +417,115 @@ def test_coord_gates_uses_two_seat_seraph_default(tmp_path, monkeypatch) -> None
     assert claim.exit_code == 0, claim.output
     assert store.fold("aabb0001").owner == "pi-seraph-first"
     assert store.fold("aabb0002").owner == "pi-seraph-second"
+
+
+def test_coord_gates_rejects_capacity_bytes_that_do_not_match_revision(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    _write_gateway_capacity(tmp_path)
+    path = tmp_path / "evidence" / "fleet-review-routes.json"
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    snapshot["routes"][0]["max"] = 99
+    path.write_text(json.dumps(snapshot) + "\n", encoding="utf-8")
+    CardStore(tmp_path).create(
+        CardCore(
+            id="aabb0010",
+            title="[S] revision-bound review",
+            created_by="scheduler",
+            initial_labels=["review", "seat-seraph", "sk-s"],
+            meta={
+                "producer_identity": "source-producer",
+                "candidate_evidence_sha256": "a" * 64,
+                "link_source_card": "source10",
+                "link_head_revision": "b" * 40,
+            },
+        )
+    )
+
+    result = CliRunner().invoke(main, ["coord", "gates", "aabb0010", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["eligible"] is False
+    assert report["reasons"] == ["capacity"]
+    assert report["capacity"]["reason"] == "route-snapshot-ambiguity"
+
+
+def test_coord_gates_uses_one_size_label_when_title_has_no_size_marker(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    _write_gateway_capacity(tmp_path, maximum=3)
+    CardStore(tmp_path).create(
+        CardCore(
+            id="aabb0011",
+            title="Work Queue isolate per-matter fetch failures",
+            created_by="scheduler",
+            initial_labels=["sk-s", "glm-only", "dispatch-approved"],
+        )
+    )
+
+    result = CliRunner().invoke(main, ["coord", "gates", "aabb0011", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["capacity"]["reason"] == "eligible"
+    assert report["capacity"]["available"] == 3
+
+
+def test_coord_gates_keeps_ambiguous_size_labels_ineligible(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    _write_gateway_capacity(tmp_path, maximum=3)
+    CardStore(tmp_path).create(
+        CardCore(
+            id="aabb0012",
+            title="Work Queue isolate per-matter fetch failures",
+            created_by="scheduler",
+            initial_labels=["sk-s", "sk-m", "glm-only", "dispatch-approved"],
+        )
+    )
+
+    result = CliRunner().invoke(main, ["coord", "gates", "aabb0012", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["capacity"]["reason"] == "route-exhaustion"
+    assert report["capacity"]["available"] == 0
+
+
+def test_coord_gates_reports_do_not_claim_exclusion(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    CardStore(tmp_path).create(
+        CardCore(
+            id="733e74b0",
+            title="Correct source repository",
+            created_by="scheduler",
+            initial_labels=["source-only", "do-not-claim"],
+        )
+    )
+
+    result = CliRunner().invoke(main, ["coord", "gates", "733e74b0", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["eligible"] is False
+    assert report["reasons"] == ["do-not-claim"]
+
+
+@pytest.mark.parametrize("action", ["archive", "void"])
+def test_coord_gates_reports_folded_terminal_exclusion(tmp_path, monkeypatch, action) -> None:
+    monkeypatch.setenv("SKCOORD_CARD_STORE", "1")
+    store = CardStore(tmp_path)
+    store.create(CardCore(id="aabb0004", title="terminal card", created_by="scheduler"))
+    store.append_event("aabb0004", action, "scheduler")
+
+    result = CliRunner().invoke(main, ["coord", "gates", "aabb0004", "--home", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    assert report["eligible"] is False
+    assert report["reasons"] == ["terminal"]
 
 
 def test_governed_review_claim_rejects_exact_producer_identity(tmp_path) -> None:

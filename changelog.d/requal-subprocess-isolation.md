@@ -1,0 +1,1 @@
+- fleet: one requalification job whose workspace is gone no longer aborts the whole harvest, and a harvest failure no longer skips the advance that finalizes finished local runs.

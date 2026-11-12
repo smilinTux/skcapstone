@@ -1,0 +1,1 @@
+- Expose repeatable exact task scope in coord reconcile-agents, reusing native lifecycle audit/repair locks and rollback to avoid unrelated projection changes.

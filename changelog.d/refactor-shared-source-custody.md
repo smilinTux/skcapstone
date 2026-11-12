@@ -1,0 +1,1 @@
+- Centralize held and cleanly released producer custody in one locked event snapshot, preserving admission, guarded acceptance and artifact fences. Allow governed review-work to open the exact released producer generation without reclaiming the card or impersonating a worker; later custody, content, outcome or evidence changes still refuse.

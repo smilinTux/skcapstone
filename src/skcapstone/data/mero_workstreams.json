@@ -1,0 +1,49 @@
+{
+  "status": "DRAFT",
+  "ratified": false,
+  "aliases": {
+    "SKLEGAL": {
+      "workstream": "SKL",
+      "reason": "Both prefixes name the SKLegal project; SKL is its established abbreviation."
+    },
+    "SKCAPSTONE": {
+      "workstream": "SKCP",
+      "reason": "Both prefixes name the SKCapstone repository and product."
+    },
+    "SKFLEET": {
+      "workstream": "FLEET",
+      "reason": "Both prefixes describe SKCapstone fleet-control work."
+    },
+    "SKGATEWAY": {
+      "workstream": "SKGW",
+      "reason": "Both prefixes name the SKGateway repository and product."
+    },
+    "SKDASHBOARD": {
+      "workstream": "SKDASH",
+      "reason": "Both prefixes name the SKDashboard repository and product."
+    },
+    "SKHARNESS": {
+      "workstream": "SKH",
+      "reason": "Both prefixes name the SKHarness repository and product."
+    },
+    "COORD": {
+      "workstream": "SKCOORD",
+      "reason": "Both prefixes describe the SKCoord coordination-board project."
+    }
+  },
+  "class_tokens": {
+    "REVIEW": "Review is a card class and can apply to any project.",
+    "CARD": "Card describes a board-object class rather than a project.",
+    "DECISION": "Decision describes a decision-record class rather than a project.",
+    "WORK": "Work describes a generic card class rather than a project.",
+    "CONTAINMENT": "Containment describes a remediation class rather than a project.",
+    "NIGHT": "Night describes an execution wave rather than a project.",
+    "PUBLIC": "Public describes a publication class rather than a project.",
+    "PROVENANCE": "Provenance describes an evidence concern rather than a project.",
+    "EVIDENCE": "Evidence describes an artifact class rather than a project.",
+    "VERDICT": "Verdict describes a review result class rather than a project.",
+    "PATHS": "Paths describes a repair subject rather than a project.",
+    "VOID": "Void describes lifecycle disposition rather than a project.",
+    "HUMAN": "Human describes an approval class rather than a project."
+  }
+}

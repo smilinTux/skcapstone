@@ -213,6 +213,11 @@ class UsageTracker:
             date_str = _today_str()
         with self._lock:
             data = self._load_raw(date_str)
+            agents_dir = self._home / "agents"
+            if agents_dir.is_dir():
+                for child in sorted(agents_dir.iterdir()):
+                    if child.is_dir():
+                        data = _merge_raw(data, self._load_raw(date_str, home=child))
         return _raw_to_report(date_str, data)
 
     def get_weekly(self, anchor: Optional[str] = None) -> list[DailyUsageReport]:
@@ -275,16 +280,21 @@ class UsageTracker:
             reports.append(self.get_daily(d.strftime("%Y-%m-%d")))
         return reports
 
-    def _load_raw(self, date_str: str) -> dict:
+    def _load_raw(self, date_str: str, home: Path | None = None) -> dict:
         """Load raw usage dict from disk (no lock - caller must hold lock)."""
-        path = self._usage_dir / f"tokens-{date_str}.json"
+        usage_dir = self._usage_dir if home is None else home / "usage"
+        path = usage_dir / f"tokens-{date_str}.json"
         if not path.exists():
             return {"date": date_str, "models": {}}
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Failed to read usage file %s: %s", path, exc)
             return {"date": date_str, "models": {}}
+        if not isinstance(data, dict) or not isinstance(data.get("models"), dict):
+            logger.warning("Ignoring malformed usage file %s", path)
+            return {"date": date_str, "models": {}}
+        return data
 
     def _save_raw(self, date_str: str, data: dict) -> None:
         """Persist raw usage dict to disk (no lock - caller must hold lock)."""
@@ -323,3 +333,26 @@ def _raw_to_report(date_str: str, data: dict) -> DailyUsageReport:
             estimated_cost_usd=entry.get("estimated_cost_usd", 0.0),
         )
     return DailyUsageReport(date=date_str, models=models)
+
+
+def _merge_raw(left: dict, right: dict) -> dict:
+    """Return usage totals from two homes without mutating either input.
+
+    Rows that are not objects, and counters that are not numbers, are skipped
+    so one corrupt agent file cannot take down the whole report.
+    """
+    merged: dict = {"models": {}}
+    for side in (left, right):
+        for model, row in side.get("models", {}).items():
+            if not isinstance(row, dict):
+                continue
+            target = merged["models"].setdefault(
+                model,
+                {"calls": 0, "input_tokens": 0, "output_tokens": 0, "estimated_cost_usd": 0.0},
+            )
+            for key in ("calls", "input_tokens", "output_tokens", "estimated_cost_usd"):
+                value = row.get(key, 0)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    target[key] = target[key] + value
+            target["estimated_cost_usd"] = round(target["estimated_cost_usd"], 8)
+    return merged

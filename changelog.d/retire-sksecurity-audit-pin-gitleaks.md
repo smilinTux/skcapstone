@@ -1,0 +1,1 @@
+Fleet: retire `sksecurity-audit.timer` from the control profile (its script was deleted; the `sksecurity` package stays) and pin gitleaks 8.30.1 as a fleet binary, required on control and builder-standby (`docs/fleet/GITLEAKS.md`).

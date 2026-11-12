@@ -5,6 +5,17 @@
   },
   "name": "builder-standby",
   "spec": {
+    "binaries": {
+      "allowed": [
+        "wt",
+        "gitleaks"
+      ],
+      "mustNot": [],
+      "required": [
+        "wt",
+        "gitleaks"
+      ]
+    },
     "capauthIdentityClass": "agent",
     "description": "The build toolchain and warm state replica (.41, node-41). Two copies of the STATE, one copy of each running SERVICE: it holds a full replica and is the promotion target, but it does not run the control-plane loops. A laptop that sleeps cannot honor always-on services, and the half-alive duplicates are the proven source of comms pileups and outbox floods. SK-managed units are those prefixed sk/capauth/cloud9, plus the fleet-adjacent syncthing and tailscaled units. Everything else on the box is desktop, distro or third-party and is listed in unitsIgnore, so it never reads as drift. Role model and the two orthogonal axes: docs/fleet/adr-node-role-model.md.",
     "packages": {
@@ -50,6 +61,8 @@
         "skcomms-heartbeat.timer",
         "skcomms-housekeep.timer",
         "skcomms.service",
+        "skfleet-wt-gc.service",
+        "skfleet-wt-gc.timer",
         "skhousekeep.timer",
         "sknoded.service",
         "sksso-pg-backup.timer",
@@ -70,6 +83,7 @@
         "whisper-stt.service"
       ],
       "required": [
+        "skfleet-wt-gc.timer",
         "sknoded.service"
       ]
     },

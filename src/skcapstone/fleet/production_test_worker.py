@@ -1,0 +1,358 @@
+"""Trusted host-side executor; candidate code only runs inside a sealed bwrap."""
+
+from __future__ import annotations
+
+import os
+import re
+import resource
+import selectors
+import subprocess
+import sys
+import time
+from pathlib import Path
+from xml.etree import ElementTree
+
+from . import production_node_test_recipe as native
+from . import production_test_composite as composite
+from . import production_test_node as node
+from . import production_test_plan as test_plan
+from .production_tests import (
+    MAX_OUTPUT,
+    PREFIX,
+    TestEvidenceError,
+    load_plan,
+    read_json,
+    read_private,
+    sha,
+    source_state,
+    write_once,
+)
+
+
+def candidate_pythonpath(workspace: Path) -> str:
+    """Resolve bounded monorepo imports inside the existing read-only source mount."""
+    roots = sorted(
+        {
+            path
+            for pattern in ("packages/**/src", "services/*/src", "vendor/*/src", "tests")
+            for path in workspace.glob(pattern)
+        }
+    )
+    if len(roots) > 64:
+        raise TestEvidenceError("candidate Python source roots exceed bound")
+    paths = ["/work/src"]
+    for path in roots:
+        relative = path.relative_to(workspace)
+        if any(not re.fullmatch(r"[A-Za-z0-9_.-]+", part) for part in relative.parts):
+            raise TestEvidenceError("candidate Python source root is unsafe")
+        if not path.is_dir() or path.resolve() != workspace.resolve() / relative:
+            raise TestEvidenceError("candidate Python source root is redirected")
+        paths.append("/work/" + relative.as_posix())
+    return ":".join(paths)
+
+
+def system_awk_alias() -> list[str]:
+    """Recreate Debian's awk link using only a binary already exposed under /usr."""
+    awk = Path("/usr/bin/awk")
+    try:
+        if not awk.is_symlink() or awk.readlink() != Path("/etc/alternatives/awk"):
+            return []
+        target = awk.resolve(strict=True)
+        if target.parent != Path("/usr/bin") or not target.is_file():
+            raise TestEvidenceError("system awk alternative is outside sealed system binaries")
+    except (OSError, RuntimeError) as exc:
+        raise TestEvidenceError("system awk alternative is unavailable") from exc
+    return ["--symlink", str(target), "/etc/alternatives/awk"]
+
+
+def _account_databases() -> list[str]:
+    """Bind the host passwd/group files read-only when they are regular files."""
+    binds = []
+    for path in ("/etc/passwd", "/etc/group"):
+        if Path(path).is_file() and not Path(path).is_symlink():
+            binds.extend(["--ro-bind", path, path])
+    return binds
+
+
+def sandbox_command(
+    workspace: Path, output: Path, argv: list[str], profile: dict | None = None
+) -> list[str]:
+    """Expose only source/runtime read-only plus private tmp and one output directory."""
+    profile = composite.command_profile(profile, argv)
+    command = [
+        "/usr/bin/bwrap",
+        "--unshare-all",
+        "--die-with-parent",
+        "--new-session",
+        "--clearenv",
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        *system_awk_alias(),
+        "--symlink",
+        "usr/bin",
+        "/bin",
+        "--symlink",
+        "usr/lib",
+        "/lib",
+        "--symlink",
+        "usr/lib64",
+        "/lib64",
+        "--ro-bind",
+        str(PREFIX),
+        str(PREFIX),
+        # Read-only account databases. Without them getpwuid() fails for the
+        # sandbox uid, which errored 62 skcapstone tests (Path.home(),
+        # getpass.getuser()) and one whole module at collection, so no
+        # skcapstone card could ever qualify (chi, 2026-10-11).
+        *_account_databases(),
+        "--ro-bind",
+        str(workspace),
+        "/work",
+        "--tmpfs",
+        "/tmp",
+        "--symlink",
+        "/tmp",
+        "/var/tmp",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--bind",
+        str(output),
+        "/output",
+        "--chdir",
+        "/work",
+        "--setenv",
+        "PATH",
+        str(PREFIX / "bin") + ":/usr/local/bin:/usr/bin",
+        "--setenv",
+        "HOME",
+        "/tmp",
+        "--setenv",
+        "PYTHONPATH",
+        candidate_pythonpath(workspace),
+        "--setenv",
+        "PYTHONPYCACHEPREFIX",
+        "/tmp/pycache",
+        "--setenv",
+        "RUFF_CACHE_DIR",
+        "/tmp/ruff-cache",
+        "--setenv",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+        "1",
+        "--setenv",
+        "PYTEST_PLUGINS",
+        "pytest_asyncio.plugin",
+        "--setenv",
+        "GIT_CONFIG_NOSYSTEM",
+        "1",
+        "--setenv",
+        "GIT_CONFIG_GLOBAL",
+        "/dev/null",
+        "--",
+        *argv,
+    ]
+    if not node.is_node(profile):
+        position = command.index("--tmpfs")
+        command[position:position] = [
+            "--ro-bind",
+            str(test_plan.HARNESS_ROOT / "production_pytest_selection.py"),
+            "/qualified/production_pytest_selection.py",
+        ]
+        position = command.index("PYTHONPATH") + 1
+        command[position] += ":/qualified"
+    if node.is_node(profile):
+        artifact = node.artifact_path(profile["node_environment"])
+        source_position = command.index(str(workspace)) - 1
+        # Clean candidates have no ignored node_modules directories. Build only
+        # mountpoints privately, overlay every source entry read-only, then seal.
+        mounts = ["--tmpfs", "/work"]
+        root_node = native.is_native(profile)
+        parents = (
+            (("", {".git", "node_modules"}),)
+            if root_node
+            else (("", {"apps", ".git"}), ("apps", {"web"}), ("apps/web", set()))
+        )
+        for relative, excluded in parents:
+            source = workspace / relative
+            if source.is_symlink() or not source.is_dir():
+                raise TestEvidenceError("Node source mount parent is redirected")
+            target = "/work" + ("/" + relative if relative else "")
+            mounts.extend(["--dir", target])
+            for entry in sorted(source.iterdir()):
+                if entry.name in excluded:
+                    continue
+                if entry.is_symlink():
+                    raise TestEvidenceError("Node source mount entry is redirected")
+                mounts.extend(["--ro-bind", str(entry), target + "/" + entry.name])
+        command[source_position : source_position + 3] = mounts
+        position = command.index("--tmpfs")
+        position = command.index("--tmpfs", position + 1)
+        dependencies = [
+            "--ro-bind",
+            str(artifact / "node_modules"),
+            "/work/node_modules",
+            "--ro-bind",
+            str(artifact / "apps/web/node_modules"),
+            "/work/apps/web/node_modules",
+        ]
+        if root_node:
+            dependencies = dependencies[:3]
+        if not root_node and argv == node.checks(profile["recipe"])[1]["argv"]:
+            dependencies.extend(
+                [
+                    "--bind",
+                    str(output / "tsconfig.tsbuildinfo"),
+                    "/work/apps/web/tsconfig.tsbuildinfo",
+                ]
+            )
+        command[position:position] = [*dependencies, "--remount-ro", "/work"]
+        command[command.index("--chdir") + 1] = "/work" if root_node else "/work/apps/web"
+    return command
+
+
+def capture(argv: list[str], path: Path, timeout: int) -> int:
+    """Drain one child into a bounded host file, killing/reaping on overflow or timeout."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as output:
+        with subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            close_fds=True,
+        ) as child:
+            selector = selectors.DefaultSelector()
+            selector.register(child.stdout, selectors.EVENT_READ)
+            total, deadline = 0, time.monotonic() + timeout
+            try:
+                while selector.get_map():
+                    if time.monotonic() >= deadline:
+                        raise TestEvidenceError("native check exceeded runtime bound")
+                    for key, _ in selector.select(
+                        timeout=min(1, max(0, deadline - time.monotonic()))
+                    ):
+                        chunk = os.read(key.fd, 65536)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            continue
+                        total += len(chunk)
+                        if total > MAX_OUTPUT:
+                            raise TestEvidenceError("native check exceeded output bound")
+                        output.write(chunk)
+                return child.wait(timeout=max(0.01, deadline - time.monotonic()))
+            finally:
+                selector.close()
+                if child.poll() is None:
+                    child.kill()
+                child.wait()
+
+
+def execute(plan_path: Path, directory: Path) -> int:
+    """Execute an installed plan under the exact native service invocation."""
+    launch = read_json(directory / "launch.json")
+    binding = launch["binding"]
+    home = plan_path.parent.parent.parent
+    plan, expected_path, plan_sha = load_plan(home, binding)
+    if (
+        expected_path != plan_path
+        or directory != home / "fleet/test-runs" / plan_sha
+        or launch["request_id"] != plan_sha
+    ):
+        raise TestEvidenceError("executor plan path or launch does not match")
+    invocation = os.environ.get("INVOCATION_ID", "")
+    if not re.fullmatch(r"[0-9a-f]{32}", invocation):
+        raise TestEvidenceError("executor requires native systemd invocation")
+    os.umask(0o077)
+    workspace = Path(launch["workspace"])
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_OUTPUT, MAX_OUTPUT))
+    receipt = {
+        "schema": "skfleet.native-test-receipt/v1",
+        "binding": binding,
+        "plan_sha256": plan_sha,
+        "invocation": invocation,
+        "pid": os.getpid(),
+        "checks": [],
+        "counts": None,
+        "junit_sha256": None,
+        "failure": None,
+    }
+    timeout = launch["production"]["resources"]["runtime_max_seconds"]
+    try:
+        receipt["source_before"] = source_state(workspace, binding)
+        profile = plan.get("profile")
+        if profile:
+            composite.validate_source(profile, workspace)
+        for check in plan["checks"]:
+            if (node.is_node(profile) or composite.is_composite(profile)) and check[
+                "id"
+            ] == "typecheck":
+                # Earlier candidate tests cannot seed an incremental cache that
+                # suppresses the independent typecheck. Existing output fails closed.
+                fd = os.open(
+                    directory / "output/tsconfig.tsbuildinfo",
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                )
+                os.close(fd)
+            argv = sandbox_command(workspace, directory / "output", check["argv"], profile)
+            log = directory / (check["id"] + ".log")
+            row = {**check, "sandbox_argv": argv, "exit_code": None, "output_sha256": None}
+            receipt["checks"].append(row)
+            try:
+                row["exit_code"] = capture(argv, log, timeout)
+            finally:
+                if log.exists():
+                    row["output_sha256"] = sha(read_private(log))
+            if row["exit_code"] != 0:
+                break
+        receipt["source_after"] = source_state(workspace, binding)
+        load_plan(home, binding)
+        if profile:
+            composite.validate_source(profile, workspace)
+        reports = {}
+        executed = {row["id"] for row in receipt["checks"]}
+        for name in composite.report_names(profile):
+            if name.removesuffix(".xml") not in executed:
+                failed = receipt["checks"][-1]
+                raise TestEvidenceError(
+                    f"{failed['id']} exited {failed['exit_code']}; "
+                    f"{name.removesuffix('.xml')} was not run"
+                )
+            raw = read_private(directory / "output" / name)
+            fd = os.open(
+                directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+            )
+            with os.fdopen(fd, "wb") as output:
+                output.write(raw)
+            reports[name] = raw
+        selection = None
+        if composite.python_selection(profile):
+            selection_raw = read_private(directory / "output/selection.json")
+            fd = os.open(
+                directory / "selection.json",
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+            )
+            with os.fdopen(fd, "wb") as output:
+                output.write(selection_raw)
+            receipt["selection_sha256"] = sha(selection_raw)
+            selection = read_json(directory / "selection.json")
+        receipt["junit_sha256"], receipt["counts"] = composite.evidence(
+            reports, profile, selection
+        )
+    except (OSError, ValueError, subprocess.SubprocessError, ElementTree.ParseError) as exc:
+        receipt["failure"] = {"type": type(exc).__name__, "message": str(exc)[:1000]}
+    write_once(directory / "receipt.json", receipt)
+    return int(
+        receipt["failure"] is not None
+        or receipt["counts"] is None
+        or len(receipt["checks"]) != len(plan["checks"])
+        or any(row["exit_code"] for row in receipt["checks"])
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(execute(Path(sys.argv[1]), Path(sys.argv[2])))

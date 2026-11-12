@@ -1,0 +1,1 @@
+- Keep a completed remote review bound to its sealed source bundle after the producer claim is released, even when later card metadata changes.

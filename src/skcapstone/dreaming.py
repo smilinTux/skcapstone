@@ -361,13 +361,35 @@ class DreamingEngine:
         home: Path,
         config: Optional[DreamingConfig] = None,
         consciousness_loop: object = None,
+        agent_name: Optional[str] = None,
     ) -> None:
         self._home = home
         self._config = config or DreamingConfig()
         self._consciousness_loop = consciousness_loop
         from . import active_agent_name
 
-        self._agent_name = os.environ.get("SKCAPSTONE_AGENT") or active_agent_name() or ""
+        # Resolve the owning agent strictly. An empty name used to be tolerated
+        # here, and it was silently corrosive: every path below collapses a
+        # level ("agents" / "" / "memory" -> "agents/memory"), so the engine read
+        # cooldown and dream-count state out of a phantom file that never
+        # existed. Both gates then answered "nothing yet", so the full LLM cycle
+        # ran on every scheduler tick instead of once a day, and each one died
+        # deep in skmemory with "No valid registered memory profile is
+        # available" - because "" is not a registered profile. Fail loudly at
+        # construction instead: a clear error once is worth more than an opaque
+        # one every 15 minutes.
+        resolved = (
+            (agent_name or "").strip()
+            or (os.environ.get("SKCAPSTONE_AGENT") or "").strip()
+            or active_agent_name()
+        )
+        if not resolved:
+            raise ValueError(
+                "DreamingEngine: cannot resolve the owning agent. Set "
+                "SKCAPSTONE_AGENT (or SKAGENT), or ensure an agent directory "
+                "exists under the shared home."
+            )
+        self._agent_name = resolved
         self._state_path = home / "agents" / self._agent_name / "memory" / "dreaming-state.json"
         self._log_path = home / "agents" / self._agent_name / "memory" / "dream-log.json"
         self._graduated_path = (
@@ -414,9 +436,15 @@ class DreamingEngine:
         prompt = self._build_prompt(short_term, established, diversity_forced)
         response = self._call_llm(prompt)
         if response is None:
+            # A provider outage is a skip, not a dream. Calling _save_state()
+            # here used to bump dream_count and stamp last_dream_at, arming the
+            # cooldown off a dream that never happened and leaving no dream-log
+            # entry -- so a 19-day outage (2026-08-25) read as an idle stretch.
+            # Record the failure instead, and leave state alone so the next
+            # scheduled cycle retries as soon as a provider comes back.
             result.skipped_reason = "all LLM providers unreachable"
             result.duration_seconds = time.monotonic() - start
-            self._save_state()
+            self._record_dream(result)
             return result
 
         result.raw_response = response
@@ -807,7 +835,7 @@ class DreamingEngine:
         force = similarity_ratio > (1.0 - self._config.diversity_min_unique_ratio)
         if force:
             logger.info(
-                "Diversity check: forcing exploration (similarity=%.0f%%, " "shared keywords: %s)",
+                "Diversity check: forcing exploration (similarity=%.0f%%, shared keywords: %s)",
                 similarity_ratio * 100,
                 ", ".join(sorted(all_top_intersection)[:5]),
             )
@@ -1428,6 +1456,7 @@ class DreamingEngine:
         """
         import uuid as _uuid
 
+        from .mcp_tools import gtd_tools as _gtd_tools
         from .mcp_tools.gtd_tools import _atomic_write_json, _store_lock_at
 
         gtd_dir = self._home / "coordination" / "gtd"
@@ -1456,6 +1485,22 @@ class DreamingEngine:
         items.extend(_item(f"[Dream question] {q}") for q in result.questions)
 
         if not items:
+            return
+
+        # Not the GTD owner host: queue the items for the owner instead of
+        # rewriting someday-maybe.json here (smilinTux/skos#35, #37).
+        owner = _gtd_tools._spool_owner(gtd_dir)
+        if owner:
+            try:
+                for it in items:
+                    _gtd_tools._skos_spool_append(it, "someday-maybe")
+                logger.info(
+                    "Queued %d dream items for GTD someday-maybe (owner %s applies them)",
+                    len(items),
+                    owner,
+                )
+            except OSError as exc:
+                logger.error("Failed to spool GTD someday-maybe items: %s", exc)
             return
 
         # SPE P1 sprint (83482526): this was a bare write_text, so it was the
@@ -1507,8 +1552,18 @@ class DreamingEngine:
                 except (json.JSONDecodeError, OSError):
                     pass
 
-        bloom_matches = match_blooms_for_feb(feb, agent=self._agent_name, top_k=3)
-        entangle_matches = match_entanglements_for_feb(feb, agent=self._agent_name, top_k=2)
+        # "" is not a profile id - skmemory rejects it and raises. None is the
+        # documented "resolve the active agent" value. Anchor seeds are optional
+        # inspiration, so a skmemory failure degrades to no seeds rather than
+        # killing the dream (dreams stalled 2026-08-25 -> 2026-09-13 on exactly
+        # this path).
+        agent = self._agent_name or None
+        try:
+            bloom_matches = match_blooms_for_feb(feb, agent=agent, top_k=3)
+            entangle_matches = match_entanglements_for_feb(feb, agent=agent, top_k=2)
+        except Exception as exc:
+            logger.warning("Anchor seeding unavailable - dreaming without seeds: %s", exc)
+            return ""
 
         if not bloom_matches and not entangle_matches:
             return ""

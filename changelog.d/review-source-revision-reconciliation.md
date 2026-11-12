@@ -1,0 +1,1 @@
+- Keep an unclaimed source-only review dispatchable when its producer receives only a later `native_glm_readback` link; any other source change or review claim still invalidates the stale generation.

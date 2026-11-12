@@ -14,7 +14,13 @@ __all__ = ["CensusReport"]
 
 @dataclass
 class CensusReport:
-    """The bounded result of one census run. No mutations are recorded here."""
+    """The bounded result of one census run. No mutations are recorded here.
+
+    ``coverage`` carries card eacedb1a's durable pagination contract: where
+    the window sat, where the next run resumes, and whether the run closed a
+    full pass over every card id. It defaults to an empty mapping for callers
+    that build reports by hand.
+    """
 
     census_id: str
     observed_at: str
@@ -26,3 +32,4 @@ class CensusReport:
     suppressed_by_bound: int = 0
     selector_ready: dict = field(default_factory=dict)
     counts: dict = field(default_factory=dict)
+    coverage: dict = field(default_factory=dict)

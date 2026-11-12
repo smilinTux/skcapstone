@@ -1,0 +1,1 @@
+- fleet: sknoded records terminal custody for, and stops, finished test units whose claim moved on, so a retained orphan no longer charges its MemoryMax forever and blocks every qualification launch on the node.

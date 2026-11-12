@@ -1,0 +1,24 @@
+{
+  "id": "cli:agent:list",
+  "result": {
+    "agents": [
+      {
+        "agent": "kimi",
+        "agent_status": "idle",
+        "cwd": "/mnt/cloud/onedrive/projects/DAVE-AI/sklegal",
+        "focused": false,
+        "foreground_cwd": "/mnt/cloud/onedrive/projects/DAVE-AI/sklegal",
+        "pane_id": "wQ:p3E",
+        "revision": 1,
+        "state_change_seq": 17989,
+        "tab_id": "wQ:t2Q",
+        "terminal_id": "term_65b52c7318df3131",
+        "terminal_title": "chiap08 | jarvis | main* | sklegal",
+        "terminal_title_stripped": "chiap08 | jarvis | main* | sklegal",
+        "workspace_id": "wQ"
+      }
+    ],
+    "type": "agent_list",
+    "note": "trimmed to reproducing pane only"
+  }
+}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -17,23 +19,65 @@ from .seat_boundaries import (
     Action,
     canonical_human_principal,
     require_authority,
+    require_coord_authority,
     verify_casey_direction,
 )
 
 Operation = Callable[..., Any]
 Verifier = Callable[[bytes, str, str], bool]
 SCOPE = "skcapstone,skdashboard,skworld"
+_WORKER_CARD_CUSTODY_ACTIONS = frozenset(
+    {Action.CLAIM, Action.RELEASE, Action.REASSIGN, Action.MOVE_CARD}
+)
 
 
-def authorize_jarvis_entrypoint(
+def _require_worker_card_scope(action: Action, target: str, *, home: Path | None = None) -> None:
+    """Fence production workers to their dispatched card's custody."""
+    worker_card = os.environ.get("SKFLEET_CARD_ID", "").strip().lower()
+    if not worker_card or action not in _WORKER_CARD_CUSTODY_ACTIONS:
+        return
+    if not re.fullmatch(r"[0-9a-f]{8}", worker_card):
+        raise ValueError("production worker card context is invalid")
+    target_card = target.split(":", 1)[0].strip().lower()
+    if target_card == worker_card:
+        return
+
+    from .card_store import CardStore
+
+    card_home = home or Path(os.environ.get("SKCAPSTONE_HOME", Path.home() / ".skcapstone"))
+    worker_task = CardStore(Path(card_home).expanduser()).fold(worker_card)
+    if worker_task and worker_task.meta.get("operator_role") == "coord-custody":
+        return
+    raise ValueError(
+        f"production worker for card {worker_card} may only mutate custody "
+        "of its dispatched card"
+    )
+
+
+def authorize_coord_mutation(
     actor: str,
     action: Action,
     target: str,
     authorization_path: Path | None,
     change_id: str | None,
+    *,
+    home: Path | None = None,
 ) -> None:
-    """Gate a real mutation surface when its authenticated actor is Jarvis."""
-    if actor.strip().lower() != "jarvis":
+    """The one gate every coord mutation entrypoint calls.
+
+    Policy lives in ``seat_boundaries.require_coord_authority``: one
+    capability table keyed by seat, consulted for every actor, refusing an
+    identity the table and grammar do not know. This function adds only the
+    Jarvis leg: an action outside ``JARVIS_DIRECT_ACTIONS`` needs a verified
+    signed Casey direction. PR 766 gated exactly one seat (``mero``) here;
+    this generalizes that check so no seat is unchecked by default, while
+    ``pi-<seat>-*`` lane workers, humans, and system writers pass as their
+    own explicitly classified identities.
+    """
+    _require_worker_card_scope(action, target, home=home)
+    require_coord_authority(actor, action)
+    normalized = actor.strip().lower()
+    if normalized != "jarvis":
         return
     if action in JARVIS_DIRECT_ACTIONS:
         return
@@ -67,6 +111,11 @@ def authorize_jarvis_entrypoint(
         verifier=get_backend(profile.crypto_backend).verify,
     )
     consume_authorization(envelope, capauth_home / "operator" / "used-authorizations")
+
+
+#: Compatibility alias: the gate predates the per-seat capability table and
+#: several call sites and tests still import the historical name.
+authorize_jarvis_entrypoint = authorize_coord_mutation
 
 
 @dataclass(frozen=True)

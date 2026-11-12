@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
+from .forgejo import MultiForgeReadOnlyConnector
 from .link_cycle import _digest
 from .link_observation_feed import SCHEMA, _canonical_payload, _reviewer
 
@@ -43,7 +44,7 @@ class GhReadOnlyConnector:
     """Use ``gh api`` with fixed read-only GET arguments and no shell."""
 
     def list_open(self, repository: str) -> Sequence[Mapping[str, Any]]:
-        if "/" not in repository or any(not part.strip() for part in repository.split("/", 1)):
+        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) is None:
             raise ProducerError("repository must be owner/name")
         command = [
             "gh",
@@ -174,7 +175,7 @@ def _sha(raw: Mapping[str, Any], direct: str, nested: str) -> str:
 
 def _ci_state(raw: Mapping[str, Any]) -> str:
     checks = raw.get("statusCheckRollup") or raw.get("checks")
-    if not isinstance(checks, list) or not checks:
+    if not isinstance(checks, list) or not checks or any(not isinstance(c, dict) for c in checks):
         return "unknown"
     states = {
         str(item.get("conclusion") or item.get("status") or "").lower()
@@ -269,6 +270,13 @@ def build_feed(
             item = dict(_mapping(raw, "pr"))
             item["repository"] = repository
             raw_rows.append(item)
+
+    if now is None:
+        # Snapshots are stamped while the forge is read, so the reference clock
+        # must be taken after the reads. A slow forge (over 30s of reads) made
+        # every snapshot look ahead of a clock taken before them and the feed
+        # unhealthy with snapshot_clock_ahead.
+        timestamp = _now()
 
     keys: set[str] = set()
     records: list[dict[str, Any]] = []
@@ -463,7 +471,9 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     producer = ProducerIdentity(args.producer_identity, args.host, args.session, args.workspace)
     try:
-        connector = GhReadOnlyConnector()
+        from .link_fetch_share import SharedFetch
+
+        connector = SharedFetch(MultiForgeReadOnlyConnector(), "producer").log_at_exit()
         lineage = load_lineage(args.lineage)
         if args.dry_run:
             _, result = build_feed(

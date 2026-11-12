@@ -1,0 +1,1 @@
+Governed builder retirement can preserve an exhausted source-reconstruction failure that never acquired a claim, after verifying the exact clean base and absence of claims, units, unit history and admission intents. Existing execution custody fences remain required for every other failure.

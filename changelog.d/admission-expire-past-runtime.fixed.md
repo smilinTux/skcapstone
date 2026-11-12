@@ -1,0 +1,1 @@
+Builder admission stops charging reservations whose unit is absent past its RuntimeMaxSec, and counts unfinished test-run launches only on the host that holds their reservation, so dead or foreign launches no longer pin every builder at zero memory.

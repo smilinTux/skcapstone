@@ -1,0 +1,1 @@
+- Extend explicit operator acceptance-reseal recovery to exact cleanly released source claims and governed test requalification. Preserve ordinary guarded replay refusals for changed PR/commit links, bind the recovery receipt to release evidence and requalification bytes, and continue without a second PASS or review completion.

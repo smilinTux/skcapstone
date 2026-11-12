@@ -488,8 +488,8 @@ def prune_derived_junk(skcapstone_home: Path) -> int:
     """Remove derived/runtime junk that must never sync or linger (F6/F7).
 
     Sweeps the whole profile tree for:
-    - ``**/chroma.bak*`` - stale ChromaDB backup dumps (dirs removed wholesale
-      via :func:`shutil.rmtree`, files unlinked). Live ``chroma`` is untouched.
+    - ``**/chroma.bak*`` - stale legacy Chroma backup dumps (dirs removed wholesale
+      via :func:`shutil.rmtree`, files unlinked). A leftover ``chroma`` dir is untouched.
     - ``**/*.pid`` - pidfiles whose process is NOT alive. A pidfile naming a
       live PID (e.g. the running daemon's own ``daemon.pid``) is preserved;
       only dead / empty / garbage pidfiles are removed.

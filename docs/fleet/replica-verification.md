@@ -92,7 +92,7 @@ GiB that exists only on .158 is dominated by one thing:
 | `file-transfer/` | 70 | 26,306 | `file-transfer` |
 | `coordination/itil/_legacy/` | 20 | 11,976 | `(?d)coordination/itil/_legacy` |
 
-Remaining small classes, each also covered by a rule: `**/memory/chroma`,
+Remaining small classes, each also covered by a rule: `**/memory/chroma` (leftover dir, no longer written),
 `**/memory/chroma-state.json`, `**/memory/index.db{,-shm,-wal}`, `__pycache__`,
 `(?d)**/*.tmp` (the `.syncthing.*.tmp` staging files), `daemon.pid`,
 `**/skwhisper/state.json`, `**/daemon.log`, `**/comms/outbox`,
@@ -455,8 +455,8 @@ ssh cbrd21@100.86.156.5 'cd ~/.skcapstone && find . -type f -printf "%P\n" | LC_
 LC_ALL=C comm -23 /tmp/l158.txt /tmp/l41.txt > /tmp/only158.txt
 cut -d/ -f1 /tmp/only158.txt | sort | uniq -c | sort -rn
 
-# 3. every delta class must map to a rule in ~/.skcapstone/.stignore
-cat ~/.skcapstone/.stignore
+# 3. every delta class must map to a rule in the shared rules (the .stignore is a shim)
+cat ~/.skcapstone/.stignore ~/.skcapstone/.stignore-shared
 
 # 4. content hashes of the sovereign classes (the load-bearing step)
 find agents/*/memory/short-term -name '*.json' -type f -print0 \

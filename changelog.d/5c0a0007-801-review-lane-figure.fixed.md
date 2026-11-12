@@ -1,0 +1,1 @@
+Correct the review-lane figure in the provisional-verdict docstring, refusal message and coord-write-boundary doc: OPENED_REVIEW was 0 across every rotation the journal retains (1,716 cycles back to 2026-09-09), not 14 days and 1,660 rotations; the lane had been dead about 13 days.

@@ -1,0 +1,1 @@
+Profile requalification now reads the fleet tree under the sovereign home it is given, so remote qualification finds the ready chiap01-04 builders instead of falling back to the authority as `deferred:no-ready-remote-host`, and the remote consumer honours a fleet freeze.

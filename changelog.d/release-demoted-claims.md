@@ -1,0 +1,1 @@
+The fleet authority releases demoted claims each cycle: a card left in ready but still owned by an agent whose current task moved on, idle for 6 hours, is released through the audited board CLI (exact owner and claim revision) and put back in ready so it can be dispatched.

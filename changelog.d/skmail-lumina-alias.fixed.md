@@ -1,0 +1,1 @@
+skmail treats `lumina` and `lumina-nor` as one agent (canonical `lumina-nor`) for mail sent after 2026-10-06 20:30Z, keeping a separate read cursor per name, and a reader no longer receives its own `all`/`fleet` broadcasts as unread mail.

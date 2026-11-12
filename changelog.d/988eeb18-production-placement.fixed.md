@@ -1,0 +1,1 @@
+Production builder placement excludes retained evidence requests and expired unanswered offers from its load count, matching resource admission while preserving their custody and legacy worker ceilings.

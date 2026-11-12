@@ -1,0 +1,219 @@
+"""Install checkout artifacts without enabling or starting any service."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import shlex
+import subprocess
+import tempfile
+from pathlib import Path
+
+from skcapstone.fleet.deployment_manifest import (
+    CANONICAL_SYSTEMD_RELATIVE_DIR,
+    PER_HOST_ARTIFACTS,
+    PER_HOST_BIN_RELATIVE_DIR,
+    PRODUCTION_CANONICAL_SCRIPTS,
+    production_compatibility_shim,
+    production_script_bytes,
+)
+from skcapstone.fleet.paths import paths_for_home, self_node_name
+
+_SKNODED_HOST_KEYS = frozenset(
+    {
+        "SKFLEET_PI",
+        "SKFLEET_PI_CARDSTORE_GUARD",
+        "SKFLEET_PRODUCTION_POLICY",
+        "SKFLEET_AUTHORITY_HOST",
+    }
+)
+SANDBOX_PROFILE_TARGET = Path("/etc/apparmor.d/skfleet-bwrap")
+#: "Y" when the running kernel has AppArmor enabled. WSL2 kernels build it in
+#: but boot with it disabled, and there is nothing to load a profile into.
+APPARMOR_ENABLED_PATH = Path("/sys/module/apparmor/parameters/enabled")
+
+
+def apparmor_enabled() -> bool:
+    """Return whether the running kernel can load an AppArmor profile."""
+    try:
+        return APPARMOR_ENABLED_PATH.read_text().strip() == "Y"
+    except OSError:
+        return False
+
+
+def install_sandbox_profile(repo_root: Path, home: Path) -> None:
+    """Load the shipped bwrap attachment without relaxing host namespace policy."""
+    if not (paths_for_home(home).root / "production.json").is_file():
+        return
+    try:
+        # Lazy: this file also runs from a cache against a package that
+        # predates the module (rollback), where the old behaviour applies.
+        from skcapstone.fleet.qualified_runtime import qualification_applies
+    except ImportError:
+        qualification_applies = None
+    if qualification_applies and not qualification_applies(home, self_node_name()):
+        return  # not a worker destination: no qualification sandbox here
+    source = repo_root / "systemd/apparmor/skfleet-bwrap"
+    if source.is_symlink() or SANDBOX_PROFILE_TARGET.is_symlink():
+        raise ValueError("sandbox profile must not be a symlink")
+    data = source.read_bytes()
+    target = SANDBOX_PROFILE_TARGET
+    previous = target.read_bytes() if target.exists() else None
+    if previous is not None and previous != data:
+        backup = (
+            paths_for_home(home).root
+            / "rollout-apparmor-preimages"
+            / hashlib.sha256(previous).hexdigest()
+            / target.name
+        )
+        if not backup.exists():
+            _write(backup, previous, 0o600)
+    subprocess.run(
+        ["sudo", "-n", "/usr/bin/install", "-m", "0644", str(source), str(target)],
+        check=True,
+        timeout=30,
+    )
+    if not apparmor_enabled():
+        # The file is in place for the day AppArmor is enabled, but there is no
+        # kernel policy to load it into (chiwk12-wsl, 2026-11-09). Deploy goes
+        # on; the sandbox readiness gate still requires both profiles loaded in
+        # enforce mode, so this host fails closed for sealed qualification
+        # instead of running a sandbox without the capability deny.
+        print("sandbox profile installed; AppArmor disabled in this kernel, load skipped")
+        return
+    subprocess.run(
+        ["sudo", "-n", "/usr/sbin/apparmor_parser", "-r", str(target)],
+        check=True,
+        timeout=30,
+    )
+
+
+def unit_source_path(repo_root: Path, name: str, production: bool) -> Path:
+    """Select the same canonical unit for installation and drift checking."""
+    root = repo_root / CANONICAL_SYSTEMD_RELATIVE_DIR
+    overlay = root / "production" / name
+    return overlay if production and overlay.is_file() else root / name
+
+
+def _write(path: Path, data: bytes, mode: int) -> None:
+    """Replace bytes atomically, including existing compatibility symlinks."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def install_artifact(repo_root: Path, home: Path, name: str) -> None:
+    """Install one declared artifact, using native delegation on production hosts."""
+    relative = next((path for path in PER_HOST_ARTIFACTS if path.name == name), None)
+    if relative is None:
+        raise ValueError("undeclared rollout artifact")
+    production = (paths_for_home(home).root / "production.json").is_file()
+    canonical = production and name in PRODUCTION_CANONICAL_SCRIPTS
+    if canonical:
+        # pip writes the native copy's shebang from the interpreter it ran
+        # under: ~/.skenv/bin/python on a 3.12 venv, .../python3 on 3.14. The
+        # drift gate pins .../python, so every 3.14 host halted on
+        # "changed:dispatcher" with an identical body (ziowk01, 2026-11-12).
+        # Write the exact bytes the gate expects instead of trusting pip's.
+        source = (repo_root / relative).read_bytes()
+        _write(home / ".skenv/bin" / name, production_script_bytes(source, home), 0o755)
+    data = (
+        production_compatibility_shim(name, home)
+        if canonical
+        else (repo_root / relative).read_bytes()
+    )
+    _write(home / PER_HOST_BIN_RELATIVE_DIR / name, data, 0o755)
+
+
+def _preserve_sknoded_environment(home: Path, units_dir: Path) -> None:
+    """Move known host settings into the EnvironmentFile the main unit loads."""
+    values: dict[str, str] = {}
+    sources = [units_dir / "sknoded.service"]
+    sources.extend(sorted((units_dir / "sknoded.service.d").glob("*.conf")))
+    for source in sources:
+        if not source.is_file():
+            continue
+        section = ""
+        for line in source.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("["):
+                section = line
+            if section != "[Service]" or not line.startswith("Environment="):
+                continue
+            assignments = shlex.split(line.partition("=")[2])
+            if not assignments:
+                values.clear()
+            for assignment in assignments:
+                key, separator, value = assignment.partition("=")
+                if separator and key in _SKNODED_HOST_KEYS:
+                    values[key] = value.replace("%h", str(home))
+    environment = home / ".config/sknoded/operator-http.env"
+    original = environment.read_bytes() if environment.exists() else b""
+    existing = {
+        line.strip().partition("=")[0]
+        for line in original.decode().splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+    additions = []
+    for key, value in sorted(values.items()):
+        if key in existing:
+            continue
+        if any(ord(character) < 32 for character in value):
+            raise ValueError("invalid control character in sknoded host environment")
+        quoted = '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        additions.append(f"{key}={quoted}\n")
+    if additions:
+        separator = b"\n" if original and not original.endswith(b"\n") else b""
+        _write(environment, original + separator + "".join(additions).encode(), 0o600)
+
+
+def install_units(repo_root: Path, home: Path) -> None:
+    """Copy canonical service/timer bytes, retaining host env and unit preimages."""
+    root = repo_root / CANONICAL_SYSTEMD_RELATIVE_DIR
+    sources = sorted(path for path in root.iterdir() if path.suffix in {".service", ".timer"})
+    if not sources:
+        raise RuntimeError("no shipped systemd units in rollout checkout")
+    units_dir = home / ".config/systemd/user"
+    _preserve_sknoded_environment(home, units_dir)
+    production = (paths_for_home(home).root / "production.json").is_file()
+    for source in sources:
+        data = unit_source_path(repo_root, source.name, production).read_bytes()
+        target = units_dir / source.name
+        previous = target.read_bytes() if target.is_file() else None
+        if previous == data:
+            continue
+        if previous is not None:
+            backup = (
+                paths_for_home(home).root
+                / "rollout-unit-preimages"
+                / hashlib.sha256(previous).hexdigest()
+                / source.name
+            )
+            if not backup.exists():
+                _write(backup, previous, 0o600)
+        _write(target, data, 0o644)
+
+
+def main() -> None:
+    """Expose artifact installation to the existing staged rollout shell steps."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("repo_root", type=Path)
+    parser.add_argument("artifact", help="Declared script basename, 'units' or 'sandbox-profile'")
+    args = parser.parse_args()
+    if args.artifact == "sandbox-profile":
+        install_sandbox_profile(args.repo_root, Path.home())
+    elif args.artifact == "units":
+        install_units(args.repo_root, Path.home())
+    else:
+        install_artifact(args.repo_root, Path.home(), args.artifact)
+
+
+if __name__ == "__main__":
+    main()

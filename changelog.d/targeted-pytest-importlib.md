@@ -1,0 +1,1 @@
+- fleet: targeted pytest recipes collect with the same --import-mode=importlib and Docker-probe ignore as the full suite their baselines come from.

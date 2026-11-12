@@ -15,6 +15,8 @@
     "note": "daily sk-alert health monitor for the memory stack.",
     "revert": "restore prior spec generation: re-apply the previous manifest generation (skfleet apply -f the prior JSON; write_spec bumps generation, so the prior generation is the authoritative rollback target). Declarative and reversible by spec regeneration; no imperative rollback script.",
     "schedule": "@daily",
-    "source": "skmemory/docs/deploy-plan/skmemory-bulletproof-deploy.md"
+    "source": "skmemory/docs/deploy-plan/skmemory-bulletproof-deploy.md",
+    "deleted": true,
+    "retired": "Retired 2026-11-11 (SKBrain CmdbDriftBounded triage): superseded by the Hermes cron skmem-health-daily, which discovery cannot observe. Fold it into skos jobs.yaml once skmemory deploy/ops/skmem-health.sh is portable (it defaults SKAGENT, an embed host and a DSN)."
   }
 }

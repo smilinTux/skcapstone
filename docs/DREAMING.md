@@ -55,6 +55,11 @@ chat format. See `BeeLlama` / `skai-beellama.service` on the GPU host.
 - **Weekly (automated):** Hermes cron `weekly-dream-reflection` (Sun 9:13) → Lumina
   summarizes the week + a mood image → Telegram DM → **archives that week's dream items out
   of the GTD inbox** (`~/.hermes/scripts/dream-week-prep.sh`).
+  The digest separates *dreams* from *skipped cycles*: entries carrying a
+  `skipped_reason` are counted and printed under an `ENGINE HEALTH` block, never as
+  dream sessions. That block exists because the 2026-08-25 → 09-13 provider outage
+  wrote nothing to dream-log.json at all, so the weekly reflection read 19 dead days
+  as a healthy quiet stretch. An outage must now read as an outage.
 - **Catch-up / backlog (one-off):** `~/clawd/scripts/dream_catchup.py` batch-summarizes the
   unique backlog via BeeLlama; `dream_catchup_complete.py` meta-synthesizes, files
   `dream-summaries-<date>.md` **and ingests them into the pg `docs` store

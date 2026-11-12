@@ -1,0 +1,1 @@
+The rollout `pip_install` step now gets 300 s instead of the 30 s runner default. On a disk-bound node (chiap10, HDD) it takes 15-17 s at best and ran past 30 s under IO pressure, halting three rollouts in a row.

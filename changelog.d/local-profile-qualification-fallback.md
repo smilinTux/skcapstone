@@ -1,0 +1,1 @@
+- Run exact source qualification on the authority host after a remote source reconstruction failure, and retarget only an unlaunched remote plan.

@@ -1,0 +1,1 @@
+Review supersession takes the current head from a production builder's typed verdict, and from the candidate/commit/head links for sources from the earlier workflow, which recorded repaired heads there after the verdict.

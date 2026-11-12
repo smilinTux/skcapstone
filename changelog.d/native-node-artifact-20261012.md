@@ -1,0 +1,1 @@
+- Add an operator command to prepare locked native Node dependencies without lifecycle scripts and publish immutable, source-matched artifacts with an operator receipt. This replaces an undocumented manual prerequisite for skgateway requalification; installation does not claim product tests passed.

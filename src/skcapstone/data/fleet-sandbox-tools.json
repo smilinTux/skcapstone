@@ -1,0 +1,20 @@
+{
+  "schema": "skfleet.sandbox-tools-artifacts/v1",
+  "profile_sha256": "309919f9d569a90e8e777d300727c90cfc047bc1cf207733a94467f759bb16a1",
+  "architectures": {
+    "x86_64": {
+      "url": "https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-x64.tar.xz",
+      "version": "22.23.3",
+      "member": "node-v22.23.3-linux-x64/bin/node",
+      "archive_sha256": "df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de",
+      "binary_sha256": "fde6a4bf8d0562f7751d1a2d6cb9b417c4cfe107bbcb0aa3e9a24e125e348f48"
+    },
+    "aarch64": {
+      "url": "https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-arm64.tar.xz",
+      "version": "22.23.3",
+      "member": "node-v22.23.3-linux-arm64/bin/node",
+      "archive_sha256": "a44aeb94849a299b22df10b9e622ec2f605c2183501bc40590705131de7c740f",
+      "binary_sha256": "d09e299258c24f7cdf6f5d5ec185e3a56512b27a697113735dac909f1cac7b8d"
+    }
+  }
+}

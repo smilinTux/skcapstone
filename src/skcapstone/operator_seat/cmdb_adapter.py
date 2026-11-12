@@ -20,6 +20,9 @@ PROBLEM_WHEN_TRUE = frozenset()
 _MAX_ARTIFACT_AGE = timedelta(hours=4)
 _SHADOW_UNIT = "skcapstone-cmdb-reconcile-shadow.service"
 _APPLY_UNIT = "skcapstone-cmdb-reconcile-network.service"
+# The apply unit runs `cmdb reconcile --network`, so its evidence is network
+# scope only. Local timer artifacts are complete too, and must never count.
+_APPLY_SCOPE = "network"
 
 _ACTIONS = [
     {
@@ -127,9 +130,14 @@ def _apply_gate(
         return "independent authenticated human CAB approval is required"
 
     artifacts = _verified_artifacts(home)
-    complete = [item for item in artifacts if item.get("completeness", {}).get("complete") is True]
+    complete = [
+        item
+        for item in artifacts
+        if item.get("scope") == _APPLY_SCOPE
+        and item.get("completeness", {}).get("complete") is True
+    ]
     if len(complete) < 3:
-        return "three checksum-valid complete shadow artifacts are required"
+        return f"three checksum-valid complete {_APPLY_SCOPE}-scope shadow artifacts are required"
     latest = complete[:3]
     scopes = {item.get("scope_fingerprint") for item in latest}
     scans = {item.get("scan_id") for item in latest}
@@ -236,7 +244,11 @@ def cmdb_act(
     if store.is_frozen(paths):
         return {"performed": False, "reason": "frozen", "action": action}
     run = runner or actuation.default_runner
-    ok = run(["systemctl", "--user", "start", units[action]])
+    # --no-block: both units are oneshots, so a plain start waits for the whole
+    # reconcile (about 40 s) and the 30 s actuation timeout raised after the
+    # apply had already started (chg-a543c87b, 2026-11-11). Verification reads
+    # the unit result and the artifact, never this call.
+    ok = run(["systemctl", "--user", "start", "--no-block", units[action]])
     if hasattr(ok, "returncode"):
         ok = ok.returncode == 0
     return {"performed": bool(ok), "action": action, "unit": units[action]}

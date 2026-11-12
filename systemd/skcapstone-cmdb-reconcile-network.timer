@@ -1,0 +1,18 @@
+[Unit]
+Description=Governed CMDB network reconcile apply every 3 hours (minute 47)
+Documentation=file:%h/clawd/skcapstone-repos/skcoord/docs/cmdb-reconcile-rollout.md
+
+[Timer]
+# The legacy local timer runs at 00/3:17 (+2 min jitter, about 2 min long).
+# 01/3:47 sits 90 minutes away on both sides, so the two never overlap.
+# Persistent is off on purpose: a boot-time catch-up could fire next to the
+# legacy timer's own catch-up.
+OnCalendar=*-*-* 01/3:47:00
+RandomizedDelaySec=120
+Persistent=false
+Unit=skcapstone-cmdb-reconcile-network.service
+
+# Installed and enabled only as a gate 4 cutover step (chg-a543c87b), never
+# by a package install or pull.
+[Install]
+WantedBy=timers.target

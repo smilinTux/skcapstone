@@ -1,0 +1,203 @@
+{
+  "inventory_date": "2026-08-31",
+  "inventory_host": "chiap04",
+  "editable_installs": {
+    "chiap01": [
+      {
+        "name": "skcomms",
+        "version": "0.2.17",
+        "location": "/home/skuser01/work/skcomms",
+        "classification": "development_convenience"
+      },
+      {
+        "name": "sklegal-capauth",
+        "version": "0.1.0",
+        "location": "/mnt/cloud/onedrive/projects/DAVE-AI/sklegal/packages/capauth",
+        "classification": "unknown"
+      }
+    ],
+    "chiap02": [
+      {
+        "name": "skcomms",
+        "version": "0.2.17",
+        "location": "/home/skuser01/work/skcomms",
+        "classification": "development_convenience"
+      },
+      {
+        "name": "smilin-pdf",
+        "version": "0.2.0",
+        "location": "/home/skuser01/worktrees/skpdf-5674f675",
+        "classification": "development_convenience"
+      }
+    ],
+    "chiap03": [
+      {
+        "name": "skcomms",
+        "version": "0.2.17",
+        "location": "/home/skuser01/work/skcomms",
+        "classification": "development_convenience"
+      }
+    ],
+    "chiap04": [
+      {
+        "name": "skcomms",
+        "version": "0.2.17",
+        "location": "/home/skuser01/work/skcomms",
+        "classification": "service_dependency",
+        "service": "skcomms serve",
+        "pid": 1634955,
+        "notes": "Running service imports from editable install"
+      }
+    ],
+    "chiap08": [
+      {
+        "name": "skchat-sovereign",
+        "version": "0.14.266.dev26+gb606d822c",
+        "location": "/home/skuser01/work/skchat",
+        "classification": "unknown"
+      },
+      {
+        "name": "skcomms",
+        "version": "0.2.16",
+        "location": "/home/skuser01/work/skcomms",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-agents",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/agents",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-api",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/services/api",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-audit",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/audit",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-calendar",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/connectors/calendar",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-capauth",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/capauth",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-client-communication-connector",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/connectors/client_communication",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-connectors-base",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/connectors/base",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-domain",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/domain",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-email",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/connectors/email",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-filing-connector",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/connectors/filing",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-hammertime",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/connectors/hammertime",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-legal-sources",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/connectors/legal_sources",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-migration",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/migration",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-model-gateway",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/model_gateway",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-persistence",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/persistence",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-policies",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/policies",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-retrieval",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/retrieval",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-service-connector",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/connectors/service",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-worker",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/services/worker",
+        "classification": "unknown"
+      },
+      {
+        "name": "sklegal-workflow",
+        "version": "0.1.0",
+        "location": "/home/skuser01/work/sklegal-f080-clean/packages/workflow",
+        "classification": "unknown"
+      }
+    ]
+  },
+  "summary": {
+    "total_editable_installs": 27,
+    "by_host": {
+      "chiap01": 2,
+      "chiap02": 2,
+      "chiap03": 1,
+      "chiap04": 1,
+      "chiap08": 21
+    },
+    "by_classification": {
+      "service_dependency": 1,
+      "development_convenience": 4,
+      "unknown": 22
+    },
+    "all_in_work_tree": true
+  }
+}

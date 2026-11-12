@@ -6,7 +6,9 @@ import importlib.machinery
 import importlib.util
 import io
 import json
+import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -100,7 +102,171 @@ def worker(monitor, **changes):
     return monitor.Worker(**values)
 
 
-def run_report(monkeypatch, tmp_path, capsys, monitor, rows, samples=None, now=100):
+def herdr_agent(card="deadbeef", **changes):
+    """Build current Herdr evidence for one bounded coworktree."""
+    values = {
+        "name": f"repair-{card}-codex",
+        "agent_status": "working",
+        "cwd": f"/work/skcapstone-{card}-herdr",
+    }
+    values.update(changes)
+    return values
+
+
+def stale_projection(monitor, **changes):
+    """Build a projection-only row eligible for Herdr corroboration."""
+    values = dict(
+        agent="pi-herdr-deadbeef",
+        pid=0,
+        unit="not-found",
+        unit_load="not-found",
+        unit_active="inactive",
+        unit_sub="dead",
+        claim_state="exact",
+        projection_state="stale",
+        evidence_source="agent-projection+systemd+proc",
+    )
+    values.update(changes)
+    return worker(monitor, **values)
+
+
+def test_live_herdr_clears_only_exact_stale_projection(monkeypatch):
+    """Current Herdr evidence supplements an exact owner and claim join."""
+    monitor = load_monitor()
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"result": {"agents": [herdr_agent()]}}),
+        ),
+    )
+
+    joined = monitor.join_herdr_evidence([stale_projection(monitor)])
+
+    assert joined[0].projection_state == "valid"
+    assert joined[0].evidence_source.endswith("+herdr")
+    assert monitor.assess(joined[0], {}, 100)[0] == "OK"
+
+
+@pytest.mark.parametrize(
+    ("row_changes", "agent_changes"),
+    [
+        ({"claim_state": "mismatch"}, {}),
+        ({"card": "feedface"}, {}),
+        ({}, {"cwd": "/work/skcapstone-feedface-herdr"}),
+        ({}, {"agent_status": "done"}),
+        ({}, {"agent_status": "unknown"}),
+    ],
+)
+def test_herdr_mismatch_or_dead_evidence_remains_stale(monkeypatch, row_changes, agent_changes):
+    """Owner/revision, card, coworktree, and live status all fail closed."""
+    monitor = load_monitor()
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"result": {"agents": [herdr_agent(**agent_changes)]}}),
+        ),
+    )
+
+    assert (
+        monitor.join_herdr_evidence([stale_projection(monitor, **row_changes)])[0].projection_state
+        == "stale"
+    )
+
+
+def test_idle_herdr_without_exact_card_ownership_stays_stale(monkeypatch):
+    """Foreground-idle panes lacking exact name+cwd card ownership fail closed.
+
+    Herdr process-info is foreground-only. skcapstone must not invent owned
+    background work via host-wide process heuristics.
+    """
+    monitor = load_monitor()
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "result": {
+                        "agents": [
+                            herdr_agent(
+                                agent_status="idle",
+                                name=None,
+                                cwd="/mnt/cloud/onedrive/projects/DAVE-AI/sklegal",
+                                pane_id="wQ:p3E",
+                            )
+                        ]
+                    }
+                }
+            ),
+        ),
+    )
+
+    assert monitor.join_herdr_evidence([stale_projection(monitor)])[0].projection_state == "stale"
+
+
+def test_historical_pane_remains_stale(monkeypatch):
+    """Pane history outside the current agent list never becomes liveness."""
+    monitor = load_monitor()
+    historical_only = {"result": {"agents": [], "panes": [herdr_agent()]}}
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(historical_only)),
+    )
+    projection = stale_projection(monitor)
+
+    assert monitor.join_herdr_evidence([projection])[0].projection_state == "stale"
+
+
+@pytest.mark.parametrize(
+    "contradiction", [{"pid": 321}, {"unit": "skfleet-worker-pi-deadbeef.service"}]
+)
+def test_authoritative_contradiction_remains_stale(monkeypatch, contradiction):
+    """Observed systemd or proc evidence remains authoritative over Herdr."""
+    monitor = load_monitor()
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"result": {"agents": [herdr_agent()]}}),
+        ),
+    )
+    authoritative = replace(stale_projection(monitor), **contradiction)
+
+    assert monitor.join_herdr_evidence([authoritative])[0].projection_state == "stale"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        FileNotFoundError(),
+        subprocess.TimeoutExpired(["herdr"], 2),
+        SimpleNamespace(returncode=1, stdout=""),
+        SimpleNamespace(returncode=0, stdout="not-json"),
+        SimpleNamespace(returncode=0, stdout=json.dumps({"result": {}})),
+    ],
+)
+def test_herdr_unavailable_timeout_or_malformed_fails_closed(monkeypatch, failure):
+    """Every unavailable or incomplete Herdr result preserves stale truth."""
+    monitor = load_monitor()
+
+    def run(*args, **kwargs):
+        if isinstance(failure, BaseException):
+            raise failure
+        return failure
+
+    monkeypatch.setattr(monitor.subprocess, "run", run)
+
+    assert monitor.join_herdr_evidence([stale_projection(monitor)])[0].projection_state == "stale"
+
+
+def run_report(monkeypatch, tmp_path, capsys, monitor, rows, samples=None, now=100, details=True):
     """Render a report using only supplied evidence and an in-memory cache."""
     saved = {}
     monkeypatch.setattr(monitor, "HOSTS", ("host-a", "host-b"))
@@ -111,7 +277,7 @@ def run_report(monkeypatch, tmp_path, capsys, monitor, rows, samples=None, now=1
     monkeypatch.setattr(monitor, "save_samples", saved.update)
     monkeypatch.setattr(monitor.time, "time", lambda: now)
     monkeypatch.setenv("SKGW_METRICS_DB", str(tmp_path / "absent.db"))
-    result = monitor.main()
+    result = monitor.main(details=details)
     return result, capsys.readouterr().out, saved
 
 
@@ -220,19 +386,41 @@ def test_main_resets_stale_samples_and_clears_recovery(monkeypatch, tmp_path, ca
     assert recovered == {}
 
 
+@pytest.mark.parametrize("process_revision", ["r1", "old", ""])
+@pytest.mark.parametrize(
+    ("worker_card", "native_builder", "herdr_env"),
+    [
+        ("deadbeef", False, False),
+        ("deadbeef", True, False),
+        ("a8100007-01", False, False),
+        ("cb65a43a-1", False, False),
+        ("deadbeef", False, True),
+    ],
+)
 @pytest.mark.parametrize(
     "has_pi, broken_projection", [(False, False), (False, True), (True, False), (True, True)]
 )
-def test_remote_collector_unit_fallback(monkeypatch, capsys, has_pi, broken_projection):
+def test_remote_collector_unit_fallback(
+    monkeypatch,
+    capsys,
+    has_pi,
+    broken_projection,
+    worker_card,
+    native_builder,
+    herdr_env,
+    process_revision,
+):
     """Execute the real collector against synthetic proc, unit and card state."""
     monitor = load_monitor()
-    unit = "skfleet-worker-codex-deadbeef.service"
-    agent = "pi-codex-host-a-deadbeef"
+    unit = f"skfleet-worker-codex-{worker_card}.service"
+    if native_builder:
+        unit = "skfleet-builder-deadbeef-" + "a" * 64 + "-1.service"
+    agent = f"pi-codex-host-a-{worker_card}"
     card_store = ModuleType("skcoord.card_store")
 
     def fold(card):
         """Return an exact synthetic claim or the collector's error fallback."""
-        assert card == "deadbeef"
+        assert card == worker_card
         if broken_projection:
             raise ValueError("synthetic invalid projection")
         return SimpleNamespace(
@@ -244,9 +432,13 @@ def test_remote_collector_unit_fallback(monkeypatch, capsys, has_pi, broken_proj
     monkeypatch.setattr(Path, "glob", lambda self, pattern: [])
     monkeypatch.setattr(monitor.os, "uname", lambda: SimpleNamespace(nodename="host-a"))
     monkeypatch.setattr(monitor.os, "sysconf", lambda name: 100)
+    environment = f"SKAGENT={agent}\0SKFLEET_CARD_ID={worker_card}\0"
+    if herdr_env:
+        environment += "HERDR_ENV=1\0"
+    environment += f"SKFLEET_CLAIM_REVISION={process_revision}\0"
     proc = {
         "/proc/321/comm": "pi\n",
-        "/proc/321/environ": f"SKAGENT={agent}\0".encode(),
+        "/proc/321/environ": environment.encode(),
         "/proc/321/stat": " ".join(["0"] * 21 + ["1000"]),
         "/proc/uptime": "100 0",
         "/proc/321/cgroup": f"0::/user.slice/{unit}",
@@ -284,6 +476,15 @@ def test_remote_collector_unit_fallback(monkeypatch, capsys, has_pi, broken_proj
     ]
     assert len(rows) == 1
     row = rows[0]
+    assert row.unit == unit
+    assert row.card == worker_card
+    assert row.herdr_session is (herdr_env and has_pi)
+    process_claim = (
+        "exact" if process_revision == "r1" else "mismatch" if process_revision else "unverified"
+    )
+    assert row.claim_state == (
+        "malformed-projection" if broken_projection else process_claim if has_pi else "unverified"
+    )
     assert row.unit_missing_process is (not has_pi)
     assert row.elapsed == (90 if has_pi else -1)
     assert row.pid == (321 if has_pi else 999)
@@ -291,6 +492,75 @@ def test_remote_collector_unit_fallback(monkeypatch, capsys, has_pi, broken_proj
         "malformed" if broken_projection else "missing" if has_pi else "valid"
     )
     assert row.projection_error == ("ValueError" if broken_projection else "")
+
+
+def test_report_separates_legacy_from_current_execution(monkeypatch, tmp_path, capsys):
+    """A two-week-old terminal process is not current native worker execution."""
+    monitor = load_monitor()
+    rows = [
+        worker(monitor, unit="legacy", tmux=True, elapsed=1051200, claim_state="mismatch"),
+        worker(
+            monitor,
+            card="feedface",
+            pid=322,
+            unit="skfleet-builder-feedface-" + "a" * 64 + "-1.service",
+        ),
+        worker(
+            monitor,
+            pid=0,
+            projection_state="stale",
+            unit="not-found",
+            evidence_source="agent-projection+systemd+proc",
+        ),
+    ]
+    _, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, rows)
+    assert "current claimed unit processes: 1" in output
+    assert "legacy Pi sessions: 1" in output
+    assert "STALE PROJECTION; no process observed; claim=exact" in output
+    assert "LEGACY SESSION" in output
+    assert "running; output buffered until completion" not in output
+
+
+def test_legacy_without_owner_is_reported_as_orphan_without_details(monkeypatch, tmp_path, capsys):
+    """An unowned legacy row remains visible and alerts in the default report."""
+    monitor = load_monitor()
+    row = worker(monitor, unit="legacy", tmux=False)
+
+    result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row], details=False)
+
+    assert result == 1
+    assert "ORPHAN" in output
+    assert "ACTION REQUIRED (1)" in output
+    assert "orphan=1" in output
+
+
+def test_herdr_session_without_tmux_is_visible_but_not_called_orphan(
+    monkeypatch, tmp_path, capsys
+):
+    """Herdr-owned legacy work warns without claiming ownership is absent."""
+    monitor = load_monitor()
+    row = worker(monitor, unit="legacy", tmux=False, herdr_session=True)
+
+    result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row], details=False)
+
+    assert result == 1
+    assert "HERDR SESSION; ownership unverified" in output
+    assert "ORPHAN" not in output
+    assert "ownership-unknown=1" in output
+
+
+def test_native_unit_without_pi_is_not_assumed_dead(monkeypatch, tmp_path, capsys):
+    """Native units also run qualification and preparation without Pi."""
+    monitor = load_monitor()
+    row = worker(
+        monitor,
+        unit="skfleet-builder-deadbeef-" + "a" * 64 + "-1.service",
+        unit_missing_process=True,
+        claim_state="unverified",
+    )
+    _, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row])
+    assert "UNIT ACTIVE; no Pi observed (setup/test or other unit process)" in output
+    assert "current claimed unit processes: 0" in output
 
 
 def test_direct_seat_active_requires_exact_process_projection_claim_join(
@@ -323,9 +593,9 @@ def test_direct_seat_active_requires_exact_process_projection_claim_join(
         heartbeat_at="1970-01-01T00:01:40+00:00",
     )
     result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [mismatched])
-    assert result == 0
+    assert result == 1
     assert "DIRECT SEAT ACTIVE" not in output
-    assert "STALE PROJECTION" in output
+    assert "ORPHAN" in output
 
 
 def test_direct_seat_terminal_process_is_not_active(monkeypatch, tmp_path, capsys):
@@ -341,8 +611,9 @@ def test_direct_seat_terminal_process_is_not_active(monkeypatch, tmp_path, capsy
         heartbeat_at="1970-01-01T00:01:40+00:00",
     )
     result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row])
-    assert result == 0
+    assert result == 1
     assert "DIRECT SEAT ACTIVE" not in output
+    assert "ORPHAN" in output
 
 
 def test_direct_seat_stale_heartbeat_is_not_active(monkeypatch, tmp_path, capsys):
@@ -357,9 +628,9 @@ def test_direct_seat_stale_heartbeat_is_not_active(monkeypatch, tmp_path, capsys
         process_record="/bounded/record.json",
     )
     result, output, _ = run_report(monkeypatch, tmp_path, capsys, monitor, [row], now=1000)
-    assert result == 0
+    assert result == 1
     assert "DIRECT SEAT ACTIVE" not in output
-    assert "STALE PROJECTION" in output
+    assert "ORPHAN" in output
 
 
 def test_collect_parses_unit_diagnostic_and_ignores_noise(monkeypatch):
@@ -382,3 +653,49 @@ def test_collect_parses_unit_diagnostic_and_ignores_noise(monkeypatch):
     rows, diagnostics = monitor.collect("host-a")
     assert rows == [row]
     assert diagnostics == {"host-a": {"idle_projections": 3}}
+
+
+def test_collect_observes_local_canonical_host_without_ssh(monkeypatch):
+    """A broken self-SSH path cannot erase authoritative local worker evidence."""
+    monitor = load_monitor()
+    row = worker(
+        monitor,
+        host="chiap08",
+        agent="pi-codex-chiap08-a8100e12",
+        card="a8100e12",
+        unit="skfleet-worker-codex-a8100e12.service",
+        pid=810012,
+        claim_owner="pi-codex-chiap08-a8100e12",
+        claim_revision="claim-a8100e12",
+    )
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(vars(row)))
+
+    monkeypatch.setattr(monitor.os, "uname", lambda: SimpleNamespace(nodename="chiap08.local"))
+    monkeypatch.setattr(monitor.subprocess, "run", run)
+
+    rows, _diagnostics = monitor.collect("CHIAP08")
+
+    assert calls[0][:2] == [sys.executable, "-c"]
+    assert "ssh" not in calls[0]
+    assert rows[0].pid == 810012
+    assert rows[0].unit == "skfleet-worker-codex-a8100e12.service"
+    assert rows[0].claim_owner == "pi-codex-chiap08-a8100e12"
+    assert rows[0].claim_revision == "claim-a8100e12"
+    assert rows[0].evidence_source == "systemd+proc+cardstore+local"
+
+
+def test_collect_keeps_remote_transport_fail_closed(monkeypatch):
+    monitor = load_monitor()
+    monkeypatch.setattr(monitor.os, "uname", lambda: SimpleNamespace(nodename="chiap08"))
+    monkeypatch.setattr(
+        monitor.subprocess,
+        "run",
+        lambda command, **kwargs: SimpleNamespace(returncode=255, stdout=""),
+    )
+
+    with pytest.raises(OSError, match="chiap04: ssh collector failed with rc=255"):
+        monitor.collect("chiap04")

@@ -1,0 +1,12 @@
+{
+  "tested_commit": "9bdc4cf8ff4b7c1623f1cd025845528aa2262890",
+  "main_commit": "428af3101ea12a36be56e9bd916bbfb876880f6f",
+  "files": {
+    "main-full.log": "a20e67f5e9ed973b73b30e3a2e0e234a9f63173b88517db89bdca9130a0a9b51",
+    "targeted-deployed.log": "e2bd9b38f60376953bfbc5248771a68bb9e737b933dfaf62bd23dae14a8fb717",
+    "targeted-deployed.xml": "1cba4f739b7d0bc8e170c6d56098e014c0cfedc2df0ff484ee985d1dcdd078b6",
+    "candidate-full-final.log": "5c7965a52e9720980bf5e28d89a831fa15bcdf3e4f35245926bc4cb23f00ec3b",
+    "candidate-full-final.xml": "7d32efd1a3f473f681d1f61fe65181c0e63012d4eeb9893ce05536fa54a56557",
+    "build-final.log": "7b0119001bf5866b7c84f23f8c30f5306cb2a817e4335477fc50a801788293e5"
+  }
+}

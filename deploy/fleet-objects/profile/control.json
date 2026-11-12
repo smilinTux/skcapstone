@@ -5,8 +5,19 @@
   },
   "name": "control",
   "spec": {
+    "binaries": {
+      "allowed": [
+        "wt",
+        "gitleaks"
+      ],
+      "mustNot": [],
+      "required": [
+        "wt",
+        "gitleaks"
+      ]
+    },
     "capauthIdentityClass": "operator",
-    "description": "The single control seat (.158, node-noroc2027). Holds the full sovereign tree and runs the control-plane loops. Changes almost nothing, which is the point. SK-managed units are those prefixed sk/capauth/cloud9, plus the fleet-adjacent syncthing and tailscaled units. Everything else on the box is desktop, distro or third-party and is listed in unitsIgnore, so it never reads as drift. Role model and the two orthogonal axes: docs/fleet/adr-node-role-model.md.",
+    "description": "The single control seat (.158, node-noroc2027). Holds the full sovereign tree and runs the control-plane loops. Changes almost nothing, which is the point. Link and Mero retain bounded timers. The seat-cycle, rotate, estate-glm and seraph-review-publisher dispatcher timers are paused and forbidden, as are the individual Atlas, Seraph, Niobe, and Niobe-live timers. SK-managed units are those prefixed sk/capauth/cloud9, plus the fleet-adjacent syncthing and tailscaled units. Everything else on the box is desktop, distro or third-party and is listed in unitsIgnore, so it never reads as drift. Role model and the two orthogonal axes: docs/fleet/adr-node-role-model.md.",
     "packages": {
       "allowed": [
         "capauth",
@@ -68,12 +79,19 @@
         "skcomms-api.service",
         "skcomms-signaling-broker.service",
         "skcot.service",
+        "skfleet-link-producer.service",
+        "skfleet-link-producer.timer",
+        "skfleet-link.service",
+        "skfleet-link.timer",
+        "skfleet-mero.service",
+        "skfleet-mero.timer",
+        "skfleet-wt-gc.service",
+        "skfleet-wt-gc.timer",
         "skgateway.service",
         "skingest-maintain.timer",
         "sknoded.service",
         "skoperator.timer",
         "skos-web.service",
-        "sksecurity-audit.timer",
         "skvoice.service",
         "syncthing.service"
       ],
@@ -84,11 +102,23 @@
         "ollama.service",
         "qwen3-arc.service",
         "skai-beellama.service",
+        "skfleet-atlas.timer",
+        "skfleet-estate-glm.timer",
+        "skfleet-niobe-live.timer",
+        "skfleet-niobe.timer",
+        "skfleet-rotate.timer",
+        "skfleet-seat-cycle.timer",
+        "skfleet-seraph-review-publisher.timer",
+        "skfleet-seraph.timer",
         "whisper-stt.service"
       ],
       "required": [
         "capauth-authz.service",
         "skcapstone.service",
+        "skfleet-link-producer.timer",
+        "skfleet-link.timer",
+        "skfleet-mero.timer",
+        "skfleet-wt-gc.timer",
         "skgateway.service",
         "sknoded.service",
         "skoperator.timer"

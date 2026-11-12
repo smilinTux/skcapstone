@@ -182,8 +182,10 @@ two mailbox traps, because both have already cost real time:
 - **Read your own box** with `skmail read <seat>`. Do not poll with `skmail tail`;
   it shows recent traffic and silently hides anything that scrolls past the
   window.
-- **`ack` is all or nothing.** It marks everything currently visible as read,
-  including mail you have not acted on. Read, act, then ack.
+- **Read, act, then ack, in batches.** `read` shows about 8 KiB of the oldest
+  unread mail and `ack` marks read only what it showed, so repeat until
+  `(0 new)`. For a large backlog start with `skmail read <seat> --summary`.
+  (Before 2026-10-03 ack marked everything visible as read; that trap is gone.)
 
 ---
 

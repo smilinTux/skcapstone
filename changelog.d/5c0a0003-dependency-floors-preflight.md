@@ -1,0 +1,1 @@
+Preflight now detects installed dependencies below this project's own declared floors (`skcapstone.dependency_floors`, new `dependency_floors` check). Reported as a non-critical failure so it is visible without aborting startup. Motivated by the 2026-09-19 outage where five hosts ran code requiring skcoord 0.1.78 with 0.1.77 installed.

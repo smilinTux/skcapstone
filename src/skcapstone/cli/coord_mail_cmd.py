@@ -16,6 +16,17 @@ from ..coord_mail import VALID_PRIORITIES, ack, bootstrap, read, send, tail
 from ._common import AGENT_HOME, console
 
 
+def _shown_sender(m: dict) -> str:
+    """Render the sender qualified by estate when the record carries it.
+
+    Two estates run the same agent names, so a bare "jarvis" in a report or a
+    quoted message is ambiguous between two different beings. Show the fqid
+    (`jarvis@chef.skworld`) whenever the record has one, and fall back to the
+    bare name only for records that predate the stamp.
+    """
+    return str(m.get("from_fqid") or m.get("from"))
+
+
 def register_coord_mail_commands(coord: click.Group) -> None:
     """Register mailbox + bootstrap verbs on the coord command group."""
 
@@ -57,7 +68,7 @@ def register_coord_mail_commands(coord: click.Group) -> None:
             # markup=False: a priority like [urgent] is otherwise parsed as a
             # Rich style tag and silently disappears from the output.
             console.print(
-                f"\n[{m.get('priority')}] {m.get('from')} -> {m.get('to')}"
+                f"\n[{m.get('priority')}] {_shown_sender(m)} -> {m.get('to')}"
                 f"  {str(m.get('ts',''))[:19]}",
                 markup=False,
             )
@@ -80,7 +91,7 @@ def register_coord_mail_commands(coord: click.Group) -> None:
         """Recent traffic between any peers."""
         for m in tail(Path(home), count):
             console.print(
-                f"{str(m.get('ts',''))[:19]}  {m.get('from')} -> {m.get('to')}"
+                f"{str(m.get('ts',''))[:19]}  {_shown_sender(m)} -> {m.get('to')}"
                 f"  [{m.get('priority')}] {str(m.get('re',''))[:50]}",
                 markup=False,
             )
@@ -88,17 +99,39 @@ def register_coord_mail_commands(coord: click.Group) -> None:
     @coord.command("bootstrap")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Also create this agent's own mailbox file.")
-    def coord_bootstrap(home, agent):
-        """Create the coordination skeleton. Idempotent, safe to re-run.
+    @click.option(
+        "--estate",
+        default=None,
+        help="Estate identifier. Resolved from cluster.json or the local host when omitted.",
+    )
+    @click.option(
+        "--host",
+        default=None,
+        help="Host to elect for the five lifecycle seats. Defaults to this machine.",
+    )
+    def coord_bootstrap(home, agent, estate, host):
+        """Create the coordination skeleton and the estate's seat plane.
 
-        Nothing else in the codebase creates these directories, which is why a
-        fresh node has no mailbox until someone makes one by hand.
+        Idempotent and create-or-skip: re-running never overwrites a decision
+        the estate has already recorded. Nothing else in the codebase creates
+        any of this, which is why a fresh estate has no mailbox, no seat
+        control plane and no node name until someone makes them by hand.
+
+        Estate-wide items land in the synced tree and are shown relative to
+        it. Host-local items land under XDG config and are shown as absolute
+        paths, so the report itself shows which side of the split each one
+        is on.
         """
-        result = bootstrap(Path(home), agent)
+        result = bootstrap(Path(home), agent, host=host, estate=estate)
+        console.print(
+            f"  estate [bold]{result['estate']}[/bold]"
+            f"  host [bold]{result['host']}[/bold]"
+            f"  node [bold]{result['node']}[/bold]"
+        )
         if result["created"]:
-            console.print(f"  created in [bold]{result['home']}[/bold]:")
+            console.print(f"  created for [bold]{result['home']}[/bold]:")
             for c in result["created"]:
-                console.print(f"    + {c}")
+                console.print(f"    + {c}", markup=False)
         else:
             console.print(f"  nothing to create; [bold]{result['home']}[/bold] already complete")
         if result["mailbox"]:

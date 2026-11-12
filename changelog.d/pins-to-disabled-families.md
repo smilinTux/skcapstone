@@ -1,0 +1,1 @@
+Fleet route resolution ignores a family pin (for example codex-only) while that family is disabled in the production policy, so the card routes through its logical sk-* bucket instead of waiting forever. The pin binds again when the family is re-enabled.

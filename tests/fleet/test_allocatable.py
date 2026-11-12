@@ -16,6 +16,24 @@ def test_allocatable_floors() -> None:
     assert capacity.allocatable(tiny) == {"cores": 1, "ram_gb": 0.0, "disk_gb": 0.0}
 
 
+def test_admit_headroom_fails_closed_on_memory_and_swap() -> None:
+    ok = "MemAvailable: 4000000 kB\nSwapTotal: 2000000 kB\nSwapFree: 1000000 kB\n"
+    assert capacity.admit_headroom(ok)[0] is True
+    assert (
+        capacity.admit_headroom(
+            "MemAvailable: 100 kB\nSwapTotal: 2000000 kB\nSwapFree: 1000000 kB\n"
+        )[1]
+        == "unsafe-memory"
+    )
+    assert (
+        capacity.admit_headroom(
+            "MemAvailable: 4000000 kB\nSwapTotal: 2000000 kB\nSwapFree: 10 kB\n"
+        )[1]
+        == "unsafe-swap"
+    )
+    assert capacity.admit_headroom("MemTotal: 1 kB\n")[0] is False
+
+
 def test_node_report_carries_allocatable(paths, monkeypatch) -> None:
     monkeypatch.setattr("skcapstone.fleet.sknoded.node_capacity", lambda: dict(CAP))
     sknoded.run_once(paths, "node-41")

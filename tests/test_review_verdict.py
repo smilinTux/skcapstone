@@ -22,25 +22,40 @@ _SUCCESSFUL_CI = (
     ("ci_check_gitleaks", "SUCCESS", "2026-08-28T03:01:00"),
     ("ci_check_lint", "SUCCESS", "2026-08-28T03:01:00"),
     ("ci_check_shim_imports", "SUCCESS", "2026-08-28T03:01:00"),
-    ("ci_check_python311", "SUCCESS", "2026-08-28T03:01:00"),
     ("ci_check_python312", "SUCCESS", "2026-08-28T03:01:00"),
 )
 
 
-def _home(tmp_path, card_id, title, links=()):
+def _home(tmp_path, card_id, title, links=(), meta=None, labels=(), core_links=None):
     card = tmp_path / "cards" / card_id
     card.mkdir(parents=True)
-    (card / "core.json").write_text(json.dumps({"title": title}))
+    (card / "core.json").write_text(
+        json.dumps(
+            {
+                "title": title,
+                "meta": meta or {},
+                "initial_labels": list(labels),
+                "links": core_links or {},
+            }
+        )
+    )
     ev = tmp_path / "coordination" / "card_events"
     ev.mkdir(parents=True)
-    rows = [
-        # the REAL shape the evidence store writes: link_key / link_value.
-        # Fixtures using key/value passed while the module was broken.
-        json.dumps(
-            {"card_id": card_id, "action": "link", "link_key": k, "link_value": v, "ts": ts}
+    rows = []
+    for link in links:
+        k, v, ts, *writer = link
+        rows.append(
+            json.dumps(
+                {
+                    "card_id": card_id,
+                    "action": "link",
+                    "link_key": k,
+                    "link_value": v,
+                    "ts": ts,
+                    "writer": writer[0] if writer else "fixture-writer",
+                }
+            )
         )
-        for k, v, ts in links
-    ]
     (ev / "host.jsonl").write_text("\n".join(rows))
     return tmp_path
 
@@ -87,16 +102,67 @@ def test_terminal_pass_with_complete_ci_satisfies_it(tmp_path):
     validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
 
 
+def test_node_review_accepts_complete_hosted_checks_at_exact_head(tmp_path):
+    head = "7" * 40
+    home = _home(
+        tmp_path,
+        "bbbbbbbb",
+        "[X][REVIEW] review",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00"),
+            ("hosted_checks", f"6/6 SUCCESS at exact head {head}", "2026-08-28T03:01:00"),
+        ],
+        meta={
+            "repository": "https://github.com/smilinTux/skgateway",
+            "link_head_revision": head,
+        },
+    )
+    validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
+
+
+@pytest.mark.parametrize(
+    "hosted_checks",
+    [
+        None,
+        "5/6 SUCCESS at exact head {head}",
+        "6/6 PENDING at exact head {head}",
+        "6/6 SUCCESS at exact head " + "8" * 40,
+    ],
+)
+def test_node_review_fails_closed_without_complete_exact_head_checks(tmp_path, hosted_checks):
+    head = "7" * 40
+    links = [("verdict", "PASS", "2026-08-28T03:00:00")]
+    if hosted_checks is not None:
+        links.append(
+            (
+                "hosted_checks",
+                hosted_checks.format(head=head),
+                "2026-08-28T03:01:00",
+            )
+        )
+    home = _home(
+        tmp_path,
+        "bbbbbbbb",
+        "[X][REVIEW] review",
+        links,
+        meta={
+            "repository": "https://github.com/smilinTux/skgateway",
+            "link_head_revision": head,
+        },
+    )
+    with pytest.raises(ValueError, match="hosted checks"):
+        validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
+
+
 @pytest.mark.parametrize("verdict", ["FAIL", "BLOCKED blocked_on=card referent=inc-01"])
-def test_negative_verdict_cannot_terminalize_governed_review(tmp_path, verdict):
+def test_terminal_negative_verdict_satisfies_review_completion(tmp_path, verdict):
     home = _home(
         tmp_path,
         "bbbbbbbb",
         "[X][REREVIEW] review",
         [("verdict", verdict, "2026-08-28T03:00:00")],
     )
-    with pytest.raises(ValueError, match="canonical PASS"):
-        validate_review_completion("bbbbbbbb", "[X][REREVIEW] review", home)
+    validate_review_completion("bbbbbbbb", "[X][REREVIEW] review", home)
 
 
 @pytest.mark.parametrize(
@@ -251,7 +317,6 @@ def test_pass_without_required_ci_links_fails_closed(tmp_path, title):
     )
     with pytest.raises(ValueError, match="not successful") as err:
         validate_review_completion("bbbbbbbb", title, home)
-    assert "ci_check_python311" in str(err.value)
     assert "ci_check_python312" in str(err.value)
 
 
@@ -300,3 +365,77 @@ def test_latest_verdict_is_returned(tmp_path):
         ],
     )
     assert recorded_verdict("eeeeeeee", home) == "PASS"
+
+
+def test_legacy_applicability_receipt_no_longer_substitutes_for_checks(tmp_path):
+    """The source-only receipt branch is gone: a receipt alone completes nothing."""
+    receipt = json.dumps({"type": "source-only-applicability", "governed_pr_ci": False})
+    home = _home(
+        tmp_path,
+        "bbbbbbbb",
+        "[X][REVIEW] review",
+        [
+            ("verdict", "PASS", "2026-08-28T03:00:00"),
+            ("applicability_receipt", receipt, "2026-08-28T03:03:00", "reviewer@example"),
+        ],
+        labels=("source-only",),
+    )
+    with pytest.raises(ValueError, match="not successful"):
+        validate_review_completion("bbbbbbbb", "[X][REVIEW] review", home)
+
+
+def test_pass_with_successful_checks_completes_without_any_receipt(tmp_path):
+    home = _home(
+        tmp_path,
+        "cccccccc",
+        "[X][REVIEW] review",
+        [("verdict", "PASS", "2026-08-28T03:00:00"), *_SUCCESSFUL_CI],
+    )
+    validate_review_completion("cccccccc", "[X][REVIEW] review", home)
+
+
+def test_completion_opens_each_evidence_file_at_most_once(tmp_path, monkeypatch):
+    """One completion is one pass over the evidence store, not one per check."""
+    import builtins
+    from collections import Counter
+
+    from skcapstone import review_verdict
+
+    card_id = "abc12345"
+    home = _home(
+        tmp_path,
+        card_id,
+        "[SKW-X-01][S][REVIEW] Independently review the thing",
+        links=(("verdict", "PASS", "2026-08-28T03:00:00"), *_SUCCESSFUL_CI),
+        meta={
+            "repository": "https://github.com/example/other",
+            "link_head_revision": "a" * 40,
+        },
+    )
+    ev = home / "coordination" / "card_events"
+    for name in ("node-a.jsonl", "node-b.jsonl", "node-c.jsonl"):
+        (ev / name).write_text(
+            json.dumps({"card_id": "other999", "action": "link", "ts": "t"}) + "\n"
+        )
+
+    opened = Counter()
+    real_open = builtins.open
+
+    def counting_open(file, *args, **kwargs):
+        if "card_events" in str(file):
+            opened[str(file)] += 1
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(review_verdict, "open", counting_open, raising=False)
+
+    # Exercise both PASS branches: hosted-checks (raises, no evidence) and CI links.
+    with pytest.raises(ValueError):
+        validate_review_completion(card_id, "[SKW-X-01][S][REVIEW] x", home)
+    assert opened and max(opened.values()) == 1
+
+    opened.clear()
+    core = home / "cards" / card_id / "core.json"
+    core.write_text(json.dumps({"title": "t", "meta": {}}))
+    validate_review_completion(card_id, "[SKW-X-01][S][REVIEW] x", home)
+    assert len(opened) == 4
+    assert max(opened.values()) == 1

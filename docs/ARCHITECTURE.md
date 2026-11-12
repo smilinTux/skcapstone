@@ -35,7 +35,7 @@ depends only on the one below it:
          v
   ┌─────────────┐
   │  SKMemory   │  Storage layer — short/mid/long-term memory tiers,
-  │ (skmemory)  │  SQLite index, ChromaDB vectors, FalkorDB graph
+  │ (skmemory)  │  SQLite index, Postgres vectors, FalkorDB graph
   └─────────────┘
 ```
 
@@ -60,7 +60,7 @@ SKMemory. The CLI `skcapstone chat` and the consciousness loop both use SKChat's
 **SKMemory (storage)** — The single source of truth for all persistent state. All
 other layers store their durable data here (memories, conversation history, FEB
 emotional states, coordination board). Three JSON file tiers (short/mid/long-term)
-are the canonical source; SQLite and ChromaDB are derived indexes rebuilt on demand.
+are the canonical source; SQLite and the Postgres vector index are derived indexes rebuilt on demand.
 
 ---
 

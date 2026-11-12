@@ -17,6 +17,45 @@ from ._common import AGENT_HOME, console
 from ._validators import validate_agent_name, validate_task_id
 
 
+def _emit_status_json(
+    views, label, home_path, tag, parent, status_filter, include_done, limit, cursor
+) -> None:
+    """Print the bounded machine-readable status document (see coord_status_page)."""
+    from ..coord_eligibility import leaf_eligibility_counts
+    from ..coord_status_page import build_page, status_scope
+
+    eligibility = leaf_eligibility_counts(home_path, {v.task.id for v in views})
+    count = lambda name: sum(1 for v in views if v.status.value == name)  # noqa: E731
+    summary = {
+        "total": len(views),
+        "open": count("open"),
+        "claimed": count("claimed"),
+        "in_progress": count("in_progress"),
+        "done": count("done"),
+        "leaf_eligible": eligibility.leaves,
+        "review_needs_identity": eligibility.review,
+        "malformed": eligibility.malformed,
+    }
+    rows = [
+        {
+            "id": v.task.id,
+            "title": v.task.title,
+            "priority": v.task.priority.value,
+            "status": label(v),
+            "claimed_by": v.claimed_by,
+            "tags": v.task.tags,
+        }
+        for v in views
+        if include_done or status_filter == "done" or v.status.value != "done"
+    ]
+    scope = status_scope((*tag,), parent, status_filter)
+    try:
+        page = build_page(rows, limit=limit, cursor=cursor, scope=scope)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps({"format": "json", "summary": summary, **page}, indent=2))
+
+
 def register_coord_commands(main: click.Group) -> None:
     """Register the coord command group."""
 
@@ -27,10 +66,22 @@ def register_coord_commands(main: click.Group) -> None:
             "  coord create --title ... --criteria ...     backlog\n"
             "  coord claim <id> --agent <you>              claimed, moves to ready\n"
             "  coord move <id> doing --agent <you>         doing\n"
-            "  coord link <id> verdict PASS               record the outcome\n"
+            "  coord verdict <id> <outcome> ...           record an outcome with\n"
+            "                                             the candidate bytes bound\n"
+            "  coord link <id> verdict PASS               record a terminal outcome\n"
             "  coord link <id> evidence <path>            record the proof\n"
             "  coord move <id> review --agent <you>       hand to an independent reviewer\n"
-            "  coord complete <id> --agent <you>          done\n"
+            "  coord accept <source_card> --agent <you>   done (see COMPLETION below)\n"
+            "  coord complete <id> --agent <you>          done (cards with no review)\n"
+            "  coord reopen <id> --reason ... --agent ... revive a completed card\n"
+            "\n"
+            "\b\n"
+            "COMPLETION OF A SOURCE CARD\n"
+            "  An independent review PASS on the exact commit, tests green on\n"
+            "  that same commit, and the reviewed code merged on the target\n"
+            "  branch. coord accept checks those facts and closes the source\n"
+            "  card and its review. Builds run in lanes; reviews run in\n"
+            "  reviewer panes.\n"
             "\n"
             "\b\n"
             "COLUMNS\n"
@@ -46,13 +97,13 @@ def register_coord_commands(main: click.Group) -> None:
             "\b\n"
             "  coord link can print success while storing an empty value. Read the\n"
             "  verdict back through the mediated CLI before believing it:\n"
-            "    coord kanban --json\n"
+            "    coord show <id> --json\n"
             "\n"
             "\b\n"
             "WHERE TO LOOK\n"
             "  coord status              board overview\n"
             "  coord kanban              columns, with ITIL\n"
-            "  coord describe <id>       read one card\n"
+            "  coord show <id>           read one card\n"
             "  coord gates <id>          why a card will or will not dispatch\n"
             "  coord briefing            the full protocol for an agent\n"
         )
@@ -66,11 +117,24 @@ def register_coord_commands(main: click.Group) -> None:
         """
 
     from .coord_amend import register_coord_amend_commands
+    from .coord_liveness import register_coord_liveness_command
+
+    register_coord_liveness_command(coord)
+    from .coord_accept import register_coord_accept_command
+
+    register_coord_accept_command(coord)
+    from .coord_historical_pr import register_historical_pr_command
+
+    register_historical_pr_command(coord)
     from .coord_mail_cmd import register_coord_mail_commands
+    from .coord_review_work import register_coord_review_work
+    from .coord_workspace_recovery import register_coord_workspace_recovery
     from .portfolio_plan_cmd import register_portfolio_plan_command
 
     register_coord_amend_commands(coord)
     register_coord_mail_commands(coord)
+    register_coord_review_work(coord)
+    register_coord_workspace_recovery(coord)
     register_portfolio_plan_command(coord)
 
     @coord.command("status")
@@ -100,8 +164,33 @@ def register_coord_commands(main: click.Group) -> None:
         default=False,
         help="List idle/stale agent projections (hidden by default).",
     )
-    def coord_status(home, tag, parent, status_filter, include_done, include_idle_agents):
-        """Show the coordination board overview."""
+    @click.option(
+        "--format",
+        "fmt",
+        default="text",
+        type=click.Choice(["text", "json"]),
+        help="text = Rich board (default); json = one machine-readable document on stdout.",
+    )
+    @click.option(
+        "--limit",
+        default=None,
+        type=int,
+        help="With --format json, return at most this many cards (id order).",
+    )
+    @click.option(
+        "--cursor",
+        default=None,
+        help="With --format json and --limit, continue from a previous next_cursor.",
+    )
+    def coord_status(
+        home, tag, parent, status_filter, include_done, include_idle_agents, fmt, limit, cursor
+    ):
+        """Show the coordination board overview.
+
+        With --format json stdout is exactly one JSON document (summary, a
+        bounded page of cards, has_more and next_cursor); nothing else is
+        written to stdout.
+        """
         from ..coordination import Board
 
         home_path = Path(home).expanduser()
@@ -129,6 +218,22 @@ def register_coord_commands(main: click.Group) -> None:
             views = [v for v in views if wanted & {t.lower() for t in v.task.tags}]
         if status_filter:
             views = [v for v in views if _status_label(v) == status_filter]
+
+        if fmt == "json":
+            _emit_status_json(
+                views,
+                _status_label,
+                home_path,
+                tag,
+                parent,
+                status_filter,
+                include_done,
+                limit,
+                cursor,
+            )
+            return
+        if limit is not None or cursor is not None:
+            raise click.UsageError("--limit and --cursor require --format json")
 
         if not views and (tag or status_filter):
             console.print("\n  [dim]No tasks match the given filters.[/]\n")
@@ -231,6 +336,36 @@ def register_coord_commands(main: click.Group) -> None:
         from ..coord_gate_diagnostic import diagnose
 
         console.print(json.dumps(diagnose(Path(home).expanduser(), task_id), sort_keys=True))
+
+    @coord.command("slice-preflight")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option(
+        "--max-leaves",
+        default=5,
+        show_default=True,
+        type=click.IntRange(2, 5),
+        help="Upper bound on recommended leaf cards.",
+    )
+    def coord_slice_preflight(task_id, home, max_leaves):
+        """Recommend, never perform, decomposition of TASK_ID into leaf cards.
+
+        Report-only preflight over skcapstone.fleet.card_slicing: prints the
+        scope signals, the bounded/advisory/reject decision, any recommended
+        leaves, and the CompositionVerificationContract the parent retains
+        after all leaves complete. It creates and changes nothing; splitting
+        a card stays a human or seat decision made on this evidence.
+        """
+        validate_task_id(task_id)
+        from ..coord_slice_preflight import slice_preflight
+
+        click.echo(
+            json.dumps(
+                slice_preflight(Path(home).expanduser(), task_id, max_leaves=max_leaves),
+                sort_keys=True,
+                indent=2,
+            )
+        )
 
     @coord.command(
         "create",
@@ -396,6 +531,39 @@ def register_coord_commands(main: click.Group) -> None:
     ):
         """Create a new task on the board."""
         from ..coordination import Board, Task, TaskPriority
+        from ..explicit_id_reservation import (
+            assert_available,
+            create_claimed_explicit_task,
+            create_explicit_task,
+            reserve_rejection,
+        )
+
+        request = {
+            "id": task_id,
+            "title": title,
+            "description": desc,
+            "priority": priority,
+            "tags": list(tag),
+            "created_by": by,
+            "acceptance_criteria": list(criteria),
+            "dependencies": list(dep),
+            "producer_identity": producer_identity,
+            "candidate_evidence_sha256": candidate_evidence_sha256,
+            "source_card": source_card,
+            "head_revision": head_revision,
+            "repository": repository,
+            "base_ref": base_ref,
+            "base_revision": base_revision,
+            "claim_for_me": claim_for_me,
+        }
+        home_path = Path(home).expanduser()
+        if task_id:
+            validate_task_id(task_id)
+            try:
+                assert_available(home_path, task_id)
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from None
+        validate_agent_name(by)
 
         labels = {str(value).strip().lower() for value in tag}
         governed_review = "review" in labels or any(
@@ -416,15 +584,18 @@ def register_coord_commands(main: click.Group) -> None:
             if not re.fullmatch(r"[0-9a-fA-F]{40}", str(head_revision or "")):
                 missing.append("head_revision")
             if missing:
-                raise click.ClickException(
-                    "incomplete governed review card; missing: " + ", ".join(missing)
-                )
+                message = "incomplete governed review card; missing: " + ", ".join(missing)
+                if task_id:
+                    reserve_rejection(home_path, task_id, request, by, message)
+                raise click.ClickException(message)
 
         from ..source_binding import source_binding_meta
 
         try:
             binding_meta = source_binding_meta(list(tag), repository, base_ref, base_revision)
         except ValueError as exc:
+            if task_id:
+                reserve_rejection(home_path, task_id, request, by, str(exc))
             raise click.ClickException(str(exc)) from None
 
         meta = {}
@@ -437,13 +608,9 @@ def register_coord_commands(main: click.Group) -> None:
             }
         meta.update(binding_meta)
 
-        validate_agent_name(by)
-        if task_id:
-            validate_task_id(task_id)
         for d in dep:
             validate_task_id(d)
 
-        home_path = Path(home).expanduser()
         board = Board(home_path)
         task = Task(
             **({"id": task_id} if task_id else {}),
@@ -456,10 +623,10 @@ def register_coord_commands(main: click.Group) -> None:
             dependencies=list(dep),
             meta=meta,
         )
-        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
-        authorize_jarvis_entrypoint(
+        authorize_coord_mutation(
             by, Action.CREATE_CARD, task.id, casey_authorization, casey_change_id
         )
         if claim_for_me:
@@ -472,15 +639,48 @@ def register_coord_commands(main: click.Group) -> None:
             if governed_review and owner.strip().lower() != "seraph":
                 raise click.ClickException("governed review cards may be claimed only by Seraph")
             try:
-                path, revision = board.create_claimed_task(task, owner)
+                path, revision = (
+                    create_claimed_explicit_task(board, task, owner, request, by)
+                    if task_id
+                    else board.create_claimed_task(task, owner)
+                )
             except (RuntimeError, ValueError) as exc:
                 raise click.ClickException(str(exc)) from None
             console.print(f"\n  [green]Created and claimed:[/] [{task.id}] {task.title}")
             console.print(f"  [dim]owner={owner} status=doing claim_revision={revision}[/]")
         else:
-            path = board.create_task(task)
+            try:
+                path = (
+                    create_explicit_task(board, task, request, by)
+                    if task_id
+                    else board.create_task(task)
+                )
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from None
             console.print(f"\n  [green]Created:[/] [{task.id}] {task.title}")
-        console.print(f"  [dim]{path}[/]\n")
+        console.print(f"  [dim]{path}[/]")
+
+        # Tell the author NOW if the card is born undispatchable. A card whose
+        # gate is baked into its title can never be released to the fleet, and
+        # the only way that was ever discovered was by someone noticing the
+        # card had sat unclaimed. See docs/fleet/card-authoring-dispatch-gates.md
+        from ..coord_dispatch_gates import blocking, evaluate, permanent
+
+        gates = evaluate(task.title, task.tags)
+        stuck = permanent(gates)
+        held = [g for g in blocking(gates) if g not in stuck]
+        if stuck:
+            console.print("\n  [red]NOT DISPATCHABLE, AND CANNOT BE FIXED:[/]")
+            for g in stuck:
+                console.print(f"    [red]{g.name}[/]: {g.detail}")
+            console.print("  [red]Void this card and recreate it without the title marker.[/]")
+        if held:
+            console.print("\n  [yellow]Held from the fleet until cleared:[/]")
+            for g in held:
+                console.print(f"    [yellow]{g.name}[/]: {g.detail}")
+        if stuck or held:
+            console.print(f"  [dim]full report: skcapstone coord gates {task.id}[/]")
+        console.print()
 
     @coord.command("claim")
     @click.argument("task_id")
@@ -506,50 +706,311 @@ def register_coord_commands(main: click.Group) -> None:
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
-        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
-        authorize_jarvis_entrypoint(
-            agent, Action.CLAIM, task_id, casey_authorization, casey_change_id
+        authorize_coord_mutation(
+            agent,
+            Action.CLAIM,
+            task_id,
+            casey_authorization,
+            casey_change_id,
+            home=home_path,
         )
         board = Board(home_path)
         try:
+            from ..fleet.churn_breaker import assert_claim_permitted
+            from ..human_wait import assert_human_claim
             from ..review_admission import assert_governed_review_claim
 
+            # All three asserts sit HERE, in front of Board.claim_task,
+            # because Board.claim_task has no gate of its own: it takes a card
+            # id and claims it. The human gate exists in the rotate pool's
+            # selection only, so every caller that names an id walks past it,
+            # which is how 83e498b6 took 58 claims while held for Chef.
+            # Order is deliberate and cheapest-refusal-first: a card held for
+            # the operator can never be claimed by anyone, a governed review
+            # can only be claimed by its seat, and only then do we ask whether
+            # this particular card has been churning.
+            assert_human_claim(home_path, task_id, agent)
             assert_governed_review_claim(home_path, task_id, agent)
+            assert_claim_permitted(home_path, task_id, agent)
             ag = board.claim_task(agent, task_id, force=force)
             console.print(f"\n  [green]Claimed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
         except ValueError as e:
             console.print(f"\n  [red]Error:[/] {e}\n")
             sys.exit(1)
 
+    @coord.command("waiting-on-human")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON.")
+    @click.option("--limit", "-n", default=0, type=int, help="Show at most N rows (0 = all).")
+    @click.option(
+        "--sync-gtd",
+        is_flag=True,
+        default=False,
+        help="Upsert each row as a GTD waiting-for through the gtd-ingest port.",
+    )
+    def coord_waiting_on_human(home, as_json, limit, sync_gtd):
+        """List the cards that only the operator can move.
+
+        A card whose worker recorded blocked_on=human, or which carries the
+        human-gate marking, is held for a person and is no longer dispatched.
+        Held and unseen is the same as lost, so this is the queue.
+
+        --sync-gtd files each row into the unified GTD as a waiting-for, keyed
+        on (coord-human, <card_id>), so re-running reconciles rather than
+        duplicates. It is not a second list: the unified GTD is where the
+        operator's waiting-fors already live.
+        """
+        from ..human_wait import sync_gtd as sync_gtd_rows
+        from ..human_wait import waiting_on_human
+
+        home_path = Path(home).expanduser()
+        rows = waiting_on_human(home_path)
+        shown = rows[:limit] if limit > 0 else rows
+
+        synced: list[tuple[str, str, str]] = []
+        if sync_gtd:
+            try:
+                synced = sync_gtd_rows(home_path, shown)
+            except ImportError as exc:
+                raise click.ClickException(
+                    f"the gtd-ingest port is unavailable ({exc}); install skos to sync"
+                ) from None
+
+        if as_json:
+            console.print(
+                json.dumps(
+                    {
+                        "waiting": [row.as_dict() for row in shown],
+                        "total": len(rows),
+                        "synced": [
+                            {"card_id": cid, "item_id": iid, "action": act}
+                            for cid, iid, act in synced
+                        ],
+                    },
+                    sort_keys=True,
+                )
+            )
+            return
+
+        if not rows:
+            console.print("\n  [green]Nothing is waiting on a person.[/]\n")
+            return
+
+        table = Table(title=f"Waiting on human ({len(rows)})")
+        table.add_column("card", style="cyan")
+        table.add_column("waited", justify="right")
+        table.add_column("needs")
+        table.add_column("system")
+        table.add_column("unblocks", justify="right")
+        table.add_column("title")
+        for row in shown:
+            table.add_row(
+                row.card_id,
+                f"{row.waited_hours:.0f}h",
+                row.needs or f"({row.source})",
+                row.system or "-",
+                str(len(row.unblocks)) if row.unblocks else "-",
+                row.title[:60],
+            )
+        console.print()
+        console.print(table)
+        if limit > 0 and len(rows) > len(shown):
+            console.print(f"  [dim]... {len(rows) - len(shown)} more[/]")
+        for cid, _item, action in synced:
+            console.print(f"  [dim]gtd {action}: {cid}[/]")
+        console.print()
+
     @coord.command("complete")
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", required=True, help="Agent name completing the task.")
+    @click.option("--expected-source-revision", help="Optional exact native card snapshot digest.")
+    @click.option("--expected-claim-revision", help="Optional exact owned claim generation.")
+    @click.option(
+        "--review-card", help="Guarded source completion: exact completed independent review."
+    )
+    @click.option(
+        "--expected-review-revision", help="Guarded source completion: exact review snapshot."
+    )
     @click.option("--casey-authorization", type=click.Path(path_type=Path))
     @click.option("--casey-change-id")
-    def coord_complete(task_id, home, agent, casey_authorization, casey_change_id):
+    def coord_complete(
+        task_id,
+        home,
+        agent,
+        casey_authorization,
+        casey_change_id,
+        expected_source_revision,
+        expected_claim_revision,
+        review_card,
+        expected_review_revision,
+    ):
         """Mark a task as completed."""
         validate_task_id(task_id)
         validate_agent_name(agent)
 
         home_path = Path(home).expanduser()
-        from ..coord_completion import complete_coord_task
-        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from contextlib import ExitStack
+
+        from ..coord_completion import (
+            complete_coord_task,
+            owned_revision_guard,
+            reviewed_source_guard,
+            unclaimed_review_revision_guard,
+        )
+        from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
-        authorize_jarvis_entrypoint(
+        authorize_coord_mutation(
             agent, Action.COMPLETE_CARD, task_id, casey_authorization, casey_change_id
         )
 
+        from ..coord_completion import GATED_EXIT_CODE, GatesPending
+
         try:
-            ag = complete_coord_task(home_path, agent, task_id)
+            guards = (expected_source_revision, expected_claim_revision)
+            review_guards = (review_card, expected_review_revision)
+            unclaimed_reviewed = bool(
+                expected_source_revision and expected_claim_revision is None and all(review_guards)
+            )
+            unclaimed_review_terminal = bool(
+                expected_source_revision
+                and expected_claim_revision is None
+                and not any(review_guards)
+            )
+            if (
+                any(value is not None for value in guards)
+                and not all(guards)
+                and not unclaimed_reviewed
+                and not unclaimed_review_terminal
+            ):
+                raise ValueError("guarded completion requires both revisions")
+            if any(value is not None for value in review_guards) and not all(review_guards):
+                raise ValueError("guarded review completion requires both review guards")
+            if any(value is not None for value in review_guards) and not (
+                all(guards) or unclaimed_reviewed
+            ):
+                raise ValueError("guarded review completion requires a source revision guard")
+            if unclaimed_review_terminal:
+                from ..card_store import CardStore
+                from ..review_verdict import is_review_card
+
+                card = CardStore(home_path).fold(task_id)
+                if card is None or not is_review_card(card.title):
+                    raise ValueError("unclaimed terminal review completion requires a review card")
+            if all(guards) or unclaimed_reviewed or unclaimed_review_terminal:
+                guard = (
+                    owned_revision_guard(home_path, agent, task_id, *guards)
+                    if all(guards)
+                    else unclaimed_review_revision_guard(
+                        home_path, task_id, expected_source_revision
+                    )
+                )
+                with ExitStack() as stack:
+                    related = (
+                        reviewed_source_guard(home_path, task_id, *review_guards, stack)
+                        if all(review_guards)
+                        else None
+                    )
+                    result = complete_coord_task(
+                        home_path,
+                        agent,
+                        task_id,
+                        precondition=guard,
+                        mutation_precondition=related,
+                    )
+            else:
+                result = complete_coord_task(home_path, agent, task_id)
         except ValueError as e:
             console.print(f"\n  [red]Error:[/] {e}\n")
             sys.exit(1)
+
+        if isinstance(result, GatesPending):
+            console.print(f"\n  [yellow]Awaiting gates:[/] [{task_id}] not completed\n")
+            for gate in result.outstanding:
+                console.print(f"    - {gate.get('gate')} (owner: {gate.get('owner')})")
+            console.print()
+            # GATED_EXIT_CODE, distinct from the 0 a caller reads as "closed"
+            # and the 1 an actual error already uses on this command. A caller
+            # that only checks returncode == 0 must not be able to mistake a
+            # gated, still-open card for a completion; a script that wants to
+            # treat gated as fine can check for this exact code instead of
+            # guessing.
+            sys.exit(GATED_EXIT_CODE)
+
         # board.complete_task() automatically mints Joules via _mint_joules_for_task
-        console.print(f"\n  [green]Completed:[/] [{task_id}] by [bold]{ag.agent}[/]\n")
+        console.print(f"\n  [green]Completed:[/] [{task_id}] by [bold]{result.agent}[/]\n")
+
+    @coord.command("reopen")
+    @click.argument("task_id")
+    @click.option("--reason", required=True, help="Why the completed card must resume.")
+    @click.option("--agent", required=True, help="Audited reopen actor.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--casey-authorization", type=click.Path(path_type=Path))
+    @click.option("--casey-change-id")
+    def coord_reopen(task_id, reason, agent, home, casey_authorization, casey_change_id):
+        """Revive one unowned, unarchived terminal card to backlog."""
+        validate_task_id(task_id)
+        validate_agent_name(agent)
+        if not reason.strip():
+            raise click.ClickException("a reopen reason is required")
+
+        from ..coord_reopen import reopen_card
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(
+            agent,
+            Action.MOVE_CARD,
+            f"{task_id}:reopen",
+            casey_authorization,
+            casey_change_id,
+        )
+        try:
+            event = reopen_card(Path(home).expanduser(), task_id, reason, agent)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(
+            f"\n  [green]Reopened:[/] [{task_id}] to backlog by [bold]{agent}[/]\n"
+            f"  [dim]event_id {event.get('event_id')}[/]\n"
+        )
+
+    @coord.command("satisfy-gate")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--gate", "gate_name", required=True, help="Exit gate name to satisfy.")
+    @click.option("--agent", required=True, help="Seat satisfying the gate.")
+    def coord_satisfy_gate(task_id, home, gate_name, agent):
+        """Record one exit gate as satisfied by its owning seat.
+
+        Rejects a gate name that is not in the card's exit_gates. Satisfying
+        an already-satisfied gate is not an error and appends nothing.
+        """
+        validate_task_id(task_id)
+        validate_agent_name(agent)
+
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent, Action.SATISFY_GATE, task_id, None, None)
+        home_path = Path(home).expanduser()
+        from ..coord_completion import satisfy_gate
+
+        try:
+            appended = satisfy_gate(home_path, task_id, gate_name, agent)
+        except ValueError as e:
+            console.print(f"\n  [red]Error:[/] {e}\n")
+            sys.exit(1)
+
+        if appended:
+            console.print(
+                f"\n  [green]Gate satisfied:[/] [{task_id}] {gate_name} by [bold]{agent}[/]\n"
+            )
+        else:
+            console.print(f"\n  [yellow]Already satisfied:[/] [{task_id}] {gate_name}\n")
 
     @coord.command("release-claim")
     @click.argument("task_id")
@@ -560,29 +1021,78 @@ def register_coord_commands(main: click.Group) -> None:
         help="Exact current claim revision. A newer generation is never released.",
     )
     @click.option("--agent", required=True, help="Audited release actor.")
+    @click.option(
+        "--abandon-reason",
+        default=None,
+        help=(
+            "Why the worker stopped: criteria-unsatisfiable, dependency-unsatisfied, "
+            "capability-missing, error, superseded, not-abandoned. Use not-abandoned "
+            "when the release follows a durable finish, not a stoppage. Omit and it "
+            "records unspecified."
+        ),
+    )
+    @click.option(
+        "--release-finished-work",
+        "release_finished_work",
+        is_flag=True,
+        help=(
+            "Operator override: release a claim whose holder already recorded a "
+            "PASS* verdict for it. Requires --reason; refused for production workers."
+        ),
+    )
+    @click.option("--reason", default=None, help="Required with --release-finished-work.")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
-    def coord_release_claim(task_id, owner, expected_claim_revision, agent, home):
+    def coord_release_claim(
+        task_id,
+        owner,
+        expected_claim_revision,
+        agent,
+        abandon_reason,
+        release_finished_work,
+        reason,
+        home,
+    ):
         """Release one exact claim generation without completing the task."""
+        import uuid
+
         from skcoord.card_store import (
             CardStore,
             card_mutation_lock,
             current_claim_precondition,
-            mirror_coord_release,
         )
         from skcoord.coordination import _board_mutation_lock
 
         from ..coordination import Board
+        from ..review_admission import governed_review_metadata
 
         validate_task_id(task_id)
         validate_agent_name(owner)
         validate_agent_name(agent)
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        home_path = Path(home).expanduser()
+        authorize_coord_mutation(agent, Action.RELEASE, task_id, None, None, home=home_path)
         if not str(expected_claim_revision).strip():
             raise click.ClickException("expected claim revision must not be empty")
-        home_path = Path(home).expanduser()
         board = Board(home_path)
         try:
             with _board_mutation_lock(home_path), card_mutation_lock(home_path, task_id):
                 current_revision = current_claim_precondition(home_path, task_id, owner)
+                current_card = CardStore(home_path).fold(task_id)
+                restore_review = bool(
+                    current_revision is not None
+                    and current_card is not None
+                    and governed_review_metadata(
+                        {
+                            "title": current_card.title,
+                            "description": current_card.description,
+                            "links": current_card.links,
+                            "meta": current_card.meta,
+                        },
+                        current_card.labels,
+                    )
+                )
                 if current_revision != expected_claim_revision:
                     exact_replay = current_revision is None and any(
                         event.get("action") == "release_claim"
@@ -596,14 +1106,35 @@ def register_coord_commands(main: click.Group) -> None:
                             f"{expected_claim_revision}, current {current_revision}"
                         )
                 owner_projection = board.load_agent(owner)
+                override_audit = None
                 if current_revision is not None:
-                    mirror_coord_release(
+                    from ..release_guard import require_release_allowed
+
+                    override_audit = require_release_allowed(
                         home_path,
                         task_id,
                         owner,
-                        agent,
-                        expected_claim_revision,
+                        current_revision,
+                        override=release_finished_work,
+                        reason=reason,
                     )
+                if current_revision is not None:
+                    # Inlined from skcoord.card_store.mirror_coord_release, which
+                    # does not accept abandon_reason. This is the one CardStore
+                    # write the dispatcher and CLI callers share, so it is the
+                    # place a real reason (or an honest unspecified) lands.
+                    CardStore(home_path).append_event(
+                        task_id,
+                        "release_claim",
+                        agent,
+                        released_owner=owner,
+                        expected_claim_revision=expected_claim_revision,
+                        transition_id=uuid.uuid4().hex,
+                        abandon_reason=abandon_reason,
+                        **(override_audit or {}),
+                    )
+                    if restore_review:
+                        CardStore(home_path).append_event(task_id, "move", agent, column="review")
                 released = CardStore(home_path).fold(task_id)
                 if released is None or released.owner is not None:
                     raise ValueError(f"CardStore release readback failed for {task_id}")
@@ -620,6 +1151,88 @@ def register_coord_commands(main: click.Group) -> None:
         outcome = "Released" if changed else "Already released"
         console.print(f"\n  [green]{outcome} claim on {task_id} owned by {owner}.[/]\n")
 
+    @coord.command("retire-ownerless-projection")
+    @click.argument("task_id")
+    @click.option("--projection-agent", required=True)
+    @click.option("--expected-card-sha256", required=True)
+    @click.option("--expected-projection-sha256", required=True)
+    @click.option("--agent", required=True, help="Audited retirement actor.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_retire_ownerless_projection(
+        task_id,
+        projection_agent,
+        expected_card_sha256,
+        expected_projection_sha256,
+        agent,
+        home,
+    ):
+        """Reversibly quarantine one exact stale ownerless projection."""
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent, Action.MAINTAIN_BOARD, task_id, None, None)
+        from ..projection_retirement import retire_projection
+
+        validate_task_id(task_id)
+        validate_agent_name(projection_agent)
+        validate_agent_name(agent)
+        try:
+            receipt = retire_projection(
+                Path(home).expanduser(),
+                task_id=task_id,
+                projection_agent=projection_agent,
+                expected_card_sha256=expected_card_sha256,
+                expected_projection_sha256=expected_projection_sha256,
+                actor=agent,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(
+            json.dumps(
+                {
+                    "projection_agent": receipt.projection_agent,
+                    "quarantined_path": str(receipt.quarantined_path),
+                    "projection_sha256": receipt.projection_sha256,
+                    "receipt_sha256": receipt.receipt_sha256,
+                },
+                indent=2,
+            )
+        )
+
+    @coord.command("restore-retired-projection")
+    @click.argument("projection_agent")
+    @click.option("--expected-quarantine-sha256", required=True)
+    @click.option("--expected-receipt-sha256", required=True)
+    @click.option("--agent", required=True, help="Audited restore actor.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    def coord_restore_retired_projection(
+        projection_agent,
+        expected_quarantine_sha256,
+        expected_receipt_sha256,
+        agent,
+        home,
+    ):
+        """Restore one exact hash-fenced retired projection."""
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent, Action.MAINTAIN_BOARD, projection_agent, None, None)
+        from ..projection_retirement import restore_projection
+
+        validate_agent_name(projection_agent)
+        validate_agent_name(agent)
+        try:
+            restored = restore_projection(
+                Path(home).expanduser(),
+                projection_agent=projection_agent,
+                expected_quarantine_sha256=expected_quarantine_sha256,
+                expected_receipt_sha256=expected_receipt_sha256,
+                actor=agent,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(json.dumps({"restored_path": str(restored)}, indent=2))
+
     @coord.command("score")
     @click.argument("task_id")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
@@ -634,6 +1247,10 @@ def register_coord_commands(main: click.Group) -> None:
         from ..coordination import Board
 
         validate_task_id(task_id)
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation("coord-score", Action.SCORE_CARD, task_id, None, None)
         home_path = Path(home).expanduser()
         board = Board(home_path)
         try:
@@ -691,27 +1308,55 @@ def register_coord_commands(main: click.Group) -> None:
         default=False,
         help="Emit the grid as JSON instead of a text summary.",
     )
-    def coord_kanban(home, html_out, as_json):
+    @click.option(
+        "--include-archived",
+        is_flag=True,
+        default=False,
+        help="Include cards archived off the active board (full historical scope).",
+    )
+    def coord_kanban(home, html_out, as_json, include_archived):
         """Unified kanban board over coord tasks and ITIL tickets.
 
         Columns are the shared lifecycle (backlog, ready, doing, review, done);
         swimlanes are the card kind (feature, bug, security, expedite, change,
-        problem). Reads both stores read-only.
+        problem). Reads both stores read-only. Archived cards (card 2f054aa5)
+        are excluded from the active view unless --include-archived is passed.
         """
         import json as _json
 
         from ..card import COLUMN_ORDER, LANE_ORDER, KanbanBoard, render_html
+        from ..coordination import Board
 
         home_path = Path(home).expanduser()
         kb = KanbanBoard(home_path)
+
+        if include_archived:
+            grid = {lane: {col: [] for col in COLUMN_ORDER} for lane in LANE_ORDER}
+            for c in kb.cards(include_archived=True):
+                if c.meta.get("voided"):
+                    continue  # voided cards never return to any board view
+                lane = c.swimlane if c.swimlane in LANE_ORDER else "feature"
+                grid[lane][c.status.value].append(c)
+            for cells in grid.values():
+                for col in cells.values():
+                    col.sort(key=lambda c: (c.order if c.order else 9999, c.id))
+        else:
+            grid = kb.grid()
+            archived = Board(home_path).archived_ids()
+            if archived:
+                grid = {
+                    lane: {
+                        col: [c for c in grid[lane][col] if c.id not in archived]
+                        for col in grid[lane]
+                    }
+                    for lane in grid
+                }
 
         if html_out:
             out = Path(html_out).expanduser()
             out.write_text(render_html(kb), encoding="utf-8")
             console.print(f"\n  [green]Kanban board written to {out}[/]\n")
             return
-
-        grid = kb.grid()
         if as_json:
             payload = {
                 lane: {col: [c.model_dump() for c in grid[lane][col]] for col in COLUMN_ORDER}
@@ -747,7 +1392,10 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_archive_done(home, days, dry_run):
         """Age done tasks off the active board (default: older than 14 days)."""
         from ..coordination import Board
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
 
+        authorize_coord_mutation("archive-done", Action.MAINTAIN_BOARD, "board", None, None)
         home_path = Path(home).expanduser()
         board = Board(home_path)
         ids = board.archive_done_tasks(older_than_days=days, dry_run=dry_run)
@@ -768,7 +1416,10 @@ def register_coord_commands(main: click.Group) -> None:
     def coord_age_backlog(home, days, dry_run):
         """Archive ancient unclaimed open tasks (default: older than 90 days)."""
         from ..coordination import Board
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
 
+        authorize_coord_mutation("age-backlog", Action.MAINTAIN_BOARD, "board", None, None)
         home_path = Path(home).expanduser()
         board = Board(home_path)
         ids = board.age_stale_open(older_than_days=days, dry_run=dry_run)
@@ -789,6 +1440,10 @@ def register_coord_commands(main: click.Group) -> None:
         Idempotent and additive (Phase 4). Nothing reads the CardStore until
         SKCOORD_CARD_STORE=1. Reversible: rm ~/.skcapstone/cards to undo.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation("import", Action.MAINTAIN_BOARD, "board", None, None)
         from ..card_store import import_from_legacy
 
         home_path = Path(home).expanduser()
@@ -835,10 +1490,10 @@ def register_coord_commands(main: click.Group) -> None:
         )
         if par["open_alert"]:
             console.print(
-                f"  [bold red]PARITY ALERT: store-served open-count diverges "
-                f"from legacy by {par['open_drift']} "
-                f"(> {par['open_drift_threshold']}). Run 'coord migrate' then "
-                f"'coord reconcile --apply' to converge.[/]"
+                f"  [bold red]PARITY ALERT: comparable open-count diverges "
+                f"by {par['open_drift']} (> {par['open_drift_threshold']}). "
+                f"No automatic remediation is safe. Inspect the named fields "
+                f"and choose the authoritative direction explicitly.[/]"
             )
         for m in par["mismatches"][:show]:
             console.print(f"    [yellow]{m['id']}[/]: {m['diff']}")
@@ -890,6 +1545,10 @@ def register_coord_commands(main: click.Group) -> None:
         and reported rather than dragged backward to match a lagging legacy
         projection. Use --allow-uncomplete to override.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation("reconcile", Action.MAINTAIN_BOARD, "board", None, None)
         from ..card_store import reconcile_from_legacy
 
         home_path = Path(home).expanduser()
@@ -964,6 +1623,10 @@ def register_coord_commands(main: click.Group) -> None:
         into a synthetic 'legacy-export' agent for entries that predate
         dual-write and therefore have no per-event owner anywhere.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation("export-legacy", Action.MAINTAIN_BOARD, "board", None, None)
         from ..card_store import export_to_legacy
 
         home_path = Path(home).expanduser()
@@ -1005,7 +1668,10 @@ def register_coord_commands(main: click.Group) -> None:
         per-writer archive index to restore. Also prunes stale lock files.
         """
         from ..coordination import Board
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
 
+        authorize_coord_mutation("coord-maintain", Action.MAINTAIN_BOARD, "board", None, None)
         home_path = Path(home).expanduser()
         board = Board(home_path)
         done = board.archive_done_tasks(older_than_days=done_days, dry_run=dry_run)
@@ -1034,16 +1700,17 @@ def register_coord_commands(main: click.Group) -> None:
         """Move a card to a kanban column (backlog/ready/doing/review/done)."""
         home_path = Path(home).expanduser()
         from ..coord_completion import move_coord_task
-        from ..jarvis_emergency import authorize_jarvis_entrypoint
+        from ..jarvis_emergency import authorize_coord_mutation
         from ..seat_boundaries import Action
 
         actor = agent or "coord-move"
-        authorize_jarvis_entrypoint(
+        authorize_coord_mutation(
             actor,
             Action.MOVE_CARD,
             f"{task_id}:{column}",
             casey_authorization,
             casey_change_id,
+            home=home_path,
         )
 
         try:
@@ -1071,24 +1738,38 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--repair", is_flag=True, default=False)
     @click.option("--agent", default="coord-reconcile", help="Receipt writer identity.")
     @click.option("--stale-seconds", default=3600, type=click.IntRange(min=0))
-    def coord_reconcile_agents(home, repair, agent, stale_seconds):
+    @click.option(
+        "--task-id",
+        "task_ids",
+        multiple=True,
+        help="Limit audit/repair to exact card IDs; repeat for a reviewed set.",
+    )
+    def coord_reconcile_agents(home, repair, agent, stale_seconds, task_ids):
         """Audit agent projection drift and optionally repair it explicitly."""
         import json
 
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent, Action.MAINTAIN_BOARD, "board", None, None)
         from skcoord.lifecycle import audit_lifecycle, repair_lifecycle
 
         home_path = Path(home).expanduser()
         try:
+            for task_id in task_ids:
+                validate_task_id(task_id)
+            scope = set(task_ids) or None
             if repair:
                 receipt = repair_lifecycle(
                     home_path,
                     actor=agent,
                     stale_after_seconds=stale_seconds,
+                    task_ids=scope,
                 )
                 payload = receipt.to_dict()
                 payload["receipt_path"] = str(receipt.receipt_path)
             else:
-                payload = audit_lifecycle(home_path).to_dict()
+                payload = audit_lifecycle(home_path, task_ids=scope).to_dict()
         except (OSError, RuntimeError, ValueError) as exc:
             raise click.ClickException(str(exc)) from None
         console.print(json.dumps(payload, indent=2))
@@ -1103,34 +1784,127 @@ def register_coord_commands(main: click.Group) -> None:
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
     def coord_label(task_id, label, home, remove, agent):
         """Add (or remove) a label on a card."""
-        from ..card import CardEvent, CardEventLog
+        from ..card import CardEvent
+        from ..coord_card_mutations import append_coord_annotation
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
 
+        authorize_coord_mutation(agent or "", Action.LABEL_CARD, task_id, None, None)
         home_path = Path(home).expanduser()
         action = "remove_label" if remove else "add_label"
-        CardEventLog(home_path).append(
-            CardEvent(card_id=task_id, action=action, label=label, writer=agent or "")
-        )
+        try:
+            append_coord_annotation(
+                home_path,
+                CardEvent(card_id=task_id, action=action, label=label, writer=agent or ""),
+            )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
         verb = "Removed" if remove else "Added"
         console.print(f"\n  [green]{verb} label '{label}' on {task_id}.[/]\n")
 
-    @coord.command("describe")
+    @coord.command("show")
+    @click.argument("task_id")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--json", "as_json", is_flag=True, default=False, help="Emit the card as JSON.")
+    def coord_show(task_id, home, as_json):
+        """Print one folded card: status, column, labels, links, assignment.
+
+        Read-only. This is the single-card counterpart to ``kanban``: without it
+        the only way to read one card was to render the entire board and filter
+        it, which on a 7k-card store means megabytes of JSON to answer a question
+        about one id.
+        """
+        home_path = Path(home).expanduser()
+
+        card = None
+        try:
+            from skcoord.card_store import CardStore, card_store_read_enabled
+
+            if card_store_read_enabled():
+                card = CardStore(home_path).fold(task_id)
+        except Exception:
+            card = None
+
+        if card is None:
+            # Mirror kanban's own fallback so show and kanban never disagree.
+            from ..card import KanbanBoard
+
+            card = next(
+                (
+                    c
+                    for c in KanbanBoard(home_path).cards(include_archived=True)
+                    if c.id == task_id
+                ),
+                None,
+            )
+
+        if card is None:
+            raise click.ClickException(f"No card {task_id} in {home_path}.")
+
+        payload = card.model_dump(mode="json")
+        if as_json:
+            click.echo(json.dumps(payload, indent=2, default=str))
+            return
+
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Field", style="bold")
+        table.add_column("Value", overflow="fold")
+        for key in (
+            "id",
+            "title",
+            "kind",
+            "column",
+            "status",
+            "swimlane",
+            "assignee",
+            "priority",
+            "labels",
+            "links",
+            "archived",
+            "description",
+        ):
+            if key not in payload:
+                continue
+            value = payload[key]
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, (list, dict)):
+                value = json.dumps(value, default=str)
+            table.add_row(key, str(value))
+        console.print()
+        console.print(Panel(table, title=f"Card {task_id}", border_style="bright_blue"))
+        console.print()
+
+    @coord.command("edit")
     @click.argument("task_id")
     @click.option("--title", default=None, help="New card title.")
     @click.option("--description", default=None, help="New card description.")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
-    def coord_describe(task_id, title, description, home, agent):
+    def coord_edit(task_id, title, description, home, agent):
         """Edit a card's title/description (folded, never rewrites core.json).
 
         Birth facts stay write-once: the edit is one appended event, so it is
         attributed to its writer and reversed by describing again. Only the
         options you pass are changed; pass an empty string to clear a field.
         """
+        actor = agent or "coord-edit"
+
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(actor, Action.DESCRIBE_CARD, task_id, None, None)
+
+        from ..describe_guard import DegenerateTitleError, check_title
+
+        try:
+            check_title(title)
+        except DegenerateTitleError as exc:
+            raise click.ClickException(str(exc)) from exc
         from ..card import CardEvent, CardEventLog
 
         if title is None and description is None:
             raise click.UsageError("Pass --title and/or --description.")
-
         home_path = Path(home).expanduser()
         try:
             CardEventLog(home_path).append(
@@ -1139,14 +1913,14 @@ def register_coord_commands(main: click.Group) -> None:
                     action="describe",
                     title=title,
                     description=description,
-                    writer=agent or "",
+                    writer=actor,
                 )
             )
             from ..card_store import card_store_write_enabled, mirror_coord_describe
 
             if card_store_write_enabled():
                 mirror_coord_describe(
-                    home_path, task_id, agent or "", title=title, description=description
+                    home_path, task_id, actor, title=title, description=description
                 )
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
@@ -1154,6 +1928,47 @@ def register_coord_commands(main: click.Group) -> None:
             k for k, v in (("title", title), ("description", description)) if v is not None
         )
         console.print(f"\n  [green]Described {task_id} ({changed}).[/]\n")
+
+    @coord.command("describe")
+    @click.argument("task_id")
+    @click.option("--title", default=None, help="New card title.")
+    @click.option("--description", default=None, help="New card description.")
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", default=None, help="Writer name (defaults to host).")
+    @click.pass_context
+    def coord_describe(ctx, task_id, title, description, home, agent):
+        """Deprecated alias for ``edit``. Use ``coord edit`` instead.
+
+        Everywhere else a CLI says "describe" it reads (kubectl, aws, docker),
+        so this name reliably reads as the way to look at a card. It is a write:
+        it appends a describe event that changes the title or description. The
+        read command is ``coord show``. Kept as an alias so existing scripts and
+        agent instructions keep working, but it warns.
+        """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        # This alias is itself a mutation entrypoint, so it consults the gate
+        # here rather than relying on the one inside coord_edit. The check is a
+        # pure policy call that raises on refusal, so the inner call repeating
+        # it is harmless, and an entrypoint that reached the gate only by
+        # delegation would be invisible to
+        # test_every_mutating_cli_verb_consults_the_gate.
+        authorize_coord_mutation(agent or "", Action.DESCRIBE_CARD, task_id, None, None)
+
+        click.echo(
+            "warning: 'coord describe' is deprecated and will be removed; "
+            "use 'coord edit' to change a card, or 'coord show' to read one.",
+            err=True,
+        )
+        ctx.invoke(
+            coord_edit,
+            task_id=task_id,
+            title=title,
+            description=description,
+            home=home,
+            agent=agent,
+        )
 
     @coord.command("rehome")
     @click.argument("old_prefix")
@@ -1170,6 +1985,10 @@ def register_coord_commands(main: click.Group) -> None:
         reversible by swapping the arguments. Use it after a repository move
         instead of hand-editing dozens of cards.
         """
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        authorize_coord_mutation(agent or "", Action.DESCRIBE_CARD, old_prefix, None, None)
         from ..rehome import rehome_descriptions
 
         home_path = Path(home).expanduser()
@@ -1186,16 +2005,159 @@ def register_coord_commands(main: click.Group) -> None:
             console.print(f"    [dim]- {cid}[/]")
         console.print()
 
+    @coord.command("verdict")
+    @click.argument("task_id")
+    @click.argument("outcome")
+    @click.option(
+        "--candidate",
+        required=True,
+        help="Durable, SHARED path to the bytes a reviewer must verify.",
+    )
+    @click.option("--commit", required=True, help="git rev-parse HEAD")
+    @click.option("--tree", required=True, help="git rev-parse HEAD^{tree}")
+    @click.option("--ref", required=True, help="refs/heads/<branch> or an https:// URL")
+    @click.option(
+        "--expected-source-revision", help="Optional exact native source snapshot digest."
+    )
+    @click.option("--expected-claim-revision", help="Optional exact owned claim generation.")
+    @click.option(
+        "--expected-candidate-sha256", help="Controller's already verified candidate digest."
+    )
+    @click.option(
+        "--transition-id", help="Optional 64-hex idempotency key; requires both revision guards."
+    )
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", default=None, help="Writer name. Required: the producer.")
+    def coord_verdict(
+        task_id,
+        outcome,
+        candidate,
+        commit,
+        tree,
+        ref,
+        home,
+        agent,
+        expected_source_revision,
+        expected_claim_revision,
+        expected_candidate_sha256,
+        transition_id,
+    ):
+        """Record an outcome bound to the candidate a reviewer will verify.
+
+        This is the verdict path for anything that owes an independent review.
+        It writes ONE native CardStore event carrying the verdict, the candidate
+        path, the sha256 this command computes from that file, and the typed
+        commit/tree/ref. That is exactly what the review opener reads, so a
+        verdict recorded here can actually open the review it asks for, which is
+        what ``coord link verdict PASS_FOR_REVIEW`` could never do.
+
+        Record it LAST when you can. A generation is current only while nothing
+        invalidating follows it: a new outcome link, a blocked_on chain, or an
+        evidence_sha256 link supersedes it and the review never opens. Any other
+        link after the verdict, such as your own evidence or commit reference,
+        is fine and does not disturb it.
+        """
+        from ..blocked_verdict import validate_blocked_verdict
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..provisional_verdict import candidate_evidence, record_guarded_verdict
+        from ..seat_boundaries import Action
+
+        # The opener attributes an outcome to exactly one producer and fails
+        # closed on an empty writer, so an anonymous verdict is unusable.
+        if not str(agent or "").strip():
+            raise click.ClickException(
+                "--agent is required: a verdict is attributed to exactly one producer, "
+                "and the review opener fails closed on an unnamed one."
+            )
+        guards = (expected_source_revision, expected_claim_revision, transition_id)
+        if any(value is not None for value in guards) and not all(guards):
+            raise click.ClickException("guarded verdict requires both revisions and transition id")
+        if expected_candidate_sha256 is not None and not all(guards):
+            raise click.ClickException("expected candidate digest requires revision guards")
+        authorize_coord_mutation(agent, Action.LINK_CARD, task_id, None, None)
+        from ..card_store import CardStore
+
+        try:
+            validate_blocked_verdict("verdict", outcome)
+            payload = candidate_evidence(candidate, commit, tree, ref)
+            if (
+                expected_candidate_sha256 is not None
+                and payload["candidate_sha256"] != expected_candidate_sha256
+            ):
+                raise ValueError("guarded verdict candidate digest changed")
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        try:
+            if any(guards):
+                event = record_guarded_verdict(
+                    Path(home).expanduser(),
+                    task_id,
+                    agent,
+                    str(outcome).strip(),
+                    payload,
+                    expected_source_revision=expected_source_revision,
+                    expected_claim_revision=expected_claim_revision,
+                    transition_id=transition_id,
+                )
+            else:
+                event = CardStore(Path(home).expanduser()).append_event(
+                    task_id, "verdict", agent, verdict=str(outcome).strip(), **payload
+                )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(
+            f"\n  [green]Recorded {task_id}: {outcome} bound to "
+            f"{payload['candidate_sha256'][:12]} at {payload['candidate_commit'][:12]}.[/]\n"
+        )
+        console.print(f"  [dim]event_id {event.get('event_id')} ts {event.get('ts')}[/]\n")
+
     @coord.command("link")
     @click.argument("task_id")
     @click.argument("key")
     @click.argument("value")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
     @click.option("--agent", default=None, help="Writer name (defaults to host).")
-    def coord_link(task_id, key, value, home, agent):
+    @click.option("--expected-source-revision", help="Optional exact native card snapshot digest.")
+    @click.option("--expected-claim-revision", help="Optional exact owned claim generation.")
+    @click.option(
+        "--transition-id", help="Optional idempotency key; requires both revision guards."
+    )
+    @click.option(
+        "--json", "as_json", is_flag=True, help="Guarded writes: return exact native readback."
+    )
+    @click.option(
+        "--value-from-stdin",
+        is_flag=True,
+        help="Read VALUE from stdin (pass - as VALUE); for values over the OS argv limit.",
+    )
+    def coord_link(
+        task_id,
+        key,
+        value,
+        home,
+        agent,
+        expected_source_revision,
+        expected_claim_revision,
+        transition_id,
+        as_json,
+        value_from_stdin,
+    ):
         """Attach a link (pr/commit/doc/...) to a card."""
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        # A single argv string is capped at 128 KiB (MAX_ARG_STRLEN), so a
+        # curated baseline recipe for a large suite could never be linked:
+        # every SKLegal curation failed with "[Errno 7] Argument list too
+        # long" (chi, 2026-10-12). The value then comes from stdin instead.
+        if value_from_stdin:
+            if value != "-":
+                raise click.ClickException("--value-from-stdin requires VALUE to be -")
+            value = click.get_text_stream("stdin").read()
+
+        authorize_coord_mutation(agent or "", Action.LINK_CARD, task_id, None, None)
         from ..blocked_verdict import validate_blocked_verdict
-        from ..card import CardEvent, CardEventLog
+        from ..card import CardEvent
 
         # A BLOCKED verdict takes a card out of circulation. It must therefore
         # say what would put it back. Measured on the live board 2026-08-27: of
@@ -1208,20 +2170,265 @@ def register_coord_commands(main: click.Group) -> None:
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
 
-        home_path = Path(home).expanduser()
+        # A provisional PASS is a REQUEST for a governed review, and the review
+        # opener will not open one without the candidate bytes and the source
+        # revision. A CardEvent has no field for either, so recording it here
+        # produces a request nothing can act on. Measured on this fleet
+        # 2026-09-18: 214 cards had done exactly that and no review had opened
+        # in 14 days. Refuse, and name the verb that binds it.
+        from ..provisional_verdict import validate_provisional_verdict
+
         try:
-            CardEventLog(home_path).append(
-                CardEvent(
-                    card_id=task_id,
-                    action="link",
-                    link_key=key,
-                    link_value=value,
-                    writer=agent or "",
-                )
-            )
+            validate_provisional_verdict(key, value)
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
+
+        home_path = Path(home).expanduser()
+        try:
+            guards = (expected_source_revision, expected_claim_revision, transition_id)
+            if any(item is not None for item in guards) and not all(guards):
+                raise ValueError("guarded link requires both revisions and transition id")
+            if as_json and not all(guards):
+                raise ValueError("guarded link JSON readback requires revision guards")
+            from skcoord.card_store import CardStore as _LinkCardStore
+
+            from ..coord_card_mutations import require_card_id
+            from ..pr_binding import check_link_write
+
+            require_card_id(task_id)
+
+            check_link_write(_LinkCardStore(home_path).fold(task_id), key, value)
+            if all(guards):
+                from ..guarded_coord_link import record_guarded_link
+
+                readback = record_guarded_link(
+                    home_path,
+                    task_id,
+                    agent or "",
+                    key,
+                    value,
+                    expected_source_revision=expected_source_revision,
+                    expected_claim_revision=expected_claim_revision,
+                    transition_id=transition_id,
+                )
+            else:
+                from ..coord_card_mutations import append_coord_annotation
+
+                append_coord_annotation(
+                    home_path,
+                    CardEvent(
+                        card_id=task_id,
+                        action="link",
+                        link_key=key,
+                        link_value=value,
+                        writer=agent or "",
+                    ),
+                )
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        if as_json:
+            click.echo(json.dumps(readback, sort_keys=True))
+            return
         console.print(f"\n  [green]Linked {task_id}: {key} = {value}.[/]\n")
+
+    @coord.command("outcome-supersede")
+    @click.argument("task_id")
+    @click.argument("reason")
+    @click.option("--expected-outcome-event", required=True)
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", required=True, help="Authorized operator recording the supersession.")
+    def coord_outcome_supersede(task_id, reason, expected_outcome_event, home, agent):
+        """Supersede one stale PASS_FOR_REVIEW before a fresh producer run."""
+        import re
+
+        from skcoord.card_store import CardStore, card_mutation_lock
+
+        from ..blocked_verdict import is_outcome_key
+        from ..card import CardEvent, CardEventLog
+        from ..jarvis_emergency import authorize_coord_mutation
+        from ..seat_boundaries import Action
+
+        if not re.fullmatch(r"[0-9a-f]{32}", expected_outcome_event):
+            raise click.ClickException("--expected-outcome-event must be a 32-character event id")
+        if not reason.strip() or len(reason.strip()) > 512 or "\n" in reason:
+            raise click.ClickException("reason must be one line of 1 to 512 characters")
+        authorize_coord_mutation(agent, Action.LINK_CARD, task_id, None, None)
+        home_path = Path(home).expanduser()
+        try:
+            with card_mutation_lock(home_path, task_id):
+                store = CardStore(home_path)
+                card = store.fold(task_id)
+                if (
+                    card is None
+                    or card.archived
+                    or card.owner is not None
+                    or card.status.value != "ready"
+                ):
+                    raise ValueError("outcome supersession requires an unowned, active READY card")
+                outcomes = [
+                    event
+                    for event in store._read_events(task_id) + store._legacy_events(task_id)
+                    if event.get("action") == "verdict"
+                    or (
+                        event.get("action") == "link"
+                        and is_outcome_key(event.get("link_key") or event.get("key"))
+                    )
+                ]
+                latest = max(
+                    outcomes,
+                    key=lambda event: (
+                        event.get("ts", ""),
+                        event.get("writer", ""),
+                        event.get("seq", 0),
+                    ),
+                    default={},
+                )
+                value = (
+                    latest.get("verdict")
+                    if latest.get("action") == "verdict"
+                    else latest.get("link_value", latest.get("value"))
+                )
+                if latest.get("event_id") != expected_outcome_event or not re.match(
+                    r"^\s*PASS_FOR_REVIEW(?:\b|_)", str(value or ""), re.I
+                ):
+                    raise ValueError("current outcome is not the expected PASS_FOR_REVIEW")
+                event = CardEvent(
+                    card_id=task_id,
+                    action="link",
+                    link_key="verdict_superseded",
+                    link_value=(
+                        f"SUPERSEDED prior_event={expected_outcome_event} "
+                        f"reason={reason.strip()}"
+                    ),
+                    writer=agent,
+                )
+                CardEventLog(home_path).append(event)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        console.print(f"\n  [green]Superseded {task_id} outcome {expected_outcome_event}.[/]\n")
+
+    @coord.command("recover-overlay")
+    @click.argument("operation", type=click.Choice(("plan", "apply", "rollback")))
+    @click.option("--home", default=AGENT_HOME, type=click.Path())
+    @click.option("--agent", required=True, help="Claimed recovery actor.")
+    @click.option("--writer", help="Overlay shard filename for plan.")
+    @click.option(
+        "--line",
+        "line_numbers",
+        type=click.IntRange(min=1),
+        multiple=True,
+        help="Physical line. Repeat with --line-sha256 for atomic multi-row recovery.",
+    )
+    @click.option("--source-sha256", help="Exact current shard SHA256.")
+    @click.option(
+        "--line-sha256",
+        "line_sha256s",
+        multiple=True,
+        help="Exact rejected line SHA256. Repeat in the same order as --line.",
+    )
+    @click.option("--recovery-card", help="Claimed recovery card ID.")
+    @click.option("--evidence", type=click.Path(), help="Existing evidence directory.")
+    @click.option("--plan", "plan_path", type=click.Path(), help="Saved plan for apply.")
+    @click.option("--receipt", "receipt_path", type=click.Path(), help="Receipt for rollback.")
+    @click.option(
+        "--writer-quiesced",
+        is_flag=True,
+        help="Assert pre-upgrade appenders are stopped or upgraded before apply or rollback.",
+    )
+    def coord_recover_overlay(
+        operation,
+        home,
+        agent,
+        writer,
+        line_numbers,
+        source_sha256,
+        line_sha256s,
+        recovery_card,
+        evidence,
+        plan_path,
+        receipt_path,
+        writer_quiesced,
+    ):
+        """Plan, apply, or roll back hash-pinned rejected overlay rows."""
+        from skcoord.card_event_recovery import (
+            apply_overlay_recovery,
+            plan_overlay_recovery,
+            rollback_overlay_recovery,
+            save_recovery_plan,
+        )
+
+        home_path = Path(home).expanduser()
+        try:
+            if operation == "plan":
+                required = {
+                    "--writer": writer,
+                    "--line": line_numbers,
+                    "--source-sha256": source_sha256,
+                    "--line-sha256": line_sha256s,
+                    "--recovery-card": recovery_card,
+                    "--evidence": evidence,
+                }
+                missing = [name for name, value in required.items() if value in (None, "", ())]
+                if missing:
+                    raise click.UsageError(f"plan requires {', '.join(missing)}")
+                if len(line_numbers) != len(line_sha256s):
+                    raise click.UsageError(
+                        "plan requires matching counts of --line and --line-sha256"
+                    )
+                plan = plan_overlay_recovery(
+                    home=home_path,
+                    writer=writer,
+                    line_number=line_numbers,
+                    source_sha256=source_sha256,
+                    line_sha256=line_sha256s,
+                    recovery_card_id=recovery_card,
+                    evidence=Path(evidence).expanduser(),
+                    actor=agent,
+                )
+                saved = save_recovery_plan(plan)
+                click.echo(
+                    json.dumps(
+                        {"plan": str(saved), "plan_sha256": plan["plan_sha256"]},
+                        sort_keys=True,
+                    )
+                )
+                return
+
+            from ..jarvis_emergency import authorize_coord_mutation
+            from ..seat_boundaries import Action
+
+            authorize_coord_mutation(agent, Action.MAINTAIN_BOARD, "overlay-recovery", None, None)
+            if operation == "apply":
+                if not plan_path:
+                    raise click.UsageError("apply requires --plan")
+                if not writer_quiesced:
+                    raise click.UsageError(
+                        "apply requires --writer-quiesced because pre-upgrade appenders "
+                        "do not honor the stable recovery lock"
+                    )
+                result = apply_overlay_recovery(
+                    home=home_path,
+                    plan_path=Path(plan_path).expanduser(),
+                    actor=agent,
+                    writer_quiesced=writer_quiesced,
+                )
+            else:
+                if not receipt_path:
+                    raise click.UsageError("rollback requires --receipt")
+                if not writer_quiesced:
+                    raise click.UsageError(
+                        "rollback requires --writer-quiesced because pre-upgrade appenders "
+                        "do not honor the stable recovery lock"
+                    )
+                result = rollback_overlay_recovery(
+                    home=home_path,
+                    receipt_path=Path(receipt_path).expanduser(),
+                    actor=agent,
+                    writer_quiesced=writer_quiesced,
+                )
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from None
+        click.echo(json.dumps(result, sort_keys=True))
 
     @coord.command("changelog")
     @click.option("--home", default=AGENT_HOME, type=click.Path())
@@ -1260,7 +2467,12 @@ def register_coord_commands(main: click.Group) -> None:
                 "writes use skcapstone coord. Never create, append, rewrite, rename, or "
                 "delete CardStore JSONL."
             ),
-            "good": "skcapstone coord link <card> verdict PASS_FOR_REVIEW --agent <name>",
+            "good": (
+                "skcapstone coord verdict <card> PASS_FOR_REVIEW --candidate <path> "
+                "--commit <sha> --tree <sha> --ref refs/heads/<branch> --agent <name>. "
+                "coord link records a terminal outcome; a PASS that owes an independent "
+                "review must bind its candidate, and a link event has no field for one."
+            ),
             "bad": "Creating, appending, rewriting, renaming, or deleting CardStore JSONL.",
             "read_boundary": (
                 "Use CLI reads normally. Raw file inspection is emergency operator "

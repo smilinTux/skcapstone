@@ -1,0 +1,1 @@
+- Resource admission now recognizes an exact systemd journal Stopped or Failed event after a transient unit is collected, saves a bound terminal receipt, and keeps absent units without such proof charged. Capacity deferrals log the charged count and cap.

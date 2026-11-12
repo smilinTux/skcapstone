@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Probe war.gov/UFO/ via Lumina Chrome CDP (port 9222).
+"""Probe war.gov/UFO/ via Lumina Chrome CDP (port 9232).
 
 Steps:
   1. Open a new tab on war.gov/UFO/
@@ -15,6 +15,7 @@ Output:
 """
 from __future__ import annotations
 
+import os
 import json
 import sys
 import time
@@ -23,7 +24,7 @@ from pathlib import Path
 
 import websocket  # websocket-client
 
-CDP_HTTP = "http://127.0.0.1:9222"
+CDP_HTTP = os.environ.get("LUMINA_CDP_HTTP", "http://127.0.0.1:9232")  # lumina-x-browser; moved off 9222 on 2026-10-25
 TARGET = "https://www.war.gov/UFO/"
 OUT_DIR = Path("/home/cbrd21/clawd/tmp/wargov-capture/probe-out")
 OUT_DIR.mkdir(parents=True, exist_ok=True)

@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -274,14 +275,33 @@ def coord_create(
         dependencies=dependencies or [],
         meta=source_binding_meta(task_tags, repository, base_ref, base_revision),
     )
-    from .jarvis_emergency import authorize_jarvis_entrypoint
+    from .jarvis_emergency import authorize_coord_mutation
     from .seat_boundaries import Action
 
-    authorize_jarvis_entrypoint(
+    authorize_coord_mutation(
         task.created_by, Action.CREATE_CARD, task.id, casey_authorization, casey_change_id
     )
     board.create_task(task)
     return task.id
+
+
+def _systemd_unit(cgroup_path: Path = Path("/proc/self/cgroup")) -> Optional[str]:
+    """The systemd service unit this process runs under, or ``None``.
+
+    Read from the process's own cgroup (``.../app.slice/capauth-authz.service``),
+    so a service that registers under one name and runs as a differently named
+    unit can still be matched by discovery. A shell, tmux or login session is a
+    ``.scope``, not a unit, and yields ``None``.
+    """
+    try:
+        lines = cgroup_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        leaf = line.rsplit("/", 1)[-1].strip()
+        if leaf.endswith(".service") and not leaf.startswith("user@"):
+            return leaf
+    return None
 
 
 def register_service(
@@ -289,6 +309,11 @@ def register_service(
     health_url: Optional[str] = None,
     pid_file: Optional[str] = None,
     home: Optional[Path] = None,
+    *,
+    readiness: bool = False,
+    expected_json: Optional[dict] = None,
+    user_agent: Optional[str] = None,
+    vantage_point: Optional[str] = None,
 ) -> str:
     """Advertise a service to skcapstone's discovery registry.
 
@@ -303,10 +328,19 @@ def register_service(
         health_url: Optional HTTP URL whose 2xx response means "up".
         pid_file: Optional pid-file path used as a liveness fallback.
         home: Override skcapstone root (defaults to ~/.skcapstone).
+        readiness: Require observed 2xx, without redirects.
+        expected_json: Optional exact top-level scalar readiness assertions.
+        user_agent: Explicit readiness client identifier (never a credential).
+        vantage_point: Host that owns the probe, or ``any`` for a remotely
+            reachable endpoint. Defaults to the registering host.
 
     Returns:
         Path to the written registry entry, as a string.
     """
+    if type(readiness) is not bool or (
+        not readiness and (expected_json is not None or user_agent is not None)
+    ):
+        raise ValueError("readiness options require readiness=True")
     base = Path(home) if home else _shared_home()
     registry = base / "registry"
     registry.mkdir(parents=True, exist_ok=True)
@@ -315,9 +349,24 @@ def register_service(
         "name": name,
         "health_url": health_url,
         "pid_file": pid_file,
+        "vantage_point": vantage_point or socket.gethostname(),
+        "registered_on": socket.gethostname(),
         "registered_by": _agent_name(),
         "registered_at": datetime.now(timezone.utc).isoformat(),
     }
+    unit = _systemd_unit()
+    if unit:
+        entry["systemd_unit"] = unit
+    if readiness:
+        # Older daemons must report unknown, never downgrade readiness to reachability/PID.
+        entry.update(
+            health_url=None,
+            pid_file=None,
+            health_readiness=True,
+            health_readiness_url=health_url,
+            health_expected_json=expected_json,
+            health_user_agent=user_agent,
+        )
     final = registry / f"{name}.json"
     tmp = registry / f".{name}.json.{uuid.uuid4().hex[:8]}.tmp"
     tmp.write_text(json.dumps(entry, indent=2) + "\n", encoding="utf-8")

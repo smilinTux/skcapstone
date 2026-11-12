@@ -175,6 +175,64 @@ class TestGetDaily:
         assert isinstance(report, DailyUsageReport)
         assert report.models == {}
 
+    def test_shared_home_aggregates_per_agent_usage(self, home: Path) -> None:
+        """The default shared reader includes records written in agent homes."""
+        date_str = "2026-03-02"
+        UsageTracker(home / "agents" / "lumina").record_usage(
+            "model-a", 100, 40, date_str=date_str
+        )
+        UsageTracker(home / "agents" / "jarvis").record_usage(
+            "model-b", 200, 60, date_str=date_str
+        )
+
+        report = UsageTracker(home).get_daily(date_str)
+
+        assert report.total_calls == 2
+        assert report.total_input_tokens == 300
+        assert report.total_output_tokens == 100
+
+    def test_shared_home_sums_own_and_agent_records(self, home: Path) -> None:
+        """Records at the shared root and in agent homes add, same model included."""
+        d = "2026-03-03"
+        UsageTracker(home).record_usage("model-a", 10, 1, date_str=d)
+        UsageTracker(home / "agents" / "lumina").record_usage("model-a", 20, 2, date_str=d)
+        report = UsageTracker(home).get_daily(d)
+        assert report.total_calls == 2
+        assert report.total_input_tokens == 30
+        assert report.models["model-a"].calls == 2
+
+    def test_agent_home_reader_does_not_see_siblings(self, home: Path) -> None:
+        """Scope: a tracker rooted at one agent home reports only that agent."""
+        d = "2026-03-04"
+        UsageTracker(home / "agents" / "lumina").record_usage("m", 5, 5, date_str=d)
+        UsageTracker(home / "agents" / "jarvis").record_usage("m", 7, 7, date_str=d)
+        assert UsageTracker(home / "agents" / "lumina").get_daily(d).total_input_tokens == 5
+
+    def test_corrupt_and_malformed_agent_files_are_skipped(self, home: Path) -> None:
+        d = "2026-03-05"
+        UsageTracker(home / "agents" / "good").record_usage("m", 3, 3, date_str=d)
+        for name, content in (
+            ("corrupt", "{not json"),
+            ("listroot", "[]"),
+            ("badmodels", '{"models": []}'),
+            ("badrow", '{"models": {"x": "oops", "y": {"calls": "many", "input_tokens": true}}}'),
+        ):
+            usage = home / "agents" / name / "usage"
+            usage.mkdir(parents=True)
+            (usage / f"tokens-{d}.json").write_text(content, encoding="utf-8")
+        (home / "agents" / "stray-file").write_text("x", encoding="utf-8")
+        report = UsageTracker(home).get_daily(d)
+        assert report.total_input_tokens == 3
+        assert report.total_calls == 1
+
+    def test_write_path_never_aggregates_agent_records(self, home: Path) -> None:
+        """record_usage on the shared root must not fold agent totals into its own file."""
+        d = "2026-03-06"
+        UsageTracker(home / "agents" / "lumina").record_usage("m", 50, 0, date_str=d)
+        UsageTracker(home).record_usage("m", 1, 0, date_str=d)
+        raw = json.loads((home / "usage" / f"tokens-{d}.json").read_text(encoding="utf-8"))
+        assert raw["models"]["m"]["input_tokens"] == 1
+
 
 # ---------------------------------------------------------------------------
 # UsageTracker.get_weekly / get_monthly

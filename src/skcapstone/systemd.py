@@ -48,19 +48,46 @@ HEARTBEAT_SERVICE = "skcomms-heartbeat.service"
 HEARTBEAT_TIMER = "skcomms-heartbeat.timer"
 QUEUE_DRAIN_SERVICE = "skcomms-queue-drain.service"
 QUEUE_DRAIN_TIMER = "skcomms-queue-drain.timer"
+# The readiness gate (scripts/fleet/skfleet_readiness.py's caller, task-3
+# rollout-observability). Scope-aware and cheap (runs every 15 minutes), and
+# -- unlike a seat unit such as skfleet-atlas.service -- it applies to every
+# host regardless of role, the same way HEARTBEAT and QUEUE_DRAIN do: it
+# degrades to SKIP on a host whose role never runs the dispatcher rather
+# than needing that host excluded up front. That is why it belongs in this
+# install path at all, and a seat unit does not.
+READINESS_GATE_SERVICE = "skfleet-readiness.service"
+READINESS_GATE_TIMER = "skfleet-readiness.timer"
 
+# ALL_UNITS is hand-maintained on purpose, not derived from a glob of
+# data/systemd/*. That directory also ships role-scoped seat units
+# (skfleet-atlas.service, skfleet-niobe*, skfleet-seraph*, backup/housekeep
+# timers, ...) that must NOT be installed on every host: those are staged
+# per host through an explicit, human-authorized execution card (see
+# docs/fleet/liveness-publisher-rollout.md for the pattern), because which
+# ones apply is a role question this list has no way to answer. Deriving
+# ALL_UNITS from the shipped tree would silently start auto-installing every
+# one of those role-scoped units everywhere -- trading one hand-maintained
+# list (which can go stale by omission, the bug this entry fixes) for a
+# wrong one (which actively misinstalls), which is a worse failure. So the
+# fix here is the narrow one: add the missing entry by hand. What ALL_UNITS
+# enumerates is deliberately small and universal (the core daemon, the two
+# comms timers, and now the readiness gate) -- every host runs all of it,
+# unconditionally, so a hand-maintained list of exactly those is the
+# correct shape for this particular job.
 ALL_UNITS = [
     SERVICE_NAME,
     HEARTBEAT_SERVICE,
     HEARTBEAT_TIMER,
     QUEUE_DRAIN_SERVICE,
     QUEUE_DRAIN_TIMER,
+    READINESS_GATE_SERVICE,
+    READINESS_GATE_TIMER,
 ]
 
 # Units no longer shipped but still cleaned up on uninstall (see SOCKET_NAME).
 RETIRED_UNITS = [SOCKET_NAME]
 
-TIMER_UNITS = [HEARTBEAT_TIMER, QUEUE_DRAIN_TIMER]
+TIMER_UNITS = [HEARTBEAT_TIMER, QUEUE_DRAIN_TIMER, READINESS_GATE_TIMER]
 
 SYSTEMD_USER_DIR = Path.home() / ".config" / "systemd" / "user"
 

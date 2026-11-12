@@ -29,6 +29,27 @@ from skcapstone.seat_mail import MailPoll
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def record_success_mutation(tmp_path, module, args):
+    home = tmp_path / ".skcapstone"
+    home.mkdir(exist_ok=True)
+    store = module.CardStore(home)
+    store.create(CardCore(id=args.card, title="synthetic"))
+    store.append_event(
+        args.card,
+        "claim",
+        args.owner,
+        owner=args.owner,
+        claim_revision=args.claim_revision,
+    )
+    store.append_event(
+        args.card,
+        "link",
+        args.owner,
+        link_key="evidence",
+        link_value="synthetic-evidence.md",
+    )
+
+
 @pytest.mark.parametrize(
     "fault",
     [
@@ -107,7 +128,9 @@ def test_next_cycle_release_requires_negative_proof_and_fresh_fence(tmp_path, mo
             "--expected-claim-revision",
             "rev-1",
             "--agent",
-            "jarvis",
+            "niobe",
+            "--abandon-reason",
+            "error",
         ]
         claim[:] = [None, None, None]
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -125,6 +148,7 @@ def test_next_cycle_release_requires_negative_proof_and_fresh_fence(tmp_path, mo
         HOST="host-1",
         DRY=False,
         SKC="skcapstone",
+        DISPATCH_AGENT="niobe",
         Path=Path,
         subprocess=subprocess,
         json=json,
@@ -183,7 +207,7 @@ def test_mailbox_canary_is_one_hello_and_one_direct_plus_all_poll(
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "heartbeat", "session", "executable", "attribution", "node"]
+    "fault", [None, "heartbeat", "session", "executable", "attribution", "node", "cursor"]
 )
 def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, fault):
     module = wrapper()
@@ -238,6 +262,18 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         args.worker_executable = str(link)
         args.startup_timeout = 2.0
         command = [str(link)]
+    if fault == "cursor":
+        node = shutil.which("node")
+        if (
+            not node
+            or subprocess.run([node, "--use-system-ca", "-e", ""], capture_output=True).returncode
+        ):
+            pytest.skip("Cursor requires Node with system CA support")
+        script = tmp_path / "index.js"
+        script.write_text("setTimeout(() => {}, 10000);\n")
+        args.lane = "cursor"
+        args.worker_executable = str(script)
+        command = [node, "--use-system-ca", str(script)]
     child = subprocess.Popen(command, env=env)
     try:
         if fault == "node":
@@ -245,10 +281,10 @@ def test_real_child_startup_requires_matching_proofs(tmp_path, monkeypatch, faul
         module.monitor_startup(args, child, threading.Event())
         (record,) = (tmp_path / "evidence/worker-startup").glob("*.json")
         result = json.loads(record.read_text())
-        assert (result["state"] == "startup-ready") is (fault in {None, "node"})
+        assert (result["state"] == "startup-ready") is (fault in {None, "node", "cursor"})
         assert result["release_recommended"] is False
         assert child.poll() is None
-        if fault in {None, "node"}:
+        if fault in {None, "node", "cursor"}:
             assert result["executable_evidence"]["pid"] == child.pid
             assert result["executable_evidence"]["session_id"] == args.session
     finally:
@@ -281,6 +317,8 @@ def test_wrapper_reports_early_child_exit_without_waiting_for_deadline(
         evidence_dir=tmp_path / "evidence/worker-exits",
     )
     monkeypatch.setattr(module, "parse_args", lambda: args)
+    if preflight == 0:
+        record_success_mutation(tmp_path, module, args)
     started = time.monotonic()
     assert module.main() == preflight
     assert time.monotonic() - started < 5.0
@@ -358,6 +396,8 @@ def test_wrapper_publishes_terminal_capacity_on_every_child_exit(tmp_path, monke
         evidence_dir=tmp_path / "evidence/worker-exits",
     )
     monkeypatch.setattr(module, "parse_args", lambda: args)
+    if exit_code == 0:
+        record_success_mutation(tmp_path, module, args)
 
     assert module.main() == exit_code
     assert module.publish_terminal_capacity(args, None) is False
@@ -465,6 +505,9 @@ def test_terminal_wrapper_exit_allows_real_next_claim_and_managed_launch(tmp_pat
     assert module.main() == 0
     assert store.fold("feedbeef").owner is None
     assert json.loads(snapshot.read_text())["cards"] == []
+    released_projection = json.loads((agents / "worker-1.json").read_text(encoding="utf-8"))
+    assert released_projection["current_task"] is None
+    assert released_projection["claimed_tasks"] == []
 
     cli = shutil.which("skcapstone")
     assert cli is not None
@@ -495,7 +538,9 @@ def test_terminal_wrapper_exit_allows_real_next_claim_and_managed_launch(tmp_pat
         "import subprocess,sys\n"
         "args=sys.argv[1:]\n"
         "i=args.index('--working-directory')\n"
-        "raise SystemExit(subprocess.run(args[i+2:],cwd=args[i+1]).returncode)\n"
+        "command=args[i+2:]\n"
+        "if command[:1] == ['--']: command=command[1:]\n"
+        "raise SystemExit(subprocess.run(command,cwd=args[i+1]).returncode)\n"
     )
     systemd_run.chmod(0o700)
     marker = tmp_path / "second-launched"
@@ -599,6 +644,22 @@ def test_actual_launcher_shell_preserves_workspace_and_beat_identity(
     brief = tmp_path / "brief"
     brief.write_text("synthetic")
     beat = tmp_path / "beat.json"
+    agents = tmp_path / ".skcapstone" / "coordination" / "agents"
+    agents.mkdir(parents=True)
+    projection = agents / "worker.json"
+    projection.write_text(
+        json.dumps(
+            {
+                "agent": "worker",
+                "state": "active",
+                "current_task": "feedbeef",
+                "claimed_tasks": ["feedbeef"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    projection_before = projection.read_bytes()
     namespace = dict(
         cid="feedbeef",
         name="worker",
@@ -609,6 +670,7 @@ def test_actual_launcher_shell_preserves_workspace_and_beat_identity(
         workspace=str(workspace),
         PI=str(pi),
         model="fake",
+        _LANE={"name": "glm"},
         pi_tools="bash",
         bf=str(brief),
         shlex=shlex,
@@ -623,6 +685,7 @@ def test_actual_launcher_shell_preserves_workspace_and_beat_identity(
     )
     assert namespace["_bi"] == (override or "60")
     assert f"sleep {override or '60'} & wait $!" in namespace["child"]
+    assert "SKFLEET_LANE=glm" in namespace["child"]
     result = subprocess.run(
         ["bash", "-c", namespace["child"]],
         capture_output=True,
@@ -636,6 +699,7 @@ def test_actual_launcher_shell_preserves_workspace_and_beat_identity(
     assert payload["session_id"] == "session-1"
     assert payload["claim_revision"] == "rev-1"
     assert "release-claim" not in namespace["child"]
+    assert projection.read_bytes() == projection_before
 
 
 def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_path):
@@ -672,6 +736,7 @@ def test_wrapper_completion_reaps_long_heartbeat_sleeper_and_closes_pipes(tmp_pa
         workspace=str(tmp_path),
         PI=str(pi),
         model="fake",
+        _LANE={"name": "glm"},
         pi_tools="bash",
         bf=str(brief),
         shlex=shlex,

@@ -40,7 +40,9 @@ ordinary producer work and does not make a card a governed review. Author a
 governed review with all four admission facts:
 `review`, `seat-seraph`, a non-empty `producer_identity`, and a lowercase
 64-hex `candidate_evidence_sha256`. The CLI fails before writing a card and
-lists every missing field:
+lists every missing field. `seat-seraph` is only a reviewer-eligibility label
+now; the seraph runtime (publisher, cycle, forge review) was removed in the
+SKFLEET cut and reviews run in reviewer panes:
 
 ```text
 skcapstone coord create --title '[REVIEW] verify candidate' \
@@ -54,12 +56,18 @@ the same selector contract used by POOL_V2. Do not infer review admission from
 lifecycle state, links, or a successful create operation alone.
 
 Completion applies the same contract to `[REVIEW]` and `[REREVIEW]`. `PASS`
-fails closed unless the card records all six protected-branch CI links as
+fails closed unless the card records all five protected-branch CI links as
 terminal success: `ci_check_docs`, `ci_check_gitleaks`, `ci_check_lint`,
-`ci_check_shim_imports`, `ci_check_python311`, and `ci_check_python312`.
+`ci_check_shim_imports`, and `ci_check_python312`.
 Missing or partial link sets do not count as green CI. Exact `FAIL` and a
 structured `BLOCKED` remain terminal without waiting for CI so an independent
 reviewer can reject an unsafe candidate immediately.
+
+Closing a source card needs two facts and nothing else: an independent review
+`PASS` on the exact commit with tests green on that commit, and the reviewed
+code merged on the target branch. The operator closes it with
+`skcapstone coord accept <source_card>`. Test-plan generations, profile
+qualification, applicability receipts and finish journals no longer exist.
 
 Human approval is separate from machine state. A complete dependency, a label,
 an elapsed deadline, or a successful CLI write never manufactures human
@@ -120,6 +128,20 @@ mandatory.
 
 Creation governance reads birth facts. Later title and label events do not
 rerun the creation governor.
+
+## Creation-time dispatch warning
+
+`coord create` evaluates the new card's title and labels against the same gate
+vocabulary the selector uses (`src/skcapstone/coord_dispatch_gates.py`, a copy of
+the selector constants; the selector wins if they differ) and prints a warning
+after the card is written:
+
+- `NOT DISPATCHABLE, AND CANNOT BE FIXED`: a gate baked into the immutable title
+  (a `[HUMAN]` marker). Void the card and recreate it with a `human-gate` label.
+- `Held from the fleet until cleared`: removable label gates. Use
+  `coord gates <id>` for the folded, authoritative report.
+
+The warning is advisory and never blocks creation.
 
 ## Card-authoring gates used by dispatch
 

@@ -90,11 +90,20 @@ def test_messages_merge_across_writers_in_time_order(tmp_path):
 
 
 def test_on_disk_record_shape(tmp_path):
-    """Format must stay byte-compatible with the bash implementation's files."""
+    """Format must stay readable by the bash implementation's files.
+
+    The legacy keys are pinned exactly: a rename or a removal breaks
+    scripts/fleet/skmail, which reads these records with json.loads and looks
+    keys up by name. ADDITIVE fields are allowed, because a reader that pulls
+    named keys ignores ones it does not know; the addition is asserted
+    explicitly below so it stays a deliberate act rather than a drift.
+    """
     send(tmp_path, "a", "b", "fyi", "subj", "body", host="h")
     line = writer_file(tmp_path, "a", host="h").read_text(encoding="utf-8").strip()
     rec = json.loads(line)
-    assert set(rec) == {"ts", "from", "to", "priority", "re", "body", "host"}
+    legacy = {"ts", "from", "to", "priority", "re", "body", "host"}
+    assert legacy <= set(rec), "a legacy key was renamed or dropped"
+    assert set(rec) - legacy == {"from_fqid"}, "an undocumented field appeared"
 
 
 def test_bootstrap_creates_skeleton_and_is_idempotent(tmp_path):
@@ -119,3 +128,45 @@ def test_bootstrap_without_agent_makes_no_mailbox(tmp_path):
 def test_read_on_empty_home_does_not_throw(tmp_path):
     assert read(tmp_path, "nobody") == []
     assert tail(tmp_path) == []
+
+
+def _write_identity(home, agent, fqid):
+    p = home / "agents" / agent / "identity"
+    p.mkdir(parents=True, exist_ok=True)
+    (p / "identity.json").write_text(json.dumps({"name": agent, "fqid": fqid}), encoding="utf-8")
+
+
+def test_send_stamps_sender_fqid(tmp_path):
+    """A message records WHICH estate's agent sent it, not just a bare name."""
+    bootstrap(tmp_path, agent="lumina")
+    _write_identity(tmp_path, "lumina", "lumina@chef.skworld")
+    rec = send(tmp_path, "lumina", "jarvis", "fyi", "subj", "body")
+    assert rec["from"] == "lumina"
+    assert rec["from_fqid"] == "lumina@chef.skworld"
+
+
+def test_send_without_identity_still_sends_unqualified(tmp_path):
+    """No identity file must not block mail; the field is explicitly None."""
+    bootstrap(tmp_path, agent="lumina")
+    rec = send(tmp_path, "lumina", "jarvis", "fyi", "subj", "body")
+    assert "from_fqid" in rec, "key must always be present so absent is explicit"
+    assert rec["from_fqid"] is None
+
+
+def test_same_name_different_estates_are_distinguishable(tmp_path):
+    """The whole point: two estates run the same agent NAMES.
+
+    `jarvis@chef.skworld` and `jarvis@casey.skworld` are different beings. The
+    bare `from` cannot tell them apart; the stamp can.
+    """
+    bootstrap(tmp_path, agent="jarvis")
+    _write_identity(tmp_path, "jarvis", "jarvis@chef.skworld")
+    chef_side = send(tmp_path, "jarvis", "lumina", "fyi", "s", "b")
+
+    other = tmp_path / "other-estate"
+    bootstrap(other, agent="jarvis")
+    _write_identity(other, "jarvis", "jarvis@casey.skworld")
+    casey_side = send(other, "jarvis", "lumina", "fyi", "s", "b")
+
+    assert chef_side["from"] == casey_side["from"] == "jarvis"
+    assert chef_side["from_fqid"] != casey_side["from_fqid"]

@@ -1,0 +1,242 @@
+"""Finished review claims release exact generations without losing evidence."""
+
+import ast
+import glob
+import hashlib
+import os
+import re
+from pathlib import Path
+from types import SimpleNamespace
+
+ROOT = Path(__file__).parents[1]
+ROTATE = ROOT / "scripts/fleet/skfleet-rotate.py"
+
+
+def _load(name: str, namespace: dict) -> dict:
+    tree = ast.parse(ROTATE.read_text(encoding="utf-8"))
+    node = next(
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(ROTATE), "exec"), namespace)
+    return namespace
+
+
+def _card_store(claims):
+    """Return a minimal fold compatible with the claimed generations."""
+
+    class Store:
+        def __init__(self, _home):
+            pass
+
+        def fold(self, card):
+            owner, _stamp, revision = claims[card]
+            return SimpleNamespace(
+                owner=owner,
+                title="[SKFLEET][REVIEW] exact candidate",
+                meta={"_claim_revision": revision},
+            )
+
+    return Store
+
+
+def test_releases_four_finished_claims_with_exact_cas_and_keeps_evidence(tmp_path: Path) -> None:
+    cards = [f"0000000{index}" for index in range(1, 5)]
+    card_root = tmp_path / "cards"
+    for card in cards:
+        (card_root / card).mkdir(parents=True)
+    evidence = tmp_path / "review.md"
+    evidence.write_text("review findings\n", encoding="utf-8")
+    claims = {card: (f"pi-seraph-chiap08-{card}", 1.0, f"revision-{card}") for card in cards}
+    calls = []
+    namespace = {
+        "HOST": "chiap08",
+        "AUTHORITY_HOST": "chiap08",
+        "DRY": False,
+        "CARDS": str(card_root),
+        "SKC": "skcapstone",
+        "glob": glob,
+        "os": os,
+        "re": re,
+        "Path": Path,
+        "CardStore": _card_store(claims),
+        "validate_review_completion": lambda *_args: None,
+        "subprocess": SimpleNamespace(
+            run=lambda argv, **_kwargs: calls.append(argv) or SimpleNamespace(returncode=0)
+        ),
+        "_current_claim_identity_fresh": lambda card: claims[card],
+        "_durable_review_outcome": lambda _card: "PASS",
+        "_card_process_snapshot": lambda _card: {"sessions": [], "units": []},
+        "_rows": {card: object() for card in cards},
+        "_outcomes": {card: ("stamp", "PASS") for card in cards},
+        "log": lambda *_args: None,
+        "d": str(tmp_path),
+    }
+    namespace["_current_claim"] = lambda card: (f"pi-seraph-chiap08-{card}", 1.0)
+    _load("release_finished_review_claims", namespace)
+
+    assert namespace["release_finished_review_claims"]() == 4
+    assert evidence.read_text(encoding="utf-8") == "review findings\n"
+    assert len(calls) == 4
+    for card, call in zip(cards, calls):
+        owner, _stamp, revision = claims[card]
+        assert call == [
+            "skcapstone",
+            "coord",
+            "release-claim",
+            card,
+            "--owner",
+            owner,
+            "--expected-claim-revision",
+            revision,
+            "--agent",
+            "fleet-review-closer",
+            "--abandon-reason",
+            "not-abandoned",
+        ]
+
+
+def test_terminal_outcome_requires_matching_readable_evidence_hash(tmp_path: Path) -> None:
+    evidence = tmp_path / "review.md"
+    evidence.write_text("findings\n", encoding="utf-8")
+    digest = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    rows = [
+        {"action": "link", "link_key": "verdict", "link_value": "BLOCKED", "writer": "r"},
+        {"action": "link", "link_key": "evidence", "link_value": str(evidence), "writer": "r"},
+        {"action": "link", "link_key": "evidence_sha256", "link_value": digest, "writer": "r"},
+    ]
+    namespace = {
+        "event_rows": lambda _card: rows,
+        "_load_evidence_events": lambda: {},
+        "_native_outcome_value": lambda event: event.get("verdict"),
+        "_fold_key": lambda value: str(value or "").lower(),
+        "_OUTCOME_KEYS": ("verdict", "outcome", "result", "review_decision"),
+        "re": re,
+        "os": os,
+        "hashlib": hashlib,
+    }
+    _load("_durable_review_outcome", namespace)
+
+    assert namespace["_durable_review_outcome"]("deadbeef") == "BLOCKED"
+    rows[-1]["link_value"] = "0" * 64
+    assert namespace["_durable_review_outcome"]("deadbeef") is None
+
+
+def test_nonzero_systemd_query_fails_closed() -> None:
+    namespace = {
+        "subprocess": SimpleNamespace(
+            run=lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout=""),
+            TimeoutExpired=TimeoutError,
+        ),
+        "sh": lambda *_args: "",
+        "OSError": OSError,
+    }
+    _load("_card_process_snapshot", namespace)
+
+    assert namespace["_card_process_snapshot"]("deadbeef") == {
+        "sessions": [],
+        "units": ["systemd-query-failed"],
+    }
+
+
+def test_live_process_and_changed_generation_are_never_released(tmp_path: Path) -> None:
+    card_root = tmp_path / "cards"
+    for card in ("aaaaaaaa", "bbbbbbbb"):
+        (card_root / card).mkdir(parents=True)
+    reads = {"bbbbbbbb": 0}
+
+    def claim(card: str):
+        if card == "aaaaaaaa":
+            return f"pi-seraph-chiap08-{card}", 1.0, "same"
+        reads[card] += 1
+        revision = "old" if reads[card] == 1 else "new"
+        return f"pi-seraph-chiap08-{card}", 1.0, revision
+
+    calls = []
+    namespace = {
+        "HOST": "chiap08",
+        "AUTHORITY_HOST": "chiap08",
+        "DRY": False,
+        "CARDS": str(card_root),
+        "SKC": "skcapstone",
+        "glob": glob,
+        "os": os,
+        "re": re,
+        "subprocess": SimpleNamespace(run=lambda argv, **_kwargs: calls.append(argv)),
+        "_current_claim_identity_fresh": claim,
+        "_durable_review_outcome": lambda _card: "FAIL",
+        "_card_process_snapshot": lambda card: {
+            "sessions": ["live-aaaaaaaa"] if card == "aaaaaaaa" else [],
+            "units": [],
+        },
+        "_rows": {},
+        "_outcomes": {},
+        "log": lambda *_args: None,
+        "d": str(tmp_path),
+    }
+    namespace["_current_claim"] = lambda card: (f"pi-seraph-chiap08-{card}", 1.0)
+    _load("release_finished_review_claims", namespace)
+
+    assert namespace["release_finished_review_claims"]() == 0
+    assert calls == []
+
+
+def test_incomplete_pass_records_rejection_without_release(tmp_path: Path) -> None:
+    card = "deadbeef"
+    owner = f"pi-seraph-chiap08-{card}"
+    revision = "revision-1"
+    card_root = tmp_path / "cards"
+    (card_root / card).mkdir(parents=True)
+    claims = {card: (owner, 1.0, revision)}
+    releases = []
+    rows = {card: object()}
+    evidence_dir = tmp_path / "worker-exits"
+    namespace = {
+        "HOST": "chiap08",
+        "AUTHORITY_HOST": "chiap08",
+        "DRY": False,
+        "CARDS": str(card_root),
+        "SKC": "skcapstone",
+        "glob": glob,
+        "os": os,
+        "re": re,
+        "Path": Path,
+        "CardStore": _card_store(claims),
+        "validate_review_completion": lambda *_args: (_ for _ in ()).throw(
+            ValueError("required ci_check_python312 is not successful")
+        ),
+        "datetime": __import__("datetime"),
+        "hashlib": hashlib,
+        "json": __import__("json"),
+        "_WORKER_EXIT_DIR": str(evidence_dir),
+        "subprocess": SimpleNamespace(
+            run=lambda argv, **_kwargs: releases.append(argv) or SimpleNamespace(returncode=0)
+        ),
+        "_current_claim_identity_fresh": lambda _card: claims[card],
+        "_durable_review_outcome": lambda _card: "PASS",
+        "_card_process_snapshot": lambda _card: {"sessions": [], "units": []},
+        "_rows": rows,
+        "_outcomes": {card: ("stamp", "PASS")},
+        "log": lambda *_args: None,
+        "d": str(tmp_path),
+    }
+    _load("_record_review_completion_rejection", namespace)
+    namespace["_current_claim"] = lambda card: (f"pi-seraph-chiap08-{card}", 1.0)
+    _load("release_finished_review_claims", namespace)
+
+    assert namespace["release_finished_review_claims"]() == 0
+    assert namespace["release_finished_review_claims"]() == 0
+    assert releases == []
+    assert card in rows
+    records = list(evidence_dir.glob("*.json"))
+    assert len(records) == 1
+    rejection = __import__("json").loads(records[0].read_text(encoding="utf-8"))
+    assert rejection["completion_failure"] == "review_completion_rejected"
+    assert rejection["claim_revision"] == revision
+    assert "ci_check_python312" in rejection["reason"]
+
+
+def test_release_runs_before_same_cycle_pool_build() -> None:
+    source = ROTATE.read_text(encoding="utf-8")
+    call = source.index('("release_finished_review_claims",release_finished_review_claims)')
+    pool = source.index("pool=[]", call)
+    assert call < pool

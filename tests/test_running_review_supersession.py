@@ -52,7 +52,15 @@ def source(head: str):
     return SimpleNamespace(links={"candidate": head})
 
 
-def install_store(module, cards):
+def install_store(module, cards, events=None):
+    """Install a fake CardStore.
+
+    ``events`` is the per-card shard the release path reads to decide whether
+    this claim generation actually recorded a verdict. A test that means "this
+    worker finished" has to say so here; a store with no events testifies to
+    nothing, and the release reason falls back to "unspecified".
+    """
+
     class Store:
         def __init__(self, _home):
             pass
@@ -60,7 +68,28 @@ def install_store(module, cards):
         def fold(self, card_id):
             return cards.get(card_id)
 
+        def _read_events(self, card_id):
+            return list((events or {}).get(card_id, []))
+
     module.CardStore = Store
+
+
+def finished_generation(values, verdict: str = "PASS_FOR_REVIEW"):
+    """One claim plus the terminal verdict recorded under it."""
+    return [
+        {
+            "action": "claim",
+            "owner": values.owner,
+            "claim_revision": values.claim_revision,
+            "ts": "2026-09-19T12:00:00+00:00",
+        },
+        {
+            "action": "verdict",
+            "writer": values.owner,
+            "verdict": verdict,
+            "ts": "2026-09-19T12:30:00+00:00",
+        },
+    ]
 
 
 class OneCheckStop:
@@ -89,6 +118,21 @@ def test_two_repairs_supersede_old_review_but_preserve_current_review() -> None:
 
     cards["3a11f071"] = review(current)
     assert module.review_supersession(args()) is None
+
+
+def test_source_head_mismatch_supersedes_review_without_manual_link() -> None:
+    module = load_module()
+    cards = {
+        "3a11f071": review("1" * 40),
+        "a9b4266c": source("2" * 40),
+    }
+    install_store(module, cards)
+
+    evidence = module.review_supersession(args())
+
+    assert evidence["reviewed_head"] == "1" * 40
+    assert evidence["current_head"] == "2" * 40
+    assert evidence["superseded_by"] == "source-head-mismatch"
 
 
 def test_stale_claim_cannot_stop_newer_review_generation(monkeypatch) -> None:
@@ -136,13 +180,27 @@ def test_superseded_review_releases_only_exact_claim(monkeypatch) -> None:
         def __init__(self, home):
             calls.append(("home", home))
 
-        def release_claim(self, owner, card, *, actor, expected_claim_revision):
-            calls.append((owner, card, actor, expected_claim_revision))
+        def release_claim(
+            self, owner, card, *, actor, expected_claim_revision, abandon_reason=None
+        ):
+            calls.append((owner, card, actor, expected_claim_revision, abandon_reason))
             return True
 
     monkeypatch.setattr("skcoord.coordination.Board", Board)
     values = args()
     values.review_supersession = {"current_head": "2" * 40}
+    install_store(
+        module,
+        {
+            values.card: SimpleNamespace(
+                owner=values.owner,
+                title="review",
+                meta={"_claim_revision": values.claim_revision},
+            )
+        },
+        {values.card: finished_generation(values)},
+    )
+    monkeypatch.setattr(module, "validate_review_completion", lambda *_args: None)
 
     module.release_superseded_review_claim(values)
 
@@ -151,6 +209,7 @@ def test_superseded_review_releases_only_exact_claim(monkeypatch) -> None:
         values.card,
         values.owner,
         "generation-1",
+        "not-abandoned",
     )
 
 
@@ -215,6 +274,53 @@ def test_snapshot_failure_falls_back_to_exact_claim_release(monkeypatch, capsys)
     assert module.finalize_terminal_capacity(values, None) is True
     assert calls == ["release"]
     assert "bad snapshot" in capsys.readouterr().err
+
+
+def test_snapshot_interface_mismatch_falls_back_to_exact_claim_release(
+    monkeypatch, capsys
+) -> None:
+    """The installed skcoord predates abandon_reason. This must degrade the
+    same way any other publication failure does, loudly enough that an
+    operator can tell an interface mismatch apart from an ordinary failure.
+    """
+    module = load_module()
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+    calls = []
+
+    def fail_publication(*_args):
+        raise TypeError(
+            "mirror_coord_release() got an unexpected keyword argument 'abandon_reason'"
+        )
+
+    monkeypatch.setattr(module, "publish_terminal_capacity", fail_publication)
+    monkeypatch.setattr(
+        module,
+        "release_superseded_review_claim",
+        lambda *_args: calls.append("release") or True,
+    )
+
+    assert module.finalize_terminal_capacity(values, None) is True
+    assert calls == ["release"]
+    assert "abandon_reason" in capsys.readouterr().err
+
+
+def test_snapshot_unrelated_type_error_is_not_swallowed(monkeypatch) -> None:
+    """Only the known abandon_reason signature mismatch degrades. Any other
+    TypeError is a real bug and must still surface as itself.
+    """
+    module = load_module()
+    values = args()
+    values.review_supersession = {"current_head": "2" * 40}
+
+    def fail_publication(*_args):
+        raise TypeError("'NoneType' object is not subscriptable")
+
+    monkeypatch.setattr(module, "publish_terminal_capacity", fail_publication)
+    monkeypatch.setattr(module, "release_superseded_review_claim", lambda *_args: True)
+
+    with pytest.raises(TypeError, match="NoneType"):
+        module.finalize_terminal_capacity(values, None)
 
 
 def test_failed_exact_release_preserves_owner_projection(monkeypatch) -> None:
@@ -368,3 +474,84 @@ def test_superseded_main_releases_once_retires_capacity_and_exits_75(
         and event.get("expected_claim_revision") == values.claim_revision
     ]
     assert len(releases) == 1
+
+
+@pytest.mark.parametrize(
+    "writer",
+    [
+        "pi-glm-builder-node-chiap03-a9b4266c",
+        "pi-glm-chiap08-a9b4266c",
+    ],
+)
+def test_typed_verdict_candidate_wins_over_a_stale_legacy_link(writer):
+    """A production source's stale commit link must not supersede its review."""
+    module = load_module()
+    reviewed = "e" * 40
+    install_store(
+        module,
+        {"3a11f071": review(reviewed), "a9b4266c": source("3" * 40)},
+        {
+            "a9b4266c": [
+                {
+                    "action": "verdict",
+                    "candidate_commit": reviewed,
+                    "writer": writer,
+                }
+            ]
+        },
+    )
+    assert module.review_supersession(args()) is None
+
+
+@pytest.mark.parametrize(
+    "writer",
+    [
+        "pi-glm-builder-node-chiap03-a9b4266c",
+        "pi-glm-chiap08-a9b4266c",
+    ],
+)
+def test_a_newer_typed_candidate_still_supersedes(writer):
+    module = load_module()
+    install_store(
+        module,
+        {"3a11f071": review("e" * 40), "a9b4266c": source("e" * 40)},
+        {
+            "a9b4266c": [
+                {
+                    "action": "verdict",
+                    "candidate_commit": "f" * 40,
+                    "writer": writer,
+                }
+            ]
+        },
+    )
+    assert module.review_supersession(args())["current_head"] == "f" * 40
+
+
+@pytest.mark.parametrize("head", ["e" * 40, "f" * 40, "not-a-sha"])
+def test_commit_sha_link_is_a_legacy_supersession_fallback(head):
+    module = load_module()
+    install_store(
+        module,
+        {
+            "3a11f071": review("e" * 40),
+            "a9b4266c": SimpleNamespace(links={"commit_sha": head}),
+        },
+    )
+    result = module.review_supersession(args())
+    if head == "f" * 40:
+        assert result["current_head"] == head
+    else:
+        assert result is None
+
+
+def test_legacy_source_repaired_head_in_links_is_current():
+    """jarvis/crew sources recorded repaired heads in links after the verdict."""
+    module = load_module()
+    repaired = "4" * 40
+    install_store(
+        module,
+        {"3a11f071": review(repaired), "a9b4266c": source(repaired)},
+        {"a9b4266c": [{"action": "verdict", "candidate_commit": "3" * 40, "writer": "jarvis"}]},
+    )
+    assert module.review_supersession(args()) is None

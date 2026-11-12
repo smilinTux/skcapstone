@@ -1,0 +1,1 @@
+Remote profile qualification treats files missing because of Syncthing lag (plan, card events, terminal record) as a retry within a 30-minute window instead of a permanent failure, and the authority validates a remote run only after its launch, terminal and receipt records have all arrived.
