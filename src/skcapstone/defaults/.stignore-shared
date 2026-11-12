@@ -1,0 +1,196 @@
+// SHARED Syncthing ignore rules for ~/.skcapstone (synced to every node).
+// Each node's .stignore includes this file. Edit THIS file, not .stignore, so a
+// rule added once applies everywhere (the per-node copies had drifted: .41 lacked /secrets).
+// SKCapstone Sovereign Singularity: Syncthing ignore rules
+// Private key material must never leave this node
+*.key
+*.pem
+**/private.*
+
+// Python venv (platform-specific)
+venv
+
+// Python cache
+__pycache__
+*.pyc
+*.pyo
+
+// OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+// Runtime files
+daemon.pid
+
+// Operational files written independently per-host (cause sync conflicts)
+// promotion-log: skcapstone daemon writes hourly on every host
+memory/promotion-log.json
+// heartbeats/ (v1, root-level): per-host, same filename = conflicts
+// sync/heartbeats/ (v2) is NOT ignored: uses host-unique node IDs
+/heartbeats
+// daily metrics: aggregated independently per-host
+metrics/daily
+// daemon logs: local runtime output (all locations)
+**/daemon.log
+
+// SKWhisper runtime state: actively rewritten every 30min, causes constant conflicts
+// Everything in skwhisper/ is derived per host from synced memories, and every host's
+// daemon rewrites it on its own schedule, so syncing it only makes conflict copies
+// (2026-11-11: about 10 whisper.md conflicts on noroc2027). Each host keeps its own.
+**/skwhisper/state.json
+**/skwhisper/whisper.md
+**/skwhisper/health.json
+**/skwhisper/patterns.json
+
+// Runtime queues: written independently per-host
+retry_queue.jsonl
+**/retry_queue.jsonl
+
+// Telegram session: machine-local, syncing causes Telegram to boot sessions
+**/telegram.session
+
+// Memory archive (deduped/aged-out memories: machine-local, not syncable)
+// Each host runs its own cleanup; syncing archives causes data loss
+**/memory/archive
+
+// SQLite runtime files: always local, never sync
+// index.db is rebuilt from flat files (source of truth) on each host
+**/memory/index.db
+**/memory/index.db-shm
+**/memory/index.db-wal
+**/*.db-shm
+**/*.db-wal
+// Agent-root SQLite DBs (ava, jarvis: not in memory/ subdir)
+agents/*/index.db
+// Syncthing conflict files from SQLite DBs: junk, source of truth is flat JSON
+**/*.sync-conflict-*.db
+
+// ChromaDB vector store: per-host, rebuilt from memories
+// Syncing a live SQLite DB causes corruption
+**/memory/chroma
+
+// ChromaDB runtime state JSON: updated constantly, per-host
+**/memory/chroma-state.json
+
+// Local-only dirs (not synced)
+sessions
+conversations
+backups
+prompt_versions
+deployments
+connectors
+pubsub
+file-transfer
+souls
+
+// transient atomic-write temp files (heartbeats etc.): never sync; were aborting the scanner (fix 2026-06-10)
+(?d)**/*.tmp
+(?d)*.tmp
+// SKFed CoT PKI: private keys + keystores must never sync (secrets)
+skcomms/cot-pki/*.key
+skcomms/cot-pki/devices
+skcomms/cot-pki/packages
+**/comms/archive
+**/skcomms/acks
+.stversions
+**/.stversions
+(?d)coordination/itil/**/*.sync-conflict-*
+(?d)coordination/itil/dedup
+(?d)coordination/itil/_legacy
+(?d)coordination/itil/**/migration.state.json
+**/comms/outbox
+**/_doubled-path-backup-*
+**/*.tar.gz
+**/skmemory-data-repo-backup
+
+// capauth/security/tokens: PERMANENT per-host exclusion (added fleet-wide 2026-08-15).
+// Unread token store (PDP reads ~/.skcapstone/security/tokens); per-host write-only,
+// must not sync. Drained here 2026-08-15 after the audience-mint flood fix.
+capauth/security/tokens
+
+// ── Multi-writer conflict sources (added 2026-09-02) ─────────────────────────
+// Per-host runtime logs: every node writes the same <agent>/logs/<job>.log path,
+// so each run collides. daemon.log was already excluded above; this generalizes
+// it (skmem-reconcile.log alone produced 31 conflicts).
+**/logs/*.log
+
+// skcode activity: FIXED at the source (skharness d94f4e8): the journal is now
+// partitioned per node at skcode/activity/<node>/, so no two nodes ever write
+// the same path and replication has nothing to conflict on. Syncing it again is
+// what gives the fleet cross-node visibility via read_fleet(). Only the stale
+// per-node lock and interrupted trim temporaries stay local.
+(?d)skcode/activity/*/.activity.lock
+(?d)skcode/activity/**/.events-*
+(?d)skcode/activity/**/.head-*
+
+// Credentials must never enter the synced estate tree. A token written to
+// ~/.skcapstone/config/*.env replicates to EVERY node in the estate, including
+// a GPU worker whose own profile states it holds ZERO sovereign state.
+// Observed 2026-09-11: a live Anthropic OAuth token had reached all three nodes
+// this way. Host-local secrets belong in $XDG_CONFIG_HOME (e.g.
+// ~/.config/environment.d/*.conf, mode 600) or skvault, never here.
+config/*.env
+*.env
+
+// Local secrets: never replicate (added 2026-09-28, B2 restic creds)
+/secrets
+
+// cron-ledger: sk-cron-run.sh appends one line per job run on EVERY host, so the
+// shared file conflicted every few minutes (added 2026-10-18). Each host keeps its
+// own ledger; records already carry a "host" field. Conflict copies are junk.
+logs/cron-ledger.jsonl
+(?d)logs/cron-ledger.sync-conflict-*
+
+// Per-host runtime state in agent homes (sync-conflict perma fix 2026-10-27,
+// skcapstone PR #1289 defaults/.stignore). Written by every host daemon at once.
+**/memory/wal
+**/daemon.pid.identity.json
+**/shutdown_state.json
+**/trust/trust.json
+**/security/audit.log
+**/comms/outbox-retry
+
+// A .bak/.old/.orig copy of a secret is still a secret. The 2026-09-11 rule
+// only matched *.env, so config/autopilot.env.bak-pre-hostlocal-20260911T073739
+// replicated the live Anthropic token to all three nodes, including the GPU
+// worker that holds zero sovereign state. Match the stem, not just the suffix.
+config/autopilot.env*
+*.env.*
+// flock lock files are KERNEL-LOCAL: fcntl/flock state does not cross hosts, so
+// Syncthing can replicate the file but never the lock. Replicating them is
+// therefore useless and actively noisy: a host announces a transient lock, deletes
+// it microseconds later, and the peer logs "pull: no such file" (observed
+// 2026-11-06 on scheduler/noroc2027/logs/ai-runner.lock, with 432 .lock files on
+// nor and 590 on .41). Generalizes the existing skcode .activity.lock rule above.
+// (?d) is correct here and ONLY here-ish: a lock file is genuinely disposable,
+// unlike *.key / **/private.* which must never carry (?d).
+(?d)**/*.lock
+
+// ── Private-material classes (sync policy audit floor) ───────────────────────
+// `skcapstone sync audit` probes these classes (src/skcapstone/sync_policy/model.py
+// MATERIAL_CLASSES) and reports each as private_pattern_uncovered when no rule
+// covers it. Added when the packaged template became this shared file, because the
+// shared file that carried the 2026-11-12 rules did not cover revocation
+// certificates, passphrases, secret keyrings or the PDP token store. Ignoring more
+// only costs a file that does not replicate; ignoring less puts a key on every peer.
+*.rev
+**/revocation*
+**/root-revocation.asc
+**/passphrase*
+*.pass
+.gnupg/secring.gpg
+.gnupg/private-keys-v1.d
+**/*.kbx
+**/*.sec.asc
+**/*.sec.gpg
+**/*seckey*
+security/tokens
+// capauth/fleet-trust is the signature-verification roster. It must never be
+// writable by the thing it authenticates, and a synced roster is exactly that
+// (any peer could drop a key in). Keys are installed per node by hand.
+**/capauth/fleet-trust
+// Codex auth and session state is per physical host.
+**/.codex/auth.json
+// A backup of a ruleset is not a ruleset: do not replicate .stignore.bak-* copies.
+.stignore.bak-*

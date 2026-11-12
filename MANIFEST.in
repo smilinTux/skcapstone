@@ -5,4 +5,5 @@ recursive-include src *.py
 recursive-include tests *.py
 recursive-include src/skcapstone/defaults *.json *.yaml *.feb *.md
 include src/skcapstone/defaults/.stignore
+include src/skcapstone/defaults/.stignore-shared
 recursive-include src/skcapstone/data *.json qualify-env.lock.txt *.service *.timer *.socket *.yaml *.sh *.env.example
