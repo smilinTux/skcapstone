@@ -360,6 +360,34 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             (( _installed++ ))
         fi
 
+        # bfq on spinning disks (machine-wide, needs sudo). The syncthing
+        # drop-in above and skmemory-sync@ use IOSchedulingClass=idle, which the
+        # kernel ignores unless the disk runs bfq. Without it a background sync
+        # on an HDD saturates the disk (noroc2027, 2026-11-12). SSD/NVMe skipped.
+        _BFQ_RULE="$REPO_ROOT/systemd/udev/60-ioscheduler-bfq.rules"
+        _BFQ_DEST="/etc/udev/rules.d/60-ioscheduler-bfq.rules"
+        _rotational_disks=""
+        for _q in /sys/block/*/queue/rotational; do
+            _dev="$(basename "$(dirname "$(dirname "$_q")")")"
+            case "$_dev" in loop*|ram*|zram*|sr*|dm-*|md*) continue ;; esac
+            [[ "$(cat "$_q" 2>/dev/null)" == "1" ]] && _rotational_disks="$_rotational_disks $_dev"
+        done
+        if [[ -f "$_BFQ_RULE" && -n "$_rotational_disks" ]]; then
+            if cmp -s "$_BFQ_RULE" "$_BFQ_DEST"; then
+                echo "  [OK] bfq IO scheduler rule already installed ($_rotational_disks )"
+            elif command -v sudo >/dev/null 2>&1 \
+                && sudo install -m 0644 "$_BFQ_RULE" "$_BFQ_DEST" \
+                && echo bfq | sudo tee /etc/modules-load.d/bfq.conf >/dev/null; then
+                sudo modprobe bfq 2>/dev/null || true
+                sudo udevadm control --reload 2>/dev/null || true
+                sudo udevadm trigger --subsystem-match=block --action=change 2>/dev/null || true
+                echo "  [OK] bfq IO scheduler on spinning disks ($_rotational_disks ) so idle IO priority works"
+            else
+                echo "  [WARN] could not install $_BFQ_DEST (needs sudo); idle IO priority is ignored on:$_rotational_disks"
+                echo "         run: sudo install -m 0644 $_BFQ_RULE $_BFQ_DEST && sudo udevadm trigger --subsystem-match=block --action=change"
+            fi
+        fi
+
         echo ""
         echo "  Installed $_installed service files to $_UNIT_DIR/"
 

@@ -1,0 +1,12 @@
+# 60-ioscheduler-bfq.rules: use the bfq IO scheduler on spinning disks.
+#
+# Syncthing (syncthing.service.d/nice.conf) and skmemory-sync@ run with
+# IOSchedulingClass=idle so they never starve interactive work. The kernel only
+# honours idle IO priority under bfq; under "none" or mq-deadline it is silently
+# ignored. noroc2027 (QEMU HDD, scheduler "none") sat at ~90% IO pressure and
+# load 35 on 4 cores with both jobs "idle" on paper (2026-11-12).
+#
+# SSD/NVMe (rotational=0) are left alone. Installed by scripts/install.sh to
+# /etc/udev/rules.d/, together with /etc/modules-load.d/bfq.conf.
+# Verify: cat /sys/block/<disk>/queue/scheduler   (expect [bfq])
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", KERNEL=="sd[a-z]*|vd[a-z]*|xvd[a-z]*|hd[a-z]*", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"
