@@ -40,7 +40,6 @@ def _run(paths, proposals, *, apply_fn, **kwargs):
     return loop.run_once(
         paths,
         now_iso=NOW,
-        clock=lambda: CLOCK,
         propose=lambda b, r: proposals,
         apply_fn=apply_fn,
         execute=True,
@@ -268,7 +267,9 @@ def test_freeze_landing_during_actuation_is_reported_and_not_counted_as_a_failur
     assert res["frozen"] is True
     assert res["frozen_mid_pass"] is True
     assert res["freeze_state"] == "frozen"
-    assert res["outcomes"][0]["freeze_state"] == "frozen"
+    # The decision was taken while the fleet was active; the freeze landed inside it.
+    assert res["outcomes"][0]["freeze_state"] == "active"
+    assert res["outcomes"][0]["freeze_after"] == "frozen"
     assert state._load()["actions"] == {}
 
 

@@ -124,11 +124,12 @@ def operator() -> None:
 @click.option(
     "--max-evidence-age",
     "max_evidence_age",
-    type=click.FloatRange(min=0, min_open=True),
+    type=click.FloatRange(min=0, min_open=True, max=evidence.MAX_ALLOWED_AGE_SECONDS),
     default=evidence.DEFAULT_MAX_AGE_SECONDS,
     show_default=True,
-    help="Oldest evidence (seconds) an action may rest on. Stale or missing evidence "
-    "is refused, never acted on.",
+    help="Oldest evidence (seconds) an action may rest on, at most "
+    f"{evidence.MAX_ALLOWED_AGE_SECONDS:g}. Stale or missing evidence is refused, never "
+    "acted on.",
 )
 def run_cmd(
     execute: bool,
