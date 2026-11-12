@@ -168,3 +168,44 @@ def test_a_real_failure_that_coincides_with_a_freeze_still_counts_against_the_bu
     assert res["frozen_mid_pass"] is True
     actions = state._load()["actions"]
     assert [e["consecutive_failures"] for e in actions.values()] == [1]
+
+
+def test_a_freeze_lifted_before_the_pass_ends_reports_the_end_state_and_the_mid_pass_fact(
+    tmp_path, monkeypatch
+):
+    """E: the end state is reported as it is, not forced to frozen."""
+    from datetime import datetime, timezone
+
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    store.set_frozen(paths, False, writer=HUMAN, reason="test provisioning")
+    real_gate = store.check_actuation_gate
+    calls = {"n": 0}
+
+    def scripted_gate(p):
+        calls["n"] += 1
+        if calls["n"] == 1:  # the decision point sees the freeze...
+            return store.ActuationGate(allowed=False, reason=store.REASON_FROZEN)
+        return real_gate(p)  # ...and it was lifted again by the end of the pass
+
+    monkeypatch.setattr(loop.store, "check_actuation_gate", scripted_gate)
+    res = loop.run_once(
+        paths,
+        now_iso=NOW,
+        propose=lambda b, r: [
+            {"action": "restart_service", "object": "web", "evidence": _stamp()}
+        ],
+        apply_fn=lambda p, c: {"performed": True},
+        execute=True,
+        clock=lambda: datetime(2026, 8, 20, 0, 0, 10, tzinfo=timezone.utc),
+        emit=lambda _s: None,
+    )
+    assert res["outcomes"][0]["outcome"].startswith("refused: ")
+    assert res["outcomes"][0]["freeze_state"] == "frozen"  # at its decision point
+    assert res["frozen_mid_pass"] is True  # the fact that a freeze landed
+    assert res["frozen"] is False  # but the fleet is not frozen now
+    assert res["freeze_state"] == "active"
+    assert res["freeze_summary"] is not None
+    assert "lifted" in res["report"]
+    md = brief_publish.render_markdown(res, NOW)
+    assert "state: frozen=false mid_pass=true" in md
+    assert "**FROZEN**" not in md

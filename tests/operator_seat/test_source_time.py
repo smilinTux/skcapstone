@@ -169,7 +169,7 @@ def test_skos_backlog_reports_the_digest_time_and_live_probes_report_now(monkeyp
     monkeypatch.setattr(
         skos_adapter,
         "_default_probe",
-        lambda: {
+        lambda digest=None: {
             "scheduler_alive": True,
             "gtd_draining": True,
             "digest_fresh": True,
@@ -190,7 +190,7 @@ def test_skos_backlog_with_no_digest_time_has_no_source_time(monkeypatch):
     monkeypatch.setattr(
         skos_adapter,
         "_default_probe",
-        lambda: {
+        lambda digest=None: {
             "scheduler_alive": True,
             "gtd_draining": True,
             "digest_fresh": None,
@@ -202,3 +202,28 @@ def test_skos_backlog_with_no_digest_time_has_no_source_time(monkeypatch):
     out = skos_adapter.observe()
     by_type = {c["type"]: c for c in out["conditions"]}
     assert "source_observed_at" not in by_type["GradingBacklog"]
+
+
+def test_skos_reads_the_digest_once_so_the_backlog_and_its_time_come_from_one_digest(
+    monkeypatch,
+):
+    """G: two reads could pair a backlog from one digest with the time of a newer one."""
+    import sys
+    import types
+
+    monkeypatch.setitem(
+        sys.modules,
+        "skos.operator_probe",
+        types.SimpleNamespace(observe=lambda: {"conditions": []}),
+    )
+    reads = []
+
+    def read_digest():
+        reads.append(1)
+        return {"window": {"to": f"2026-08-0{len(reads)}T00:00:00Z"}, "problems": []}
+
+    monkeypatch.setattr(skos_adapter, "_read_digest", read_digest)
+    out = skos_adapter.observe()
+    assert len(reads) == 1
+    by_type = {c["type"]: c for c in out["conditions"]}
+    assert by_type["GradingBacklog"]["source_observed_at"] == "2026-08-01T00:00:00Z"

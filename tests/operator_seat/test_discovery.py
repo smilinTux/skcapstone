@@ -624,3 +624,24 @@ def test_discovered_app_notes_rag_availability(tmp_path, on, monkeypatch):
     assert app.knowledge is not None
     assert app.knowledge.namespace == "ops"
     assert app.rag_available is True
+
+
+def test_a_discovered_observer_never_carries_a_source_time_from_its_payload():
+    """G: an external CLI's own claim about when its data was true is untrusted, in either
+    spelling. Evidence time comes only from an in-process adapter."""
+    payload = {
+        "source_observed_at": "2026-07-31T00:00:00Z",
+        "conditions": [
+            {
+                "type": "OpsSchemaPresent",
+                "status": "True",
+                "source_observed_at": "2026-07-31T00:00:00Z",
+            }
+        ],
+    }
+    observe = discovery.make_subprocess_observe(
+        "skbrain operator", ["OpsSchemaPresent"], runner=lambda *a, **k: payload
+    )
+    out = observe(None, "2026-07-31T00:00:00Z")
+    assert "source_observed_at" not in out
+    assert out["conditions"] == [{"type": "OpsSchemaPresent", "status": "True"}]

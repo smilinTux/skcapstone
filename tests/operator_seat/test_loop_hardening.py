@@ -401,3 +401,17 @@ def test_a_moving_evidence_timestamp_cannot_dodge_the_cooldown(tmp_path, monkeyp
     assert len(first.calls) == 1
     assert second.calls == []
     assert "cooldown" in res["outcomes"][0]["outcome"]
+
+
+def test_a_naive_injected_clock_is_refused_not_read_as_local_time(tmp_path, monkeypatch):
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    apply_fn = _Recorder()
+    res = _run(
+        paths,
+        [_prop(evidence=_stamp())],
+        apply_fn=apply_fn,
+        clock=lambda: datetime(2026, 8, 20, 0, 0, 30),  # no tzinfo
+    )
+    assert apply_fn.calls == []
+    outcome = res["outcomes"][0]["outcome"]
+    assert outcome.startswith("refused: ") and "timezone" in outcome
