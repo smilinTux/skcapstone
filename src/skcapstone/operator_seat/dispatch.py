@@ -480,7 +480,10 @@ def dispatch_intent(
         # was actually attempted) and must never trigger a rollback (there is
         # nothing to roll back -- rollback_fn reverses a real actuation).
         preflight = isinstance(exc, _PreflightRefusalError)
-        if execution_state is not None and not preflight:
+        # A kill switch that landed during the attempt is not a fault of the
+        # action either: it must not feed the circuit breaker.
+        frozen_now = store.check_actuation_gate(paths).reason == store.REASON_FROZEN
+        if execution_state is not None and not preflight and not frozen_now:
             try:
                 execution_state.record(fingerprint, time.time(), success=False, reason=str(exc))
             except Exception as state_exc:  # noqa: BLE001 - see loop.py's identical rationale

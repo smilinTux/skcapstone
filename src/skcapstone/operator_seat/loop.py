@@ -25,6 +25,7 @@ from . import (
     cmdb_adapter,
     decisions,
     dispatch,
+    evidence,
     fleet_adapter,
     itil_intent,
     plan,
@@ -188,6 +189,7 @@ def _run_once(
     ledger_actor: str = "atlas",
     deadline: float | None = None,
     itil: Any | None = None,
+    max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
 ) -> dict:
     """Run one operator pass.
 
@@ -215,7 +217,27 @@ def _run_once(
     wired one), this pass is byte-identical to before: no change is drafted,
     and the auto lane keeps its pre-existing self-contained inline actuation.
 
-    Returns {frozen, brief, route, proposals, planned, outcomes, report}.
+    Actuation needs fresh, structured evidence (``evidence.refusal``): a proposal
+    whose ``evidence`` is missing, unparseable, future-dated or older than
+    ``max_evidence_age_s`` is refused BEFORE any ITIL change, ledger intent or
+    apply_fn call, and the outcome reads ``refused: ...``. A bad
+    ``max_evidence_age_s`` refuses too; the check cannot be switched off.
+
+    The freeze is re-read at every actuation decision point, not only at the top
+    of the pass, and the result reports it: ``frozen`` is True when the fleet was
+    frozen at any decision point or at the end of the pass, ``frozen_mid_pass``
+    says the freeze landed after the pass had started, ``freeze_state`` is the
+    worst state seen, and each outcome carries the ``freeze_state`` at its own
+    decision. A freeze refusal is not a fault, so it never feeds the circuit
+    breaker.
+
+    Outcome words for an auto action that ran: ``verified`` only when the
+    post-action re-observation ran and passed (a lifecycle ledger or
+    ``require_verified_actions`` makes it mandatory), otherwise
+    ``performed, unverified``. Nothing reports ``applied`` any more.
+
+    Returns {frozen, frozen_mid_pass, freeze_state, brief, route, proposals,
+    planned, outcomes, report}.
     """
     paths = paths or default_paths()
 
@@ -226,6 +248,7 @@ def _run_once(
         emit(report)
         return {
             "frozen": True,
+            "frozen_mid_pass": False,
             "freeze_state": "frozen",
             "brief": None,
             "route": None,
@@ -286,6 +309,10 @@ def _run_once(
     )
 
     outcomes: list[dict] = []
+    froze_mid_pass = False
+    # Verification (performed=True proof plus post-action re-observation) is
+    # mandatory whenever a lifecycle ledger is attached or the caller asked for it.
+    verify_required = require_verified_actions or lifecycle_ledger is not None
     # Per-PASS memo of resolved occurrences (keyed on the same 9-field base
     # identity ActionIntent.identity() uses at occurrence=0). Two proposals for
     # the same identity within this ONE pass ("same episode, repeated
@@ -299,6 +326,32 @@ def _run_once(
     occurrence_memo: dict[tuple, int] = {}
     for i, pl in enumerate(planned):
         prop, disp = pl["proposal"], pl["disposition"]
+        # Decision point: the freeze is read fresh for every proposal, because it
+        # can land at any moment after the top-of-pass check (the observe calls and
+        # the model run in between). Whatever the gate says here is what this
+        # outcome reports.
+        gate = store.check_actuation_gate(paths)
+        decision_freeze = "active" if gate.allowed else (gate.reason or "unknown")
+        if decision_freeze == store.REASON_FROZEN:
+            froze_mid_pass = True
+        if disp == "auto" and execute and apply_fn is not None:
+            if decision_freeze == store.REASON_FROZEN:
+                refusal = "fleet is frozen: the operator does not actuate"
+            else:
+                refusal = evidence.refusal(prop, now_iso, max_evidence_age_s)
+            if refusal is not None:
+                # Refused before any write: no ITIL change, no ledger intent, no
+                # apply_fn call, nothing against the retry budget.
+                outcomes.append(
+                    {
+                        "action": prop.get("action"),
+                        "disposition": disp,
+                        "outcome": f"refused: {refusal}",
+                        "intent_id": None,
+                        "freeze_state": decision_freeze,
+                    }
+                )
+                continue
         if (
             itil is not None
             and lifecycle_ledger is not None
@@ -371,7 +424,7 @@ def _run_once(
             lifecycle_ledger.create(
                 intent,
                 actor=ledger_actor,
-                evidence_ref=prop.get("evidence_ref"),
+                evidence_ref=evidence.ledger_ref(prop),
             )
             intent_id = intent.intent_id
             current = lifecycle_ledger.current_state(intent_id)
@@ -424,6 +477,9 @@ def _run_once(
                 actor=ledger_actor,
                 emit=emit,
             ).outcome
+            if store.check_actuation_gate(paths).reason == store.REASON_FROZEN:
+                decision_freeze = store.REASON_FROZEN
+                froze_mid_pass = True
         elif disp == "auto" and execute and apply_fn is not None:
             # Pre-itil, self-contained inline actuation. Kept byte-identical
             # for callers that have not wired an ITIL manager into this pass
@@ -473,7 +529,7 @@ def _run_once(
                 proof_required = require_verified_actions or lifecycle_ledger is not None
                 if proof_required and performed is not True:
                     raise RuntimeError("actuator omitted performed=True proof")
-                if require_verified_actions or lifecycle_ledger is not None:
+                if verify_required:
                     verified, reason = _verify_postcondition(
                         adapters, prop, paths, now_iso, ptypes
                     )
@@ -501,9 +557,18 @@ def _run_once(
                         actor=ledger_actor,
                         detail={"itil_change_id": auto_change_id} if auto_change_id else {},
                     )
-                outcome = "verified" if require_verified_actions else "applied"
+                outcome = "verified" if verify_required else "performed, unverified"
             except Exception as exc:
-                if execution_state is not None and attempt_started:
+                # A kill switch that landed during the attempt is not a fault of the
+                # action: report it and keep it away from the circuit breaker.
+                if store.check_actuation_gate(paths).reason == store.REASON_FROZEN:
+                    decision_freeze = store.REASON_FROZEN
+                    froze_mid_pass = True
+                if (
+                    execution_state is not None
+                    and attempt_started
+                    and decision_freeze != store.REASON_FROZEN
+                ):
                     try:
                         execution_state.record(
                             safety.action_fingerprint(prop),
@@ -605,6 +670,7 @@ def _run_once(
                 "disposition": disp,
                 "outcome": outcome,
                 "intent_id": intent_id,
+                "freeze_state": decision_freeze,
             }
         )
 
@@ -618,6 +684,16 @@ def _run_once(
     # the guard already refuses actuation, this makes the REPORT say so.
     gate = store.check_actuation_gate(paths)
     freeze_state = "active" if gate.allowed else (gate.reason or "unknown")
+    if gate.reason == store.REASON_FROZEN:
+        froze_mid_pass = True
+    if froze_mid_pass:
+        # Worst state seen at any decision point or at the end of the pass: a
+        # freeze that landed mid-run is never reported as "not frozen".
+        freeze_state = "frozen"
+        report += (
+            "\nfreeze: landed after the pass began; actuation was refused at the "
+            "decision point."
+        )
     if freeze_state == store.REASON_UNPROVISIONED:
         report += (
             "\nfreeze store: UNPROVISIONED. No human operator has provisioned the "
@@ -625,7 +701,8 @@ def _run_once(
         )
     emit(report)
     return {
-        "frozen": False,
+        "frozen": froze_mid_pass,
+        "frozen_mid_pass": froze_mid_pass,
         "freeze_state": freeze_state,
         "brief": the_brief,
         "route": route,
