@@ -163,6 +163,7 @@ def run_diagnostics(
     report.checks.extend(_check_memory(home))
     report.checks.extend(_check_memory_drift(home, all_agents=all_agents, budget=drift_budget))
     report.checks.extend(_check_memory_sync_timer(home))
+    report.checks.extend(_check_io_priority())
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
     report.checks.extend(_check_sync_conflicts(home))
@@ -2801,6 +2802,93 @@ def _check_memory_sync_timer(home: Path) -> list[Check]:
                     ""
                     if enabled
                     else f"systemctl --user enable --now {unit}  (or re-run scripts/install.sh)"
+                ),
+                category="systemd",
+            )
+        )
+    return checks
+
+
+_IDLE_CAPABLE_SCHEDULERS = ("bfq", "cfq")
+_NON_DISK_PREFIXES = ("loop", "ram", "zram", "sr", "dm-", "md")
+
+
+def _check_io_priority(
+    sys_block: Path = Path("/sys/block"),
+    unit_dir: Optional[Path] = None,
+) -> list[Check]:
+    """Background sync must actually run at idle IO priority.
+
+    Syncthing (``syncthing.service.d/nice.conf``) and ``skmemory-sync@`` set
+    ``IOSchedulingClass=idle``. The kernel ignores that unless the disk uses
+    bfq, so on a spinning disk with ``none`` or ``mq-deadline`` both jobs
+    compete at full priority. noroc2027 (QEMU HDD, scheduler ``none``, and no
+    syncthing drop-in) sat at ~90% IO pressure and load 35 on 4 cores,
+    2026-11-12. SSD/NVMe are not checked: idle priority matters far less there.
+
+    Returns:
+        One ``io:scheduler:<disk>`` check per spinning disk, plus
+        ``io:syncthing_dropin`` when syncthing is installed. Empty off Linux.
+    """
+    checks: list[Check] = []
+    if platform.system() != "Linux":
+        return checks
+
+    try:
+        disks = sorted(p for p in sys_block.iterdir() if not p.name.startswith(_NON_DISK_PREFIXES))
+    except OSError:
+        disks = []
+    for disk in disks:
+        try:
+            rotational = (disk / "queue" / "rotational").read_text().strip()
+            sched_raw = (disk / "queue" / "scheduler").read_text().strip()
+        except OSError:
+            continue
+        if rotational != "1":
+            continue
+        # USB sticks often report rotational=1; sync data does not live there.
+        try:
+            if "/usb" in str(disk.resolve()):
+                continue
+        except OSError:
+            pass
+        m = re.search(r"\[([^\]]+)\]", sched_raw)
+        active = m.group(1) if m else sched_raw
+        ok = active in _IDLE_CAPABLE_SCHEDULERS
+        checks.append(
+            Check(
+                name=f"io:scheduler:{disk.name}",
+                description=f"IO scheduler honours idle priority ({disk.name}, spinning)",
+                passed=ok,
+                detail=f"scheduler={active}",
+                fix=(
+                    ""
+                    if ok
+                    else "re-run scripts/install.sh "
+                    "(installs systemd/udev/60-ioscheduler-bfq.rules), "
+                    f"or now: echo bfq | sudo tee /sys/block/{disk.name}/queue/scheduler"
+                ),
+                category="systemd",
+            )
+        )
+
+    if shutil.which("syncthing"):
+        udir = unit_dir if unit_dir is not None else Path.home() / ".config" / "systemd" / "user"
+        dropin = udir / "syncthing.service.d" / "nice.conf"
+        present = dropin.is_file()
+        checks.append(
+            Check(
+                name="io:syncthing_dropin",
+                description="Syncthing runs at idle CPU/IO priority",
+                passed=present,
+                detail=str(dropin) if present else "missing",
+                fix=(
+                    ""
+                    if present
+                    else "re-run scripts/install.sh, or copy "
+                    "systemd/syncthing.service.d/nice.conf to "
+                    f"{dropin.parent}/ then: systemctl --user daemon-reload && "
+                    "systemctl --user restart syncthing"
                 ),
                 category="systemd",
             )
