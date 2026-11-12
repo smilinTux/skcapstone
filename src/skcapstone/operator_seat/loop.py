@@ -336,6 +336,7 @@ def _run_once(
     max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
     clock: Callable[[], datetime] | None = None,
     max_approval_age_s: float = dispatch.DEFAULT_MAX_APPROVAL_AGE_SECONDS,
+    allow_inline_actuation: bool = True,
 ) -> dict:
     """Run one operator pass.
 
@@ -393,6 +394,17 @@ def _run_once(
     ``require_verified_actions`` makes it mandatory), otherwise
     ``performed, unverified``. Nothing reports ``applied`` any more.
 
+    The single-actuator-node rule (``node_local.actuator_refusal``) is evaluated ONCE per pass,
+    at its start, and that one answer is used everywhere in the pass: asking again mid-pass
+    could flip a refusal into an approval (a designation file written meanwhile, a failed
+    read) after the ledger and ITIL wiring had already been dropped for a non-actuator.
+
+    ``allow_inline_actuation`` (default True, for report and annotate deployments, tests and
+    the drill) permits the inline lane: actuation with no ITIL change, no ``dispatch_intent``,
+    no change lock and no re-observation. Production ``--execute --honor`` passes False, so
+    that lane is refused outright and every physical action goes through the ITIL lane. The
+    inline lane also never actuates in a pass whose ledger or ITIL wiring was dropped.
+
     An escalate-lane proposal that already has an OPEN escalate-lane intent (same app,
     action, target, condition and catalog generation, its change still open) reuses it:
     the loop does not draft a new change and intent on every pass for a decision that is
@@ -425,7 +437,10 @@ def _run_once(
             "report": report,
         }
 
-    if (lifecycle_ledger is not None or itil is not None) and node_local.actuator_refusal():
+    actuator_refusal_now = node_local.actuator_refusal()  # ONCE per pass, used everywhere
+    wiring_dropped = False
+    if (lifecycle_ledger is not None or itil is not None) and actuator_refusal_now:
+        wiring_dropped = True
         # Not the designated actuator node: observe, propose and park decisions only. The
         # ledger and the ITIL records are replicated, but a node that is not the actuator
         # must not sweep, close or draft against them: its clock or its local view of a
@@ -566,9 +581,20 @@ def _run_once(
             else:
                 # Single actuator node: only the designated node may actuate, and with no
                 # designation (the default) nothing does. Checked before anything is written.
-                refusal = node_local.actuator_refusal() or evidence.refusal(
+                refusal = actuator_refusal_now or evidence.refusal(
                     prop, _decision_now_iso(clock), max_evidence_age_s
                 )
+                if refusal is None and (
+                    wiring_dropped
+                    or (not allow_inline_actuation and (itil is None or lifecycle_ledger is None))
+                ):
+                    # The inline lane has no ITIL change, no change lock and no
+                    # re-observation: never in a pass that disallows it, and never in one
+                    # whose ledger or ITIL wiring was dropped.
+                    refusal = (
+                        "inline actuation is not allowed in this pass "
+                        "(every physical action must go through the ITIL lane)"
+                    )
             if refusal is not None:
                 # Refused before any write: no ITIL change, no ledger intent, no
                 # apply_fn call, nothing against the retry budget.
@@ -785,13 +811,19 @@ def _run_once(
                 outcomes.append(_outcome(prop, disp, f"error: {exc}", intent_id, decision_freeze))
                 continue
             except BaseException:
-                dispatch.void_proposed(
-                    lifecycle_ledger,
-                    intent_id,
-                    occurred_at=event_at,
-                    actor=ledger_actor,
-                    reason="pass interrupted before dispatch",
-                )
+                # An interrupt (KeyboardInterrupt, SystemExit): close the intent, but a
+                # failing void must never REPLACE the interrupt. Log it and re-raise the
+                # original.
+                try:
+                    dispatch.void_proposed(
+                        lifecycle_ledger,
+                        intent_id,
+                        occurred_at=event_at,
+                        actor=ledger_actor,
+                        reason="pass interrupted before dispatch",
+                    )
+                except Exception as void_exc:  # noqa: BLE001
+                    emit(f"operator: could not void {intent_id} after an interrupt: {void_exc}")
                 raise
             # The dispatcher left it PROPOSED (a gate that closed after our check, an
             # approval that never came, the change not found): this is the auto lane,
@@ -804,7 +836,7 @@ def _run_once(
                 actor=ledger_actor,
                 reason=f"not actuated in the pass that wrote it: {outcome}",
             )
-        elif disp == "auto" and execute and apply_fn is not None:
+        elif disp == "auto" and execute and apply_fn is not None and not wiring_dropped:
             # Pre-itil, self-contained inline actuation. Kept byte-identical
             # for callers that have not wired an ITIL manager into this pass
             # (every caller before this change): AUTHORIZED/EXECUTING are

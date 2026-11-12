@@ -28,6 +28,13 @@ def _dump(path: Path, record: dict[str, Any]) -> None:
     atomic_write_text(path, json.dumps(record, indent=2, sort_keys=True) + "\n")
 
 
+def _has_bound_option(options: list[dict[str, Any]]) -> bool:
+    """Whether any option names the ITIL change that would authorize it."""
+    return any(
+        isinstance(o, dict) and (o.get("itil_change_id") or o.get("change_id")) for o in options
+    )
+
+
 def park(
     store_dir: str | Path,
     options: list[dict[str, Any]],
@@ -59,7 +66,22 @@ def park(
         # Create-or-skip: a persistent firing re-parks the same (content-based) id,
         # so a standing issue is ONE decision the human resolves once, not a fresh
         # one every pass. The existing record and any resolution are preserved.
-        return _load(path)
+        existing = _load(path)
+        # ONE exception, in ONE direction: the decisions store is replicated, and a node
+        # that is not the designated actuator parks the decision WITHOUT an ITIL change
+        # (it drafts none). If that record lands first, the actuator's bound option must
+        # not be skipped, or ``resolve_decision(approve=True)`` raises for good (an
+        # unbound record authorizes nothing). So a PENDING record with no bound option is
+        # upgraded to the bound options; a bound record is never replaced or downgraded,
+        # and a resolved one is never touched. It keeps its id and its birth time.
+        if (
+            existing.get("status") == "pending"
+            and not _has_bound_option(existing.get("options", []))
+            and _has_bound_option(options)
+        ):
+            existing["options"] = list(options)
+            _dump(path, existing)
+        return existing
     record = {
         "id": decision_id,
         "created": created_iso,

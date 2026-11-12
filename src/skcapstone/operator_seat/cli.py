@@ -257,6 +257,10 @@ def run_cmd(
         lifecycle_ledger=ledger,
         itil=itil_manager,
         max_evidence_age_s=max_evidence_age,
+        # Production honor mode: every physical action goes through the ITIL lane
+        # (ledger, change, lock, re-observation). The inline lane stays for the
+        # annotation-only deployment (--execute without --honor), which actuates nothing.
+        allow_inline_actuation=not honor,
     )
     if honor:
         click.echo("honor: ON (CR-9.1 step-1 physical actuation: fleet + skchat)")

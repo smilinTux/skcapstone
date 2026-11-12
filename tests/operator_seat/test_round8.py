@@ -210,9 +210,7 @@ def test_park_never_rewrites_a_resolved_record(tmp_path):
     store = tmp_path / "d"
     unbound = {"action": "restart", "object": "x"}
     decisions.park(store, [unbound], decision_id="d1", created_iso="2026-01-01T00:00:00Z")
-    decisions.resolve(
-        store, "d1", approve=False, choice=None, resolved_by="chef", resolved_iso="t"
-    )
+    decisions.resolve(store, "d1", approve=False, choice=None, by="chef", resolved_iso="t")
     bound = {**unbound, "itil_change_id": "chg-1"}
     kept = decisions.park(store, [bound], decision_id="d1", created_iso="2026-01-02T00:00:00Z")
     assert kept["status"] != "pending" and kept["options"] == [unbound]
