@@ -69,6 +69,27 @@ class TestPackagedData:
         ):
             assert evaluate(rules, path) is Coverage.EXPOSED, path
 
+    def test_shared_keeps_local_debris_rules_and_leaves_the_rest_out(self):
+        """Four rules from the old template stay; the rest match the live reference."""
+        patterns = set(pattern_lines(packaged_shared_text()))
+        for rule in ("**/*.sync-conflict-*", "**/*.pid", ".cache", ".venv"):
+            assert rule in patterns, rule
+        # Considered, not shared (SYNCTHING_IGNORE_STANDARD): the live reference carries
+        # these, so the canonical file must not start ignoring them.
+        for rule in (
+            "logs",
+            ".git",
+            "heartbeats/",
+            "metrics/",
+            "deadletter",
+            "processing",
+            "fleet/workspaces",
+            "**/dreaming-state.json",
+            "**/fallbacks.json",
+            "**/.last_checkpoint",
+        ):
+            assert rule not in patterns, rule
+
     def test_shared_has_no_negation_and_no_include(self):
         """No `!` (order-dependent) and no nested include (a shared file is a leaf)."""
         for line in pattern_lines(packaged_shared_text()):

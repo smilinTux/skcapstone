@@ -207,3 +207,15 @@ security/tokens
 **/skcapstone-mcp-slots
 // A backup of a ruleset is not a ruleset: do not replicate .stignore.bak-* copies.
 .stignore.bak-*
+
+// ── Local-only debris carried over from the previous packaged template ──────
+// Conflict copies stay on the node that made them, so one conflict never cascades
+// into a conflict of the conflict on every peer. Existing copies are still reported
+// by `skcapstone doctor` (sync:conflicts); ignoring only stops new ones replicating.
+**/*.sync-conflict-*
+// pidfiles hold a process id that means nothing on another host
+**/*.pid
+// per-host tool caches, regenerable
+.cache
+// per-host Python virtualenvs (platform-specific)
+.venv
