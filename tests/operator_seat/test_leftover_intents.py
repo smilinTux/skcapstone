@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.fleet import store
 from skcapstone.itil import ITILManager
 from skcapstone.operator_seat import action_ledger, dispatch, loop
@@ -279,15 +280,7 @@ def _normal_change_approved_by_a_human(itil):
         created_by="atlas",
         tags=["operator", _BIND],
     )
-    itil.submit_cab_vote(
-        chg.id,
-        agent="capauth:approver@scratch",
-        decision="approved",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(itil, chg.id, subject="capauth:approver@scratch", role="approver")
     return chg
 
 

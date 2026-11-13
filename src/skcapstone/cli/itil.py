@@ -9,7 +9,6 @@ from pathlib import Path
 
 import click
 
-from ..key_io import read_armored_public_key
 from ._common import SHARED_ROOT, console
 
 # Default grace window for an ASAP schedule (CM P1.2 / design doc section
@@ -30,12 +29,28 @@ def _human_profile():
     return home, profile
 
 
+def _cab_nonce_store() -> Path:
+    """Where redeemed CAB grant nonces are recorded (single use).
+
+    A fixed path under the shared root, never derived from ``CAPAUTH_HOME`` or the
+    caller's CapAuth profile: replay protection must not move with the environment.
+    """
+    return Path(SHARED_ROOT).expanduser() / "capauth" / "operator" / "used-authorizations"
+
+
 def _verified_cab_authorization(
     path: Path, change_id: str, decision: str, target: str, scope: str
 ):
-    """Verify and single-use consume one Chef/owner CAB authorization."""
-    from capauth.crypto import get_backend
+    """Verify one human CAB grant against the PINNED approver keys, then consume it.
 
+    Card bada5c86: the signer must be a pinned human approver
+    (``skcapstone.cab_approval.APPROVERS_FILE``); the caller's own CapAuth profile
+    and ``CAPAUTH_HOME`` play no part. Every check (pin, identity, signature,
+    lifetime, and the exact action, target, change and scope binding) runs before
+    the nonce is consumed, so a grant that does not fit is refused without being
+    burned.
+    """
+    from .. import cab_approval
     from ..operator_authorization import (
         AuthorizationError,
         consume_authorization,
@@ -43,26 +58,39 @@ def _verified_cab_authorization(
         verify_authorization,
     )
 
-    home, profile = _human_profile()
-    pub_key_path = home / "identity" / "public.asc"
-    public_armor = read_armored_public_key(pub_key_path)
-    if not public_armor:
-        raise click.ClickException(f"cannot read a usable public key from {pub_key_path}")
-    envelope = load_authorization(path)
-    if envelope.issuer_fingerprint != profile.key_info.fingerprint:
-        raise click.ClickException("authorization signer does not match the human profile")
-    backend = get_backend(profile.crypto_backend)
+    try:
+        envelope = load_authorization(path)
+    except AuthorizationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    pinned = cab_approval.pinned_approver(envelope.issuer_fingerprint)
+    if pinned is None:
+        raise click.ClickException(
+            "authorization signer is not a pinned human CAB approver "
+            f"(see {cab_approval.APPROVERS_FILE})"
+        )
+    if (
+        cab_approval.identity_key(pinned["identity"]) != cab_approval.identity_key(envelope.issuer)
+        or envelope.issuer_role not in pinned["roles"]
+    ):
+        raise click.ClickException(
+            "authorization issuer or role does not match the pinned approver"
+        )
+    fingerprint = envelope.issuer_fingerprint.replace(" ", "").upper()
+
+    def verifier(data: bytes, signature: str, armor: str) -> bool:
+        return cab_approval.signature_ok(pinned["backend"], fingerprint, data, signature, armor)
+
     try:
         verify_authorization(
             envelope,
-            public_key_armor=public_armor,
-            verifier=backend.verify,
+            public_key_armor=pinned["public_key"],
+            verifier=verifier,
             expected_action=f"itil.cab.vote.{decision}",
             expected_target=target,
             expected_change_id=change_id,
             expected_scope=scope,
         )
-        consume_authorization(envelope, home / "operator" / "used-authorizations")
+        consume_authorization(envelope, _cab_nonce_store())
     except AuthorizationError as exc:
         raise click.ClickException(str(exc)) from exc
     return envelope
@@ -739,8 +767,6 @@ def register_itil_commands(main: click.Group) -> None:
         from ..itil import ITILManager
 
         mgr = ITILManager(Path(SHARED_ROOT).expanduser())
-        subject = _resolve_cab_vote_subject()
-        role = fingerprint = authorization_id = ""
         if authorization:
             if not target or not scope:
                 raise click.ClickException(
@@ -749,24 +775,34 @@ def register_itil_commands(main: click.Group) -> None:
             envelope = _verified_cab_authorization(
                 authorization, change_id, decision, target, scope
             )
-            subject = envelope.issuer
-            role = envelope.issuer_role
-            fingerprint = envelope.issuer_fingerprint
-            authorization_id = envelope.authorization_id
-        elif subject is None and decision in {"approved", "rejected"}:
-            raise click.ClickException(
-                "a signed --authorization is required when no authenticated subject is available"
-            )
-        vote = mgr.submit_cab_vote(
-            change_id=change_id,
-            agent=agent,
-            decision=decision,
-            conditions=conditions,
-            subject=subject,
-            subject_role=role,
-            subject_fingerprint=fingerprint,
-            authorization_id=authorization_id,
-        )
+            from ..cab_approval import record_signed_vote
+
+            try:
+                vote = record_signed_vote(mgr, envelope.model_dump(), conditions=conditions)
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from exc
+        else:
+            subject = _resolve_cab_vote_subject()
+            if subject is None:
+                # Card bada5c86: approve, reject and abstain alike need an authenticated
+                # voter. A free-text --agent label is never recorded as a vote.
+                raise click.ClickException(
+                    "a signed --authorization is required when no authenticated subject "
+                    "is available"
+                )
+            from ..cab_approval import refuse_unsigned_overwrite
+
+            try:
+                refuse_unsigned_overwrite(mgr, change_id, subject)
+                vote = mgr.submit_cab_vote(
+                    change_id=change_id,
+                    agent=agent,
+                    decision=decision,
+                    conditions=conditions,
+                    subject=subject,
+                )
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from exc
         console.print(
             f"\n  [green]Voted:[/green] {vote.agent} -> {vote.decision.value} "
             f"on {vote.change_id}\n"

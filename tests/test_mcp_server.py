@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.mcp_server import (
     _error_response,
     _home,
@@ -632,15 +633,7 @@ class TestTrusteeTools:
 
         manager = ITILManager(home)
         change = manager.propose_change(title="rotate for MCP test", managed_by="atlas")
-        manager.submit_cab_vote(
-            change.id,
-            agent="chef",
-            decision="approved",
-            subject="chef",
-            subject_role="owner",
-            subject_fingerprint="A" * 40,
-            authorization_id="authz-test",
-        )
+        cast_signed_vote(manager, change.id, subject="chef", role="owner")
         return change.id
 
     def _setup_deployment(self, home: Path) -> str:

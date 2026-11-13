@@ -16,19 +16,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from skcapstone import change_deploy as cd
+from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.itil import ITILManager
 
 
 def _approve_via_human_vote(mgr: ITILManager, change_id: str) -> None:
-    mgr.submit_cab_vote(
-        change_id,
-        agent="chef",
-        decision="approved",
-        subject="chef",
-        subject_role="owner",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(mgr, change_id, subject="chef", role="owner")
 
 
 def _scheduled_change(mgr: ITILManager, window_start: str, window_end: str, **kw):

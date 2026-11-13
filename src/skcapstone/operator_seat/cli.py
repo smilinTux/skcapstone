@@ -348,17 +348,29 @@ def decide_cmd(
                 "--authorization, --target and --scope; the running agent's own identity "
                 "cannot approve"
             )
+        itil = ITILManager(SHARED_ROOT)
         try:
-            _, change_id = dispatch.decision_option(decisions_dir, decision_id, choice)
-        except ValueError as exc:
+            option, change_id = dispatch.bound_decision_option(
+                decisions_dir, itil, decision_id, choice
+            )
+        except (ValueError, dispatch.UnauthorizedDecisionError) as exc:
             raise click.ClickException(str(exc))
+        # The grant must name exactly this decision's mutation: its target is the option's
+        # object and its scope the change binding tag. Checked before the grant is redeemed,
+        # so a grant for something else is refused without burning its nonce.
+        expected_scope = dispatch.change_binding_tag(
+            str(option.get("app") or "unknown"),
+            str(option.get("action") or "unknown"),
+            str(option.get("object") or "unknown"),
+        )
+        if target != str(option.get("object") or "") or scope != expected_scope:
+            raise click.ClickException(
+                f"--target and --scope must match decision {decision_id}: target "
+                f"{option.get('object')!r}, scope {expected_scope!r}"
+            )
         envelope = _verified_cab_authorization(authorization, change_id, "approved", target, scope)
         subject = envelope.issuer
-        provenance = {
-            "subject_role": envelope.issuer_role,
-            "subject_fingerprint": envelope.issuer_fingerprint,
-            "authorization_id": envelope.authorization_id,
-        }
+        provenance = {"authorization": envelope.model_dump()}
     else:
         subject = store.resolved_writer_identity()
         if subject in ("", "unattributed"):

@@ -7,6 +7,7 @@ import logging
 
 import pytest
 
+from skcapstone.cab_grants_testing import decision_grant
 from skcapstone.operator_seat import decisions, dispatch
 
 from .test_dispatch_e2e import (  # noqa: F401  (world is a fixture)
@@ -30,8 +31,9 @@ def _resolve(world, decision_id):
         choice=0,
         subject=SUBJECT,
         resolved_iso=_iso(world.time.now),
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
+        authorization=decision_grant(
+            str(world.decisions), decision_id, 0, SUBJECT, role="approver"
+        ),
     )
 
 

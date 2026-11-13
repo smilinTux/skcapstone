@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 import skcapstone.itil as itil
+from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.itil import ITILManager, _auto_incident_id
 
 
@@ -275,15 +276,7 @@ def test_cab_human_approval_derives_approved(tmp_path: Path):
     chg = mgr.propose_change(title="normal change", change_type="normal", managed_by="lumina")
     assert chg.status.value == "proposed"
     mgr.submit_cab_vote(chg.id, agent="lumina", decision="approved")
-    mgr.submit_cab_vote(
-        chg.id,
-        agent="chef",
-        decision="approved",
-        subject="chef",
-        subject_role="owner",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(mgr, chg.id, subject="chef", role="owner")
     folded = mgr.list_changes()[0]
     assert folded.status.value == "approved"
 
@@ -291,15 +284,7 @@ def test_cab_human_approval_derives_approved(tmp_path: Path):
 def test_cab_rejection_derives_rejected(tmp_path: Path):
     mgr = ITILManager(tmp_path)
     chg = mgr.propose_change(title="risky", change_type="normal", managed_by="lumina")
-    mgr.submit_cab_vote(
-        chg.id,
-        agent="chef",
-        decision="approved",
-        subject="chef",
-        subject_role="owner",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(mgr, chg.id, subject="chef", role="owner")
     mgr.submit_cab_vote(chg.id, agent="sentinel", decision="rejected")
     folded = mgr.list_changes()[0]
     assert folded.status.value == "rejected"

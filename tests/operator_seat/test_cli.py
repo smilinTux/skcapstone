@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import click
+import pytest
 from click.testing import CliRunner
 
 from skcapstone.fleet import sknoded, store
@@ -104,7 +108,6 @@ def test_decide_approve_with_no_linked_change_refuses_and_names_reason(tmp_path,
         decision_id="d1",
         created_iso="2026-07-29T00:00:00Z",
     )
-    _stub_grant(monkeypatch)
     out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0", *_GRANT])
     assert out.exit_code != 0
     assert "d1 ->" not in out.output  # never prints the success line
@@ -113,25 +116,29 @@ def test_decide_approve_with_no_linked_change_refuses_and_names_reason(tmp_path,
     assert len(decisions.list_pending(ddir)) == 1
 
 
-_GRANT = ["--authorization", "grant.json", "--target", "x", "--scope", "scope-1"]
+_SCOPE = "op-bind:unknown|restart_service|x"
+_GRANT = ["--authorization", "grant.json", "--target", "x", "--scope", _SCOPE]
 
 
-def _stub_grant(monkeypatch, calls=None):
-    """Stand in for the signed-grant verifier (PGP and the human profile are
-    covered by the `itil cab vote --authorization` tests); record its inputs."""
-    from types import SimpleNamespace
+def _grant_file(tmp_path, change_id, **kw):
+    """Write a real signed grant (throwaway pinned key) and return the CLI args."""
+    import json
 
-    def verified(path, change_id, decision, target, scope):
-        if calls is not None:
-            calls.append((str(path), change_id, decision, target, scope))
-        return SimpleNamespace(
-            issuer="chef",
-            issuer_role="owner",
-            issuer_fingerprint="A" * 40,
-            authorization_id="authz-test",
-        )
+    from skcapstone.cab_grants_testing import envelope
 
-    monkeypatch.setattr("skcapstone.cli.itil._verified_cab_authorization", verified)
+    kw.setdefault("target", "x")
+    kw.setdefault("scope", _SCOPE)
+    env = envelope(change_id, **kw)
+    path = tmp_path / "grant.json"
+    path.write_text(json.dumps(env), encoding="utf-8")
+    return env, ["--authorization", str(path), "--target", kw["target"], "--scope", kw["scope"]]
+
+
+def _nonces_used():
+    from skcapstone.cli import itil as itil_cli
+
+    store_dir = itil_cli._cab_nonce_store()
+    return sorted(p.name for p in store_dir.glob("*.used")) if store_dir.exists() else []
 
 
 def _linked_decision(tmp_path, monkeypatch):
@@ -171,27 +178,81 @@ def test_decide_approve_without_a_signed_grant_refuses(tmp_path, monkeypatch):
 
 def test_decide_approve_with_a_signed_grant_records_the_human_issuer(tmp_path, monkeypatch):
     """A decision whose option carries a real itil_change_id write-throughs to a CAB
-    vote bound to the verified grant: the issuer, role, fingerprint and
-    authorization id, never the running agent's identity."""
+    vote bound to the verified grant (issuer, role, fingerprint, authorization id,
+    and the envelope itself), never the running agent's identity."""
+    from skcapstone import cab_approval
     from skcapstone.fleet import store as fleet_store
 
     itil, chg, ddir = _linked_decision(tmp_path, monkeypatch)
-    calls = []
-    _stub_grant(monkeypatch, calls)
-    out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0", *_GRANT])
+    env, args = _grant_file(tmp_path, chg.id)
+    out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0", *args])
     assert out.exit_code == 0, out.output
     assert "approved" in out.output
     assert decisions.list_pending(ddir) == []  # resolved, no longer pending
-    # The grant is verified against the decision's own linked change.
-    assert calls == [("grant.json", chg.id, "approved", "x", "scope-1")]
 
     votes = itil.get_cab_votes(chg.id)
     assert len(votes) == 1
     assert votes[0].agent == "chef"
     assert votes[0].agent != fleet_store.resolved_writer_identity()
     assert votes[0].subject_role == "owner"
-    assert votes[0].subject_fingerprint == "A" * 40
-    assert votes[0].authorization_id == "authz-test"
+    assert votes[0].subject_fingerprint == env["issuer_fingerprint"]
+    assert votes[0].authorization_id == env["authorization_id"]
+    assert cab_approval.stored_envelope(itil, votes[0]) == env
+    assert cab_approval.human_approval_times(itil, itil.list_changes()[0])
+    assert len(_nonces_used()) == 1
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"target": "y"}, {"scope": "op-bind:unknown|restart_service|y"}],
+    ids=["target", "scope"],
+)
+def test_decide_refuses_a_grant_for_another_mutation_without_burning_it(
+    tmp_path, monkeypatch, override
+):
+    """Review item 6: --target and --scope must name this decision's option, and a
+    mismatch is refused before the grant's nonce is consumed."""
+    itil, chg, ddir = _linked_decision(tmp_path, monkeypatch)
+    _, args = _grant_file(tmp_path, chg.id, **override)
+    out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0", *args])
+    assert out.exit_code != 0
+    assert "must match decision d1" in out.output
+    assert itil.get_cab_votes(chg.id) == []
+    assert _nonces_used() == []
+    assert len(decisions.list_pending(ddir)) == 1
+
+
+def test_decide_refuses_a_grant_for_another_change(tmp_path, monkeypatch):
+    itil, chg, ddir = _linked_decision(tmp_path, monkeypatch)
+    _, args = _grant_file(tmp_path, "chg-other")
+    out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0", *args])
+    assert out.exit_code != 0
+    assert itil.get_cab_votes(chg.id) == []
+    assert _nonces_used() == []
+
+
+def test_decide_refuses_a_grant_from_an_unpinned_signer(tmp_path, monkeypatch):
+    """The signer must be in the pin file; CAPAUTH_HOME and the local profile do not count."""
+    itil, chg, ddir = _linked_decision(tmp_path, monkeypatch)
+    _, args = _grant_file(tmp_path, chg.id, signer="mallory")
+    monkeypatch.setenv("CAPAUTH_HOME", str(tmp_path / "mallory-home"))
+    out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0", *args])
+    assert out.exit_code != 0
+    assert "not a pinned human CAB approver" in out.output
+    assert itil.get_cab_votes(chg.id) == []
+    assert _nonces_used() == []
+
+
+def test_decide_grant_is_single_use(tmp_path, monkeypatch):
+    itil, chg, ddir = _linked_decision(tmp_path, monkeypatch)
+    _, args = _grant_file(tmp_path, chg.id)
+    from skcapstone.cli import itil as itil_cli
+
+    path = args[1]
+    target, scope = args[3], args[5]
+    itil_cli._verified_cab_authorization(Path(path), chg.id, "approved", target, scope)
+    with pytest.raises(click.ClickException, match="already been consumed"):
+        itil_cli._verified_cab_authorization(Path(path), chg.id, "approved", target, scope)
 
 
 def test_pending_empty(tmp_path, monkeypatch):

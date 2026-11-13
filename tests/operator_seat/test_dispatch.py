@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from skcapstone.cab_grants_testing import cast_signed_vote, envelope
 from skcapstone.fleet import store
 from skcapstone.fleet.paths import FleetPaths
 from skcapstone.itil import ITILManager
@@ -172,15 +173,7 @@ def test_dispatch_intent_actuates_and_verifies_an_approved_change(tmp_path):
     )
     # A simulated human CAB-approves via a provenance-bound vote (never a bare
     # "human" string), exactly what dispatch.resolve_decision submits.
-    itil.submit_cab_vote(
-        chg.id,
-        agent="capauth:approver@scratch",
-        decision="approved",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(itil, chg.id, subject="capauth:approver@scratch", role="approver")
 
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
 
@@ -277,14 +270,8 @@ def test_rejected_change_never_actuates(tmp_path):
         created_by="atlas",
         tags=["operator"],
     )
-    itil.submit_cab_vote(
-        chg.id,
-        agent="capauth:approver@scratch",
-        decision="rejected",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
+    cast_signed_vote(
+        itil, chg.id, subject="capauth:approver@scratch", role="approver", decision="rejected"
     )
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
 
@@ -373,8 +360,7 @@ def test_resolve_decision_with_no_linked_change_refuses_before_any_write(tmp_pat
             choice=0,
             subject="capauth:approver@scratch",
             resolved_iso=_NOW,
-            subject_fingerprint="A" * 40,
-            authorization_id="authz-test",
+            authorization=envelope("chg-none", issuer="capauth:approver@scratch"),
         )
     # Never actuates: the decision is left pending, not silently resolved.
     assert len(decisions.list_pending(ddir)) == 1
@@ -418,15 +404,7 @@ def test_stale_catalog_generation_refuses_and_escalates(tmp_path):
         created_by="atlas",
         tags=["operator"],
     )
-    itil.submit_cab_vote(
-        chg.id,
-        agent="capauth:approver@scratch",
-        decision="approved",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(itil, chg.id, subject="capauth:approver@scratch", role="approver")
     # Proposed against generation "1" (now stale: the live record is "2").
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id, catalog_generation="1")
 
@@ -662,15 +640,7 @@ def test_freeze_landing_during_dispatch_does_not_feed_the_circuit_breaker(tmp_pa
         created_by="atlas",
         tags=["operator"],
     )
-    itil.submit_cab_vote(
-        chg.id,
-        agent="capauth:approver@scratch",
-        decision="approved",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(itil, chg.id, subject="capauth:approver@scratch", role="approver")
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
 
     def freeze_then_refuse(prop, classification):
@@ -709,15 +679,7 @@ def test_a_real_failure_that_coincides_with_a_freeze_still_feeds_the_circuit_bre
         created_by="atlas",
         tags=["operator"],
     )
-    itil.submit_cab_vote(
-        chg.id,
-        agent="capauth:approver@scratch",
-        decision="approved",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(itil, chg.id, subject="capauth:approver@scratch", role="approver")
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
 
     def freeze_then_fail_for_real(prop, classification):

@@ -205,7 +205,12 @@ def change_is_approved(change_id: str, *, shared_root: Path) -> bool:
     except Exception:  # noqa: BLE001 - an unreadable change record is not an approved one
         logger.warning("change_is_approved: could not fold change %r", change_id, exc_info=True)
         return False
-    return change.status.value == "approved"
+    # Card bada5c86: the fold's status alone is not enough (an older skcoord folds a
+    # normal change approved on a bare `human` vote). The change must also be
+    # standard or auto-normal by its own shape, or carry a verified human grant.
+    from .cab_approval import approval_basis
+
+    return change.status.value == "approved" and approval_basis(mgr, change) is not None
 
 
 def guard(

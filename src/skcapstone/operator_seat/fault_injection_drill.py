@@ -56,6 +56,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .. import cab_grants_testing
+from ..cab_grants_testing import cast_signed_vote, decision_grant
+from ..cab_grants_testing import envelope as grant_envelope
 from ..fleet import drill as fleet_drill
 from ..fleet import store
 from ..fleet.paths import FleetPaths, self_node_name
@@ -1062,8 +1065,9 @@ def scenario_dispatcher_full_arc(ctx: DrillContext) -> ScenarioResult:
         choice=0,
         subject="capauth:drill-human@scratch",
         resolved_iso=_now_iso(),
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
+        authorization=decision_grant(
+            str(decisions_dir), parked[0]["id"], 0, "capauth:drill-human@scratch", role="approver"
+        ),
     )
     fold_after_approval = [c for c in itil.list_changes() if c.id == change_id][0]
 
@@ -1225,8 +1229,7 @@ def scenario_dispatcher_unlinked_decision_never_actuates(ctx: DrillContext) -> S
             choice=0,
             subject="capauth:drill-human@scratch",
             resolved_iso=_now_iso(),
-            subject_fingerprint="A" * 40,
-            authorization_id="authz-test",
+            authorization=grant_envelope("chg-unlinked", issuer="capauth:drill-human@scratch"),
         )
     except dispatch.UnauthorizedDecisionError as exc:
         raised = str(exc)
@@ -1295,8 +1298,9 @@ def scenario_dispatcher_stale_catalog_generation_escalates(ctx: DrillContext) ->
         choice=0,
         subject="capauth:drill-human@scratch",
         resolved_iso=_now_iso(),
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
+        authorization=decision_grant(
+            str(decisions_dir), parked[0]["id"], 0, "capauth:drill-human@scratch", role="approver"
+        ),
     )
 
     # The live skchat catalog moves on (a human re-touches it) AFTER approval,
@@ -2274,15 +2278,7 @@ def scenario_escalated_proposal_needs_a_human_and_keeps_its_decision(
             and ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
             and len(ctx.calls) == calls_before
         )
-        itil.submit_cab_vote(
-            change_id,
-            agent="capauth:drill-human@scratch",
-            decision="approved",
-            subject="capauth:drill-human@scratch",
-            subject_role="approver",
-            subject_fingerprint="A" * 40,
-            authorization_id="authz-test",
-        )
+        cast_signed_vote(itil, change_id, subject="capauth:drill-human@scratch", role="approver")
         second = sweep(ctx.runner_success_and_heal())
         acted_after_human = (
             bool(second)
@@ -2394,15 +2390,7 @@ def scenario_approval_authorizes_one_thing_once(ctx: DrillContext) -> ScenarioRe
     escalated_id = intent(standard.id, "restart-telegram-bridge", "escalate", "esc")
     # (b) one human approval, bound to the bridge restart; another action rides it.
     approved = draft("normal")
-    itil.submit_cab_vote(
-        approved.id,
-        agent=voter,
-        decision="approved",
-        subject=voter,
-        subject_role="approver",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(itil, approved.id, subject=voter, role="approver")
     other_id = intent(approved.id, "restart-daemon", "escalate", "other")
     calls_before = len(ctx.calls)
     first = sweep(ctx.runner_boom())
@@ -2485,15 +2473,7 @@ def scenario_one_approval_one_actuation_per_episode(ctx: DrillContext) -> Scenar
             created_by="atlas-p32-drill",
             tags=["operator", bind],
         )
-        itil.submit_cab_vote(
-            change.id,
-            agent=voter,
-            decision="approved",
-            subject=voter,
-            subject_role="approver",
-            subject_fingerprint="A" * 40,
-            authorization_id="authz-test",
-        )
+        cast_signed_vote(itil, change.id, subject=voter, role="approver")
         return change
 
     def intent(change_id: str, tag: str) -> str:
@@ -2635,15 +2615,7 @@ def scenario_single_actuator_live_dispatch_and_future_votes(ctx: DrillContext) -
             created_by="atlas-p32-drill",
             tags=["operator", bind],
         )
-        itil.submit_cab_vote(
-            change.id,
-            agent=voter,
-            decision="approved",
-            subject=voter,
-            subject_role="approver",
-            subject_fingerprint="A" * 40,
-            authorization_id="authz-test",
-        )
+        cast_signed_vote(itil, change.id, subject=voter, role="approver")
         if decided_at:
             path = itil.cab_dir / f"{change.id}-{voter}.json"
             data = json.loads(path.read_text())
@@ -2964,6 +2936,13 @@ def run_all(root: Path | str | None = None, *, keep_root: bool = True) -> DrillR
     # opened for it (scenario 28 restores the real rule to prove it refuses).
     previous_gate = node_local.actuator_refusal  # captured at call time, never at import
     node_local.actuator_refusal = lambda: None
+    # Card bada5c86: human approvals in the drill are real signed grants from a
+    # throwaway key, pinned in a scratch pin file inside the drill root. The
+    # operator's real pin file is never read or written.
+    pin_file = cab_grants_testing.write_pin(ctx.root / "cab-approvers.json", identities=())
+    previous_pins = [(m, a, getattr(m, a)) for m, a in cab_grants_testing.pin_targets()]
+    for module, attr, _ in previous_pins:
+        setattr(module, attr, pin_file)
     results: list[ScenarioResult] = []
     try:
         for scenario in SCENARIOS:
@@ -2985,6 +2964,8 @@ def run_all(root: Path | str | None = None, *, keep_root: bool = True) -> DrillR
             _unfreeze(ctx.paths)
     finally:
         node_local.actuator_refusal = previous_gate
+        for module, attr, value in previous_pins:
+            setattr(module, attr, value)
         ctx.restore_daemon_probe()
         ctx.restore_env()
     finished = _now_iso()

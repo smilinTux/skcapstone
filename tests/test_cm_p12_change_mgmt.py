@@ -19,6 +19,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.cli.itil import register_itil_commands
 from skcapstone.itil import ITILManager
 
@@ -33,15 +34,7 @@ def _cli() -> click.Group:
 
 
 def _approve(mgr: ITILManager, change_id: str) -> None:
-    mgr.submit_cab_vote(
-        change_id,
-        agent="chef",
-        decision="approved",
-        subject="chef",
-        subject_role="owner",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(mgr, change_id, subject="chef", role="owner")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -284,8 +277,10 @@ async def test_mcp_cab_vote_refuses_an_approval_when_resolver_unavailable(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_mcp_cab_vote_still_records_a_rejection_when_resolver_unavailable(tmp_path):
-    """A veto is always safe, so a rejection keeps the free-text fallback."""
+@pytest.mark.parametrize("decision", ["rejected", "abstain"])
+async def test_mcp_cab_vote_refuses_any_vote_when_resolver_unavailable(tmp_path, decision):
+    """Review item 4: a rejection or abstention with no authenticated identity is
+    refused too (it used to keep the free-text fallback). Nothing is written."""
     from skcapstone.mcp_tools import itil_tools
 
     mgr = ITILManager(tmp_path)
@@ -296,11 +291,128 @@ async def test_mcp_cab_vote_still_records_a_rejection_when_resolver_unavailable(
         patch.object(itil_tools, "_resolve_authenticated_subject", return_value=None),
     ):
         result = await itil_tools._handle_itil_cab_vote(
-            {"change_id": chg.id, "agent": "legacy-caller", "decision": "rejected"}
+            {"change_id": chg.id, "agent": "legacy-caller", "decision": decision}
         )
-    payload = json.loads(result[0].text)
-    assert payload["agent"] == "legacy-caller"
-    assert mgr.list_changes()[0].status.value == "rejected"
+    assert "authenticated" in result[0].text
+    assert mgr.get_cab_votes(chg.id) == []
+    assert mgr.list_changes()[0].status.value == "proposed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["approved", "rejected", "abstain"])
+async def test_mcp_cab_vote_cannot_replace_a_signed_vote(tmp_path, decision):
+    """Vote files are keyed by voter: an unsigned MCP vote by "chef" must not
+    overwrite Chef's signed one, on any skcoord release."""
+    from skcapstone import cab_approval
+    from skcapstone.mcp_tools import itil_tools
+
+    mgr = ITILManager(tmp_path)
+    chg = mgr.propose_change(title="signed", managed_by="lumina")
+    cast_signed_vote(mgr, chg.id, subject="chef", role="owner")
+
+    with (
+        patch("skcapstone.mcp_tools._helpers.SHARED_ROOT", str(tmp_path)),
+        patch.object(itil_tools, "_resolve_authenticated_subject", return_value="chef"),
+    ):
+        result = await itil_tools._handle_itil_cab_vote(
+            {"change_id": chg.id, "agent": "chef", "decision": decision}
+        )
+    assert "refusing to replace" in result[0].text
+    (vote,) = mgr.get_cab_votes(chg.id)
+    assert cab_approval.qualifying_human_approval(mgr, vote, mgr.list_changes()[0])
+
+
+def _cli_grant(tmp_path, change_id, decision="approved"):
+    from skcapstone.cab_grants_testing import envelope
+
+    env = envelope(change_id, decision=decision)
+    path = tmp_path / f"grant-{decision}.json"
+    path.write_text(json.dumps(env), encoding="utf-8")
+    return env, [
+        "--authorization",
+        str(path),
+        "--target",
+        env["target"],
+        "--scope",
+        env["scope"],
+    ]
+
+
+def test_cli_cab_vote_with_a_signed_grant_stores_it_and_qualifies(tmp_path):
+    from skcapstone import cab_approval
+
+    mgr = ITILManager(tmp_path)
+    chg = mgr.propose_change(title="cli signed", managed_by="lumina")
+    env, args = _cli_grant(tmp_path, chg.id)
+    with patch("skcapstone.cli.itil.SHARED_ROOT", str(tmp_path)):
+        result = CliRunner().invoke(_cli(), ["itil", "cab", "vote", chg.id, *args])
+    assert result.exit_code == 0, result.output
+    (vote,) = mgr.get_cab_votes(chg.id)
+    assert vote.agent == "chef"
+    assert cab_approval.stored_envelope(mgr, vote) == env
+    assert cab_approval.approval_basis(mgr, mgr.list_changes()[0]) == "human"
+
+
+def test_cli_cab_vote_grant_verifies_against_the_pin_not_capauth_home(tmp_path, monkeypatch):
+    """Review item 1: CAPAUTH_HOME no longer picks the verifying key."""
+    from skcapstone.cab_grants_testing import envelope
+
+    mgr = ITILManager(tmp_path)
+    chg = mgr.propose_change(title="cli forged", managed_by="lumina")
+    env = envelope(chg.id, issuer="chef", signer="mallory")
+    path = tmp_path / "grant.json"
+    path.write_text(json.dumps(env), encoding="utf-8")
+    monkeypatch.setenv("CAPAUTH_HOME", str(tmp_path / "mallory"))
+    with patch("skcapstone.cli.itil.SHARED_ROOT", str(tmp_path)):
+        result = CliRunner().invoke(
+            _cli(),
+            [
+                "itil",
+                "cab",
+                "vote",
+                chg.id,
+                "--authorization",
+                str(path),
+                "--target",
+                env["target"],
+                "--scope",
+                env["scope"],
+            ],
+        )
+    assert result.exit_code != 0
+    assert "not a pinned human CAB approver" in result.output
+    assert mgr.get_cab_votes(chg.id) == []
+
+
+@pytest.mark.parametrize("decision", ["approved", "rejected", "abstain"])
+def test_cli_cab_vote_refuses_any_vote_without_an_authenticated_subject(tmp_path, decision):
+    mgr = ITILManager(tmp_path)
+    chg = mgr.propose_change(title="cli anon", managed_by="lumina")
+    with (
+        patch("skcapstone.cli.itil.SHARED_ROOT", str(tmp_path)),
+        patch("skcapstone.cli.itil._resolve_cab_vote_subject", return_value=None),
+    ):
+        result = CliRunner().invoke(
+            _cli(), ["itil", "cab", "vote", chg.id, "--agent", "human", "--decision", decision]
+        )
+    assert result.exit_code != 0
+    assert mgr.get_cab_votes(chg.id) == []
+
+
+def test_cli_cab_vote_cannot_replace_a_signed_vote(tmp_path):
+    mgr = ITILManager(tmp_path)
+    chg = mgr.propose_change(title="cli overwrite", managed_by="lumina")
+    cast_signed_vote(mgr, chg.id, subject="chef", role="owner")
+    with (
+        patch("skcapstone.cli.itil.SHARED_ROOT", str(tmp_path)),
+        patch("skcapstone.cli.itil._resolve_cab_vote_subject", return_value="chef"),
+    ):
+        result = CliRunner().invoke(
+            _cli(), ["itil", "cab", "vote", chg.id, "--decision", "abstain"]
+        )
+    assert result.exit_code != 0
+    assert "refusing to replace" in result.output
+    assert mgr.get_cab_votes(chg.id)[0].decision.value == "approved"
 
 
 def test_resolve_authenticated_subject_swallows_resolver_errors():

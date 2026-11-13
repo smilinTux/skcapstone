@@ -119,6 +119,13 @@ class _Value:
 class _Change:
     id = "chg-approved"
     status = _Value("approved")
+    change_type = _Value("normal")
+    risk = _Value("medium")
+    tags: list = []
+    created_by = "atlas"
+    managed_by = ""
+    prepared_by = None
+    rollback_plan = "revert"
 
 
 class _Vote:
@@ -129,25 +136,45 @@ class _Vote:
         subject_role="",
         subject_fingerprint="",
         authorization_id="",
+        authorization=None,
     ):
+        self.change_id = "chg-approved"
         self.agent = agent
         self.decision = _Value(decision)
+        self.decided_at = "2026-11-13T00:00:00+00:00"
         self.subject_role = subject_role
         self.subject_fingerprint = subject_fingerprint
         self.authorization_id = authorization_id
+        self.authorization = authorization
+
+
+def _signed_vote(agent="chef", role="owner", **kw):
+    """A vote carrying a real grant from the throwaway pinned key (card bada5c86)."""
+    from skcapstone.cab_grants_testing import envelope
+
+    env = envelope("chg-approved", issuer=agent, role=role, **kw)
+    return _Vote(
+        agent,
+        subject_role=env["issuer_role"],
+        subject_fingerprint=env["issuer_fingerprint"],
+        authorization_id=env["authorization_id"],
+        authorization=env,
+    )
 
 
 class _ITIL:
-    def __init__(self, _home, *, status="approved", voter="human"):
+    cab_dir = "/nonexistent"
+
+    def __init__(self, _home, *, status="approved", votes=None):
         self.change = _Change()
         self.change.status = _Value(status)
-        self.voter = voter
+        self.votes = votes
 
     def list_changes(self):
         return [self.change]
 
     def get_cab_votes(self, _change_id):
-        return [_Vote(self.voter)]
+        return [_signed_vote()] if self.votes is None else self.votes
 
 
 def _three_artifacts(home, *, scopes=("scope-1",) * 3):
@@ -173,7 +200,7 @@ def test_apply_requires_canonical_approval_and_human_vote(tmp_path):
     _three_artifacts(tmp_path)
     for factory, reason in (
         (lambda home: _ITIL(home, status="reviewing"), "not approved"),
-        (lambda home: _ITIL(home, voter="lumina"), "human CAB"),
+        (lambda home: _ITIL(home, votes=[_Vote("lumina")]), "human CAB"),
     ):
         result = cmdb_adapter.cmdb_act(
             FleetPaths(tmp_path),
@@ -186,32 +213,54 @@ def test_apply_requires_canonical_approval_and_human_vote(tmp_path):
         assert reason in result["reason"]
 
 
-def test_apply_accepts_authenticated_named_owner_vote(tmp_path):
-    """A signed Chef vote need not corrupt its identity into literal human."""
+def _gate(tmp_path, votes, **change):
     from skcapstone.fleet.paths import FleetPaths
 
+    class Factory(_ITIL):
+        def __init__(self, home):
+            super().__init__(home, votes=votes)
+            for key, value in change.items():
+                setattr(self.change, key, value)
+
     _three_artifacts(tmp_path)
-
-    class NamedOwnerITIL(_ITIL):
-        def get_cab_votes(self, _change_id):
-            return [
-                _Vote(
-                    "chef",
-                    subject_role="owner",
-                    subject_fingerprint="A" * 40,
-                    authorization_id="authz-123",
-                )
-            ]
-
-    result = cmdb_adapter.cmdb_act(
+    return cmdb_adapter.cmdb_act(
         FleetPaths(tmp_path),
         "apply-cmdb-reconcile",
         change_id="chg-approved",
         runner=lambda _argv: True,
-        itil_factory=NamedOwnerITIL,
+        itil_factory=Factory,
         manager_factory=_CleanManager,
     )
-    assert result["performed"] is True
+
+
+def test_apply_refuses_a_bare_human_vote(tmp_path):
+    """Review item 3: `_apply_gate` used to accept a bare `human` approval."""
+    result = _gate(tmp_path, [_Vote("human")])
+    assert result["performed"] is False
+    assert "human CAB" in result["reason"]
+
+
+def test_apply_refuses_provenance_fields_without_a_verifying_grant(tmp_path):
+    fake = _Vote("chef", subject_role="owner", subject_fingerprint="A" * 40, authorization_id="x")
+    assert _gate(tmp_path, [fake])["performed"] is False
+
+
+def test_apply_refuses_a_grant_from_an_unpinned_signer(tmp_path):
+    assert _gate(tmp_path, [_signed_vote(signer="mallory")])["performed"] is False
+
+
+def test_apply_refuses_the_creators_own_signed_vote(tmp_path):
+    assert _gate(tmp_path, [_signed_vote()], created_by="chef")["performed"] is False
+
+
+def test_apply_refuses_when_a_named_voter_rejects(tmp_path):
+    votes = [_signed_vote(), _Vote("sentinel", decision="rejected")]
+    assert _gate(tmp_path, votes)["performed"] is False
+
+
+def test_apply_accepts_authenticated_named_owner_vote(tmp_path):
+    """A signed Chef vote need not corrupt its identity into literal human."""
+    assert _gate(tmp_path, [_signed_vote()])["performed"] is True
 
 
 def test_apply_requires_three_distinct_same_scope_artifacts(tmp_path):

@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from skcapstone import agent_run as ar
+from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.card_store import CardCore, CardStore
 from skcapstone.itil import Change, ITILManager
 
@@ -135,15 +136,7 @@ def test_process_one_execute_blocked_once_approved(home):
     # the approvals pool. A raw update_change(..., new_status="approved")
     # deliberately no longer reaches "approved" (skcoord 941570f closed that
     # self-approval bypass); see the negative control below.
-    mgr.submit_cab_vote(
-        chg.id,
-        agent="chef",
-        decision="approved",
-        subject="chef",
-        subject_role="owner",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(mgr, chg.id, subject="chef", role="owner")
     assert mgr._fold_record(mgr.changes_dir, chg.id, Change).status.value == "approved"
 
     ar.request_run(home, chg.id, "implement it now", agent="lumina", mode="execute")

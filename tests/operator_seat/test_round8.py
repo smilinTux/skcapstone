@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 from click.testing import CliRunner
 
+from skcapstone.cab_grants_testing import decision_grant
 from skcapstone.operator_seat import (
     action_ledger,
     act_dispatch,
@@ -176,8 +177,9 @@ def test_the_actuator_upgrades_a_decision_a_non_actuator_parked_unbound(world, m
         choice=0,
         subject="capauth:approver@scratch",
         resolved_iso=_iso(world.time.now),
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
+        authorization=decision_grant(
+            str(world.decisions), bound["id"], 0, "capauth:approver@scratch", role="approver"
+        ),
     )
     assert _sweep(world)[0].outcome == "verified"
 

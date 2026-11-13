@@ -15,6 +15,7 @@ import pytest
 
 from skcapstone._trustee_helpers import write_audit as _write_audit
 from skcapstone.blueprints.schema import ProviderType
+from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.fleet import store as fleet_store
 from skcapstone.fleet.paths import FleetPaths
 from skcapstone.team_engine import AgentStatus, DeployedAgent, TeamDeployment, TeamEngine
@@ -55,15 +56,7 @@ def _approved_change(home: Path, title: str = "rotate for test") -> str:
 
     mgr = ITILManager(home)
     change = mgr.propose_change(title=title, managed_by="atlas")
-    mgr.submit_cab_vote(
-        change.id,
-        agent="chef",
-        decision="approved",
-        subject="chef",
-        subject_role="owner",
-        subject_fingerprint="A" * 40,
-        authorization_id="authz-test",
-    )
+    cast_signed_vote(mgr, change.id, subject="chef", role="owner")
     return change.id
 
 
