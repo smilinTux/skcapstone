@@ -163,18 +163,23 @@ def _signed_vote(agent="chef", role="owner", **kw):
 
 
 class _ITIL:
-    cab_dir = "/nonexistent"
-
-    def __init__(self, _home, *, status="approved", votes=None):
+    def __init__(self, home, *, status="approved", votes=None):
         self.change = _Change()
         self.change.status = _Value(status)
         self.votes = votes
+        # Vote files under the names their votes were written to (card bada5c86).
+        self.cab_dir = Path(home) / "cab-decisions"
+        self.cab_dir.mkdir(parents=True, exist_ok=True)
 
     def list_changes(self):
         return [self.change]
 
     def get_cab_votes(self, _change_id):
-        return [_signed_vote()] if self.votes is None else self.votes
+        votes = [_signed_vote()] if self.votes is None else self.votes
+        for v in votes:
+            path = self.cab_dir / f"{v.change_id}-{v.agent}.json"
+            path.write_text(json.dumps({"change_id": v.change_id, "agent": v.agent}))
+        return votes
 
 
 def _three_artifacts(home, *, scopes=("scope-1",) * 3):

@@ -9,6 +9,8 @@ shape, and the rest.
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -193,10 +195,15 @@ def _change(**over):
 
 
 class _ITIL:
-    cab_dir = "/nonexistent"
+    """A vote store whose files sit under the names their votes were written to."""
 
     def __init__(self, votes):
         self.votes = votes
+        self._dir = tempfile.TemporaryDirectory()
+        self.cab_dir = self._dir.name
+        for v in votes:
+            path = Path(self.cab_dir) / f"{v.change_id}-{v.agent}.json"
+            path.write_text(json.dumps({"change_id": v.change_id, "agent": v.agent}))
 
     def get_cab_votes(self, _change_id):
         return self.votes
@@ -284,7 +291,9 @@ def test_approval_time_is_the_signed_issued_at(monkeypatch):
 def test_a_named_rejection_means_no_human_approval(monkeypatch):
     env = _grant()
     monkeypatch.setattr(ca, "load_approvers", lambda path=None: _pin())
-    reject = SimpleNamespace(agent="sentinel", decision=SimpleNamespace(value="rejected"))
+    reject = SimpleNamespace(
+        change_id="chg-checks", agent="sentinel", decision=SimpleNamespace(value="rejected")
+    )
     assert ca.human_approval_times(_ITIL([_vote_for(env)]), _change())
     assert ca.human_approval_times(_ITIL([_vote_for(env), reject]), _change()) == []
 

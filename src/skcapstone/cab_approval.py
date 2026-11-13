@@ -42,6 +42,13 @@ PLACEHOLDER_VOTERS = frozenset({"", "human", "unattributed", "unknown"})
 
 _NONCE_RE = re.compile(r"^[A-Za-z0-9_-]{20,128}$")
 
+#: How long a human CAB approval stays usable, measured from its signed grant's
+#: ``issued_at`` against the real clock. Every actuation gate applies it: the ATLAS
+#: dispatcher (configurable up to the cap), the governed CMDB apply gate and the
+#: trustee guard (both at the default).
+DEFAULT_MAX_APPROVAL_AGE_SECONDS = 86400.0
+MAX_ALLOWED_APPROVAL_AGE_SECONDS = 604800.0  # seven days
+
 
 def identity_key(identity: Any) -> str:
     """Spelling-independent key: lowercase local part, ``capauth:`` stripped."""
@@ -108,6 +115,35 @@ def signature_ok(backend: str, fingerprint: str, data: bytes, signature: str, ar
         return False
 
 
+def _file_binds(itil: Any, change_id: str, vote: Any) -> bool:
+    """Whether ``<change_id>-<voter>.json`` holds this change id and this voter."""
+    try:
+        path = Path(itil.cab_dir) / f"{change_id}-{vote.agent}.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - no readable file under the bound name
+        return False
+    return raw.get("change_id") == change_id and raw.get("agent") == vote.agent
+
+
+def votes_for(itil: Any, change_id: str) -> list:
+    """The CAB votes bound to *change_id*, the change being gated (from the caller).
+
+    A vote counts only when its change id is *change_id* and the file named for this
+    change and its voter (``<change_id>-<voter>.json``) records that change and that
+    voter. A vote file copied byte for byte under another change's or another voter's
+    name therefore drops out, on every skcoord release (older ones load vote files by
+    name and never check the change id inside). Raises when the store is unreadable,
+    like ``get_cab_votes``.
+    """
+    if not change_id:
+        return []
+    return [
+        v
+        for v in itil.get_cab_votes(change_id)
+        if getattr(v, "change_id", None) == change_id and _file_binds(itil, change_id, v)
+    ]
+
+
 def stored_envelope(itil: Any, vote: Any) -> dict | None:
     """The signed grant stored with *vote*, from the model or the raw vote file."""
     envelope = getattr(vote, "authorization", None)
@@ -121,13 +157,21 @@ def stored_envelope(itil: Any, vote: Any) -> dict | None:
     return envelope if isinstance(envelope, dict) else None
 
 
-def verify_vote_envelope(vote: Any, envelope: Any, approvers: dict | None = None) -> bool:
+def verify_vote_envelope(
+    vote: Any, envelope: Any, approvers: dict | None = None, *, change_id: str | None = None
+) -> bool:
     """Whether *envelope* is a pinned approver's valid grant for exactly this vote.
 
-    Lifetime and single use are enforced when the grant is redeemed; a grant bound to
-    one change and one decision authorizes nothing else, so they are not re-checked.
+    *change_id* is the change being gated, from the caller: the vote and the grant
+    must both bind it, so a grant copied from another change's vote file does not
+    verify. Lifetime and single use are enforced when the grant is redeemed; a grant
+    bound to one change and one decision authorizes nothing else, so they are not
+    re-checked here (the actuation gates apply an approval age from ``issued_at``).
     """
     from .operator_authorization import AuthorizationEnvelope, authorization_id
+
+    if change_id is not None and getattr(vote, "change_id", None) != change_id:
+        return False
 
     try:
         env = AuthorizationEnvelope.model_validate(envelope)
@@ -141,6 +185,7 @@ def verify_vote_envelope(vote: Any, envelope: Any, approvers: dict | None = None
         env.schema_version != "atlas-authorization/v1"
         or env.action != f"itil.cab.vote.{decision}"
         or env.change_id != vote.change_id
+        or (change_id is not None and env.change_id != change_id)
         or env.issuer_role not in HUMAN_APPROVER_ROLES
         or env.issuer_role != getattr(vote, "subject_role", "")
         or fingerprint != _fpr(getattr(vote, "subject_fingerprint", ""))
@@ -199,7 +244,9 @@ def qualifying_human_approval(
     }
     if identity_key(vote.agent) in owners:
         return False
-    return verify_vote_envelope(vote, stored_envelope(itil, vote), approvers)
+    return verify_vote_envelope(
+        vote, stored_envelope(itil, vote), approvers, change_id=getattr(change, "id", None) or ""
+    )
 
 
 def auto_approved(change: Any, votes: list) -> bool:
@@ -235,7 +282,7 @@ def human_approval_times(itil: Any, change: Any) -> list[str]:
     unreadable vote store.
     """
     try:
-        votes = list(itil.get_cab_votes(change.id))
+        votes = votes_for(itil, change.id)
     except Exception:  # noqa: BLE001 - unreadable votes are no approval
         return []
     if auto_approved(change, votes) or any(_rejected(v) for v in votes):
@@ -257,7 +304,7 @@ def approval_basis(itil: Any, change: Any) -> str | None:
     if getattr(change.status, "value", change.status) not in ("approved", "scheduled"):
         return None
     try:
-        votes = list(itil.get_cab_votes(change.id))
+        votes = votes_for(itil, change.id)
     except Exception:  # noqa: BLE001 - unreadable votes are no approval
         return None
     if auto_approved(change, votes):
@@ -306,13 +353,13 @@ def refuse_unsigned_overwrite(itil: Any, change_id: str, voter: str) -> None:
     too keeps the CLI and MCP surfaces safe on older releases.
     """
     try:
-        votes = list(itil.get_cab_votes(change_id))
+        votes = votes_for(itil, change_id)
     except Exception:  # noqa: BLE001 - nothing readable, nothing to protect
         return
     for vote in votes:
         if identity_key(vote.agent) != identity_key(voter):
             continue
-        if verify_vote_envelope(vote, stored_envelope(itil, vote)):
+        if verify_vote_envelope(vote, stored_envelope(itil, vote), change_id=change_id):
             raise ValueError(
                 f"refusing to replace the authenticated CAB vote of {vote.agent!r} on "
                 f"{change_id} with an unauthenticated one"
@@ -338,4 +385,4 @@ def verify_grant_for(
         return False
     if is_machine_identity(probe.agent):
         return False
-    return verify_vote_envelope(probe, envelope, approvers)
+    return verify_vote_envelope(probe, envelope, approvers, change_id=change_id)

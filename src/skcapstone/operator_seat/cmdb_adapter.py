@@ -100,8 +100,13 @@ def _apply_gate(
     *,
     itil_factory=None,
     manager_factory=None,
+    now_iso: str | None = None,
 ) -> str | None:
-    """Return a refusal reason unless the governed network-apply gate passes."""
+    """Return a refusal reason unless the governed network-apply gate passes.
+
+    A human approval is usable for ``DEFAULT_MAX_APPROVAL_AGE_SECONDS`` from its
+    signed grant's ``issued_at``, as in the dispatcher (card bada5c86).
+    """
     if not change_id.startswith("chg-"):
         return "a valid --change-id is required"
     if itil_factory is None:
@@ -123,6 +128,16 @@ def _apply_gate(
     approvals = human_approval_times(itil, change)
     if not approvals:
         return "independent authenticated human CAB approval is required"
+    from ..cab_approval import DEFAULT_MAX_APPROVAL_AGE_SECONDS
+    from .dispatch import approval_refusal
+
+    stale = approval_refusal(
+        approvals,
+        now_iso or datetime.now(timezone.utc).isoformat(),
+        DEFAULT_MAX_APPROVAL_AGE_SECONDS,
+    )
+    if stale is not None:
+        return stale[1]
 
     artifacts = _verified_artifacts(home)
     complete = [

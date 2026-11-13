@@ -210,7 +210,28 @@ def change_is_approved(change_id: str, *, shared_root: Path) -> bool:
     # standard or auto-normal by its own shape, or carry a verified human grant.
     from .cab_approval import approval_basis
 
-    return change.status.value == "approved" and approval_basis(mgr, change) is not None
+    if change.status.value != "approved":
+        return False
+    basis = approval_basis(mgr, change)
+    if basis == "auto":
+        return True
+    if basis != "human":
+        return False
+    # A human approval expires DEFAULT_MAX_APPROVAL_AGE_SECONDS after its signed
+    # grant's issued_at, exactly as at the dispatcher.
+    from datetime import datetime, timezone
+
+    from .cab_approval import DEFAULT_MAX_APPROVAL_AGE_SECONDS, human_approval_times
+    from .operator_seat.dispatch import approval_refusal
+
+    return (
+        approval_refusal(
+            human_approval_times(mgr, change),
+            datetime.now(timezone.utc).isoformat(),
+            DEFAULT_MAX_APPROVAL_AGE_SECONDS,
+        )
+        is None
+    )
 
 
 def guard(

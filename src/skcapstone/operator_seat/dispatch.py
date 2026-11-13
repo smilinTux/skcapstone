@@ -70,8 +70,8 @@ BINDING_TAG_PREFIX = "op-bind:"
 #: clock. A human approves a CHANGE for an EPISODE; a day is generous for
 #: the slow lane and short enough that a recurrence next week cannot ride an old vote.
 #: Configurable (``honor-pending --max-approval-age``) up to the cap below; Chef can relax it.
-DEFAULT_MAX_APPROVAL_AGE_SECONDS = 86400.0
-MAX_ALLOWED_APPROVAL_AGE_SECONDS = 604800.0  # seven days
+DEFAULT_MAX_APPROVAL_AGE_SECONDS = cab_approval.DEFAULT_MAX_APPROVAL_AGE_SECONDS
+MAX_ALLOWED_APPROVAL_AGE_SECONDS = cab_approval.MAX_ALLOWED_APPROVAL_AGE_SECONDS
 
 #: How long an intent may sit in AUTHORIZED/EXECUTING before it is treated as stranded by a
 #: crash. A pass has a five minute runtime budget, so twice that is not a live dispatch.
@@ -959,7 +959,7 @@ def _preaction_refusal(
     # shape), never as "no human vote" on top of the fold's approved status, which an
     # older skcoord grants a normal change on a bare `human` vote.
     try:
-        votes = list(itil.get_cab_votes(change.id))
+        votes = cab_approval.votes_for(itil, change.id)
     except Exception:  # noqa: BLE001 - unreadable votes are no approval
         votes = None
     auto_approved = (

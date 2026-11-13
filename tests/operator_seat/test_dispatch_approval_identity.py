@@ -340,3 +340,38 @@ def test_approval_age_comes_from_the_signed_grant_not_decided_at(tmp_path, monke
     outcome, calls, _ = _dispatch(paths, ledger, itil, chg)
     assert calls == []
     assert outcome.outcome != "verified"
+
+
+# ── a vote counts only for the change it was cast on (round 3) ──────────
+
+
+def _second_change(itil):
+    return _propose(
+        itil,
+        title="fix widget-1 again",
+        change_type="normal",
+        risk="low",
+        rollback_plan="revert",
+        created_by="atlas",
+        managed_by="atlas",
+        tags=["operator"],
+    )
+
+
+def test_signed_vote_copied_under_another_change_never_actuates_it(tmp_path):
+    """The replay: A-chef.json copied byte for byte to B-chef.json."""
+    import shutil
+
+    paths, itil, ledger, a = _world(tmp_path)
+    b = _second_change(itil)
+    cast_signed_vote(itil, a.id, subject="chef", role="owner")
+    shutil.copyfile(itil.cab_dir / f"{a.id}-chef.json", itil.cab_dir / f"{b.id}-chef.json")
+    assert dispatch.human_approval_times(itil, b) == []
+    _assert_never_actuates(paths, ledger, itil, b)
+
+
+def test_vote_file_renamed_to_another_voter_never_actuates(tmp_path):
+    paths, itil, ledger, chg = _world(tmp_path)
+    cast_signed_vote(itil, chg.id, subject="chef", role="owner")
+    (itil.cab_dir / f"{chg.id}-chef.json").rename(itil.cab_dir / f"{chg.id}-casey.json")
+    _assert_never_actuates(paths, ledger, itil, chg)
