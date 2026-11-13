@@ -90,12 +90,16 @@ def test_honor_skchat_records_itil_and_actuates(tmp_path):
     assert "auto-normal" in itil.changes[0]["tags"]
 
 
-def test_honor_fleet_annotates_then_actuates(tmp_path):
+def test_honor_fleet_annotates_then_actuates(tmp_path, monkeypatch):
     paths = _paths(tmp_path)
     _provision_ready(paths)
-    # Seed a fleet Service object so fleet_act can annotate its spec.
+    # Seed a fleet Service object so fleet_act can annotate its spec, placed on this
+    # node: the honor path only restarts an object placed where it runs (21b01d01).
+    monkeypatch.setenv("SKFLEET_NODE", "n")
     seat = store.Writer(role="operator", node="n", identity="operator", agent_seat=True)
     store.write_spec(paths, "service", "svc-x", {"unit": "svc-x.service"}, writer=seat)
+    sched = store.Writer(role="scheduler", node="n", identity="scheduler")
+    store.write_placement(paths, "service", "svc-x", node="n", reason="test", writer=sched)
 
     calls = []
     apply_fn = act_dispatch.build_apply_fn(
