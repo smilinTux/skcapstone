@@ -959,7 +959,7 @@ def _preaction_refusal(
     # shape), never as "no human vote" on top of the fold's approved status, which an
     # older skcoord grants a normal change on a bare `human` vote.
     try:
-        votes = cab_approval.votes_for(itil, change.id)
+        votes = cab_approval.current_votes(itil, change.id)
     except Exception:  # noqa: BLE001 - unreadable votes are no approval
         votes = None
     auto_approved = (

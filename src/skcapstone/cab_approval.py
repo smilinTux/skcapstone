@@ -26,6 +26,7 @@ from __future__ import annotations
 import functools
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -51,11 +52,14 @@ MAX_ALLOWED_APPROVAL_AGE_SECONDS = 604800.0  # seven days
 
 
 def identity_key(identity: Any) -> str:
-    """Spelling-independent key: lowercase local part, ``capauth:`` stripped."""
-    key = str(identity or "").strip().lower()
+    """Spelling-independent key: whitespace stripped, case folded local part, no ``capauth:``.
+
+    ``chef``, ``"chef "``, ``Chef`` and ``capauth:chef@skworld.io`` are one voter.
+    """
+    key = str(identity or "").strip().casefold()
     if key.startswith("capauth:"):
         key = key[len("capauth:") :]
-    return key.split("@", 1)[0]
+    return key.split("@", 1)[0].strip()
 
 
 def is_machine_identity(identity: Any) -> bool:
@@ -142,6 +146,48 @@ def votes_for(itil: Any, change_id: str) -> list:
         for v in itil.get_cab_votes(change_id)
         if getattr(v, "change_id", None) == change_id and _file_binds(itil, change_id, v)
     ]
+
+
+def _issued_at(envelope: Any) -> datetime | None:
+    """A grant's signed ``issued_at`` as an aware datetime, or None."""
+    if not isinstance(envelope, dict):
+        return None
+    try:
+        issued = datetime.fromisoformat(str(envelope.get("issued_at")).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return issued if issued.tzinfo is not None else None
+
+
+def current_votes(itil: Any, change_id: str, approvers: dict | None = None) -> list:
+    """Each voter's current vote on *change_id*: one slot per human (card bada5c86).
+
+    Starts from ``votes_for`` (bound to the change and file name). Voters compare by
+    ``identity_key``. For a voter holding at least one verified signed vote, only the
+    signed vote with the latest signed ``issued_at`` counts (a rejection wins a tie)
+    and that voter's unsigned votes are dropped, so an older grant written back cannot
+    undo a later decision. Voters with no signed vote keep their votes as they are.
+    """
+    pins = load_approvers() if approvers is None else approvers
+    signed: dict[str, tuple[tuple[datetime, bool], Any]] = {}
+    unsigned = []
+    for vote in votes_for(itil, change_id):
+        envelope = stored_envelope(itil, vote)
+        issued = _issued_at(envelope)
+        if issued is None or not verify_vote_envelope(vote, envelope, pins, change_id=change_id):
+            unsigned.append(vote)
+            continue
+        key = identity_key(vote.agent)
+        rank = (issued, _decision(vote) == "rejected")
+        if key not in signed or rank > signed[key][0]:
+            signed[key] = (rank, vote)
+    return [vote for _rank, vote in signed.values()] + [
+        vote for vote in unsigned if identity_key(vote.agent) not in signed
+    ]
+
+
+def _decision(vote: Any) -> str:
+    return str(getattr(vote.decision, "value", vote.decision))
 
 
 def stored_envelope(itil: Any, vote: Any) -> dict | None:
@@ -281,13 +327,13 @@ def human_approval_times(itil: Any, change: Any) -> list[str]:
     say, and any named rejection means no human approval. Fails closed on an
     unreadable vote store.
     """
+    approvers = load_approvers()
     try:
-        votes = votes_for(itil, change.id)
+        votes = current_votes(itil, change.id, approvers)
     except Exception:  # noqa: BLE001 - unreadable votes are no approval
         return []
     if auto_approved(change, votes) or any(_rejected(v) for v in votes):
         return []
-    approvers = load_approvers()
     return [
         str(stored_envelope(itil, v)["issued_at"])
         for v in votes
@@ -304,7 +350,7 @@ def approval_basis(itil: Any, change: Any) -> str | None:
     if getattr(change.status, "value", change.status) not in ("approved", "scheduled"):
         return None
     try:
-        votes = votes_for(itil, change.id)
+        votes = current_votes(itil, change.id)
     except Exception:  # noqa: BLE001 - unreadable votes are no approval
         return None
     if auto_approved(change, votes):
@@ -325,6 +371,7 @@ def record_signed_vote(itil: Any, envelope: dict, *, conditions: str = "") -> An
     """
     import inspect
 
+    refuse_rollback(itil, envelope)
     decision = str(envelope["action"]).rsplit(".", 1)[-1]
     kwargs = dict(
         agent=envelope["issuer"],
@@ -335,7 +382,7 @@ def record_signed_vote(itil: Any, envelope: dict, *, conditions: str = "") -> An
         subject_fingerprint=envelope["issuer_fingerprint"],
         authorization_id=envelope["authorization_id"],
     )
-    if "authorization" in inspect.signature(itil.submit_cab_vote).parameters:
+    if _accepts_authorization(itil.submit_cab_vote, inspect):
         return itil.submit_cab_vote(envelope["change_id"], authorization=envelope, **kwargs)
     vote = itil.submit_cab_vote(envelope["change_id"], **kwargs)
     path = Path(itil.cab_dir) / f"{envelope['change_id']}-{vote.agent}.json"
@@ -343,6 +390,58 @@ def record_signed_vote(itil: Any, envelope: dict, *, conditions: str = "") -> An
     data["authorization"] = envelope
     path.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
     return vote
+
+
+def _accepts_authorization(submit: Any, inspect: Any) -> bool:
+    """Whether this skcoord's ``submit_cab_vote`` stores ``authorization=``.
+
+    Named in the signature, or (behind a ``**kwargs`` wrapper) a vote model that has
+    the field. Recording a signed grant as unsigned and patching the file afterwards
+    would be refused by a release that guards signed slots.
+    """
+    params = inspect.signature(submit).parameters
+    if "authorization" in params:
+        return True
+    if not any(p.kind is p.VAR_KEYWORD for p in params.values()):
+        return False
+    try:
+        from skcoord.itil import CABDecision
+    except ImportError:
+        return False
+    return "authorization" in CABDecision.model_fields
+
+
+def refuse_rollback(itil: Any, envelope: dict) -> None:
+    """Raise ``ValueError`` unless *envelope* is strictly newer than its voter's signed vote.
+
+    When the issuer (by ``identity_key``, across every file name) already holds a
+    verified signed vote on the change, the new grant's signed ``issued_at`` must be
+    strictly later than every one held. Otherwise a replayed older grant (an approval
+    since revoked by a signed rejection) would roll the decision back. skcoord refuses
+    this from the bada5c86 release on; checking here keeps every skcapstone write path
+    safe on older releases.
+    """
+    change_id = str(envelope.get("change_id") or "")
+    key = identity_key(envelope.get("issuer"))
+    try:
+        votes = votes_for(itil, change_id)
+    except Exception:  # noqa: BLE001 - nothing readable, nothing held
+        return
+    held = []
+    for vote in votes:
+        if identity_key(vote.agent) != key:
+            continue
+        stored = stored_envelope(itil, vote)
+        if verify_vote_envelope(vote, stored, change_id=change_id):
+            held.append(_issued_at(stored))
+    if not held:
+        return
+    issued = _issued_at(envelope)
+    if issued is None or any(t is None or issued <= t for t in held):
+        raise ValueError(
+            f"refusing to replace the authenticated CAB vote of {envelope.get('issuer')!r} on "
+            f"{change_id}: the new grant is not issued after the one held"
+        )
 
 
 def refuse_unsigned_overwrite(itil: Any, change_id: str, voter: str) -> None:

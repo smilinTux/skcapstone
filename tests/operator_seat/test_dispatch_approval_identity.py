@@ -375,3 +375,27 @@ def test_vote_file_renamed_to_another_voter_never_actuates(tmp_path):
     cast_signed_vote(itil, chg.id, subject="chef", role="owner")
     (itil.cab_dir / f"{chg.id}-chef.json").rename(itil.cab_dir / f"{chg.id}-casey.json")
     _assert_never_actuates(paths, ledger, itil, chg)
+
+
+# ── a signed decision cannot be rolled back (round 4) ───────────────────
+
+
+def test_replayed_old_approval_after_a_signed_rejection_never_actuates(tmp_path, monkeypatch):
+    from datetime import datetime as _dt
+
+    from tests import cab_grants
+
+    paths, itil, ledger, chg = _world(tmp_path)
+    monkeypatch.setattr(cab_grants, "ISSUED_AT", _dt.fromisoformat("2026-08-24T22:00:00+00:00"))
+    old = envelope(chg.id, issuer="chef", role="owner")
+    from skcapstone.cab_approval import record_signed_vote
+
+    record_signed_vote(itil, old)
+    monkeypatch.setattr(cab_grants, "ISSUED_AT", _dt.fromisoformat("2026-08-24T23:00:00+00:00"))
+    cast_signed_vote(itil, chg.id, subject="chef", role="owner", decision="rejected")
+    with pytest.raises(ValueError, match="refusing to replace"):
+        record_signed_vote(itil, old)
+    assert dispatch.human_approval_times(itil, chg) == []
+    outcome, calls, _state = _dispatch(paths, ledger, itil, chg)
+    assert calls == []
+    assert not outcome.outcome.startswith("verified")

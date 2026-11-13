@@ -16,6 +16,11 @@ one. A vote counts only for the change being gated and the voter its file names
 (`cab_approval.votes_for`), so a vote file copied under another change's or
 voter's name authorizes nothing. Approval age is measured from the grant's signed
 `issued_at`, not the vote file's `decided_at`, and the CMDB apply gate and the
-trustee guard now apply it too (a day, the dispatcher's default). `docs/ATLAS_EXECUTION_SAFETY.md` gains the arming runbook
+trustee guard now apply it too (a day, the dispatcher's default). A signed
+decision cannot be rolled back: `record_signed_vote` refuses a grant unless its
+signed `issued_at` is strictly later than the voter's signed vote already held,
+and every gate counts, per voter, only the signed vote with the latest
+`issued_at` (`cab_approval.current_votes`). Voter names are stripped and
+compared case folded, so one human has one vote slot. `docs/ATLAS_EXECUTION_SAFETY.md` gains the arming runbook
 (Chef writes and reads back the pin, open changes are re-voted) and states the
 trust limit of the pin on a node where everything runs as one sudo-capable user.
