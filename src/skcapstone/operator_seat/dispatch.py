@@ -58,7 +58,7 @@ from urllib.parse import quote
 from ..fleet import store
 from ..fleet.paths import FleetPaths
 from ..itil import CABDecisionValue, _is_human_approval
-from . import action_ledger, decisions, evidence, node_local, policy, safety
+from . import action_ledger, actuator, decisions, evidence, node_local, policy, safety
 
 #: Prefix of the tag the loop puts on every change it drafts, naming the ONE intent
 #: (app, action, target) that change authorizes.
@@ -326,30 +326,123 @@ def condition_firing(condition: dict, problem_types: set[str]) -> bool:
     )
 
 
+#: The longest settle window any actuation may ask the postcondition to wait for.
+#: The pass has a five minute runtime budget; this keeps one action well inside it.
+MAX_POSTCONDITION_SETTLE_S = 120
+#: The shortest poll interval honoured (a smaller one is raised to this).
+MIN_POSTCONDITION_POLL_S = 1
+
+
+def _bound_matches(conditions: list, proposal: dict) -> list[dict]:
+    return [
+        item
+        for item in conditions
+        if isinstance(item, dict)
+        and item.get("type") == proposal.get("condition")
+        and (proposal.get("object") is None or item.get("object") == proposal.get("object"))
+    ]
+
+
+def _actuation_timing(result: Any) -> tuple[datetime, int, float] | None:
+    """``(acted_at, attempts, poll_s)`` when the actuation said when it acted, else None.
+
+    The honor envelope nests it under ``actuation``; a direct actuator result carries it
+    at the top. The settle window is bounded by ``MAX_POSTCONDITION_SETTLE_S`` and a bad
+    value means no wait at all (one read), never an unbounded one.
+    """
+    if not isinstance(result, dict):
+        return None
+    body = result.get("actuation") if isinstance(result.get("actuation"), dict) else result
+    acted_at = evidence.parse_aware(body.get("acted_at"))
+    if acted_at is None:
+        return None
+    settle, poll = body.get("settle_s"), body.get("poll_s")
+    numeric = all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+        for v in (settle, poll)
+    )
+    if not numeric or settle <= 0:
+        return acted_at, 1, 0.0
+    poll = max(float(poll), float(MIN_POSTCONDITION_POLL_S))
+    settle = min(float(settle), float(MAX_POSTCONDITION_SETTLE_S))
+    return acted_at, 1 + int(settle // poll), poll
+
+
+def _fresh_verdict(
+    observer: Callable[..., dict],
+    proposal: dict,
+    paths: FleetPaths,
+    now_iso: str,
+    problem_types: set[str],
+    acted_at: datetime,
+) -> tuple[bool, str]:
+    """One read of the owning app, judged ONLY on evidence written at or after the action."""
+    try:
+        payload = observer(paths, now_iso) or {}
+    except Exception as exc:  # noqa: BLE001 - an unreadable probe is never "verified"
+        return False, f"re-observation failed after action: {type(exc).__name__}"
+    matches = _bound_matches(payload.get("conditions", []), proposal)
+    if not matches:
+        return False, "bound condition missing after action"
+    for item in matches:
+        stamp = evidence.parse_aware(
+            item.get("source_observed_at", payload.get("source_observed_at"))
+        )
+        if stamp is None or stamp < acted_at:
+            return False, "no evidence newer than the action yet"
+    if any(condition_firing(item, problem_types) for item in matches):
+        return False, "bound condition still firing after action"
+    return True, "postcondition verified on evidence newer than the action"
+
+
 def verify_postcondition(
     observers: dict[str, Callable[..., dict]],
     proposal: dict,
     paths: FleetPaths,
     now_iso: str,
     problem_types: set[str],
+    *,
+    result: Any = None,
+    sleep: Callable[[float], Any] | None = None,
 ) -> tuple[bool, str]:
-    """Re-observe the owning app and require the bound condition to clear."""
+    """Re-observe the owning app and require the bound condition to clear.
+
+    When the actuation reports when it acted (``acted_at``, with a ``settle_s`` /
+    ``poll_s`` window; the fleet restart does, card 21b01d01) the postcondition is
+    judged only on evidence whose source time is at or after that instant, re-read every
+    ``poll_s`` seconds for at most ``settle_s`` (capped at ``MAX_POSTCONDITION_SETTLE_S``).
+    A store-mediated adapter only reports a restart once its node re-observes, so an
+    immediate read would see the pre-action status and fail every real restart; and the
+    pre-action status, however healthy, never verifies the action. ``sleep`` is
+    injectable for tests.
+
+    An actuation that does not say when it acted (live-probe adapters such as skchat)
+    keeps the single immediate read.
+    """
     app = proposal.get("app")
     observer = observers.get(app)
     if observer is None:
         return False, "owning observer unavailable"
-    conditions = observer(paths, now_iso).get("conditions", [])
-    matches = [
-        item
-        for item in conditions
-        if item.get("type") == proposal.get("condition")
-        and (proposal.get("object") is None or item.get("object") == proposal.get("object"))
-    ]
-    if not matches:
-        return False, "bound condition missing after action"
-    if any(condition_firing(item, problem_types) for item in matches):
-        return False, "bound condition still firing after action"
-    return True, "postcondition verified"
+    timing = _actuation_timing(result)
+    if timing is None:
+        conditions = observer(paths, now_iso).get("conditions", [])
+        matches = _bound_matches(conditions, proposal)
+        if not matches:
+            return False, "bound condition missing after action"
+        if any(condition_firing(item, problem_types) for item in matches):
+            return False, "bound condition still firing after action"
+        return True, "postcondition verified"
+    acted_at, attempts, poll = timing
+    sleep = time.sleep if sleep is None else sleep
+    reason = "postcondition not evaluated"
+    for attempt in range(attempts):
+        if attempt:
+            sleep(poll)
+        ok, reason = _fresh_verdict(observer, proposal, paths, now_iso, problem_types, acted_at)
+        if ok:
+            return True, reason
+    waited = (attempts - 1) * poll
+    return False, f"{reason} (after {waited:g}s settle)"
 
 
 def reobserve(
@@ -1056,6 +1149,7 @@ def dispatch_intent(
     target_known: Callable[[dict], bool] | None = None,
     action_allowed: Callable[[dict], bool] | None = None,
     max_approval_age_s: float = DEFAULT_MAX_APPROVAL_AGE_SECONDS,
+    postcondition_sleep: Callable[[float], Any] | None = None,
 ) -> DispatchOutcome:
     """Dispatch one PROPOSED intent: refuse, verify, authorize, actuate, verify.
 
@@ -1238,7 +1332,15 @@ def dispatch_intent(
                     else "invalid actuator response"
                 )
                 raise RuntimeError(str(reason))
-            verified, reason = verify_postcondition(adapters, prop, paths, now_iso, problem_types)
+            verified, reason = verify_postcondition(
+                adapters,
+                prop,
+                paths,
+                now_iso,
+                problem_types,
+                result=result,
+                sleep=postcondition_sleep,
+            )
             if not verified:
                 raise RuntimeError(reason)
         except Exception as exc:  # noqa: BLE001 - contain and record, never crash the pass
@@ -1246,7 +1348,9 @@ def dispatch_intent(
             # never count against the execution-state circuit breaker (nothing
             # was actually attempted) and must never trigger a rollback (there is
             # nothing to roll back -- rollback_fn reverses a real actuation).
-            preflight = isinstance(exc, _PreflightRefusalError)
+            # actuator.NotAttemptedError is the honor path refusing an unresolvable
+            # target (placed on another node, no unit mapping) before anything ran.
+            preflight = isinstance(exc, (_PreflightRefusalError, actuator.NotAttemptedError))
             if change_taken:
                 _close_out_change(itil, change.id, actor, "failed", str(exc)[:200], emit)
             # The kill switch REFUSING is not a fault of the action and must not feed the
@@ -1494,6 +1598,7 @@ __all__ = [
     "DispatchOutcome",
     "condition_firing",
     "verify_postcondition",
+    "MAX_POSTCONDITION_SETTLE_S",
     "resolve_decision",
     "dispatch_intent",
     "run_dispatch_pass",

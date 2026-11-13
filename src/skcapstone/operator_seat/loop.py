@@ -893,7 +893,7 @@ def _run_once(
                     raise RuntimeError("actuator omitted performed=True proof")
                 if verify_required:
                     verified, reason = _verify_postcondition(
-                        adapters, prop, paths, now_iso, ptypes
+                        adapters, prop, paths, now_iso, ptypes, result=result
                     )
                     if not verified:
                         raise RuntimeError(reason)

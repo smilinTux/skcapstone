@@ -11,8 +11,9 @@ When honoring is on, an auto-approved action:
 1. is recorded as an ITIL change record first (governance: every operator
    action is an ITIL change, per the Atlas Constitution), then
 2. physically actuates through the tested ``actuator.honor`` systemd path
-   (fleet ``restart_service`` on the object's unit, or the skchat adapter's
-   reversible standard restarts).
+   (fleet ``restart_service`` on the unit named by the object's fleet spec, only
+   when the object is placed on this node, or the skchat adapter's reversible
+   standard restarts).
 
 Only the two step-1 adapters participate (``HONOR_ADAPTERS``). Irreversible or
 major actions never reach here: ``policy.classify_change`` forces them to
@@ -77,6 +78,35 @@ def _change_type(classification: dict) -> str:
     return "standard" if classification.get("change_class") == "standard" else "normal"
 
 
+def _honor_fleet(paths, proposal: dict, target: dict, *, runner=None) -> dict:
+    """Restart the RESOLVED fleet unit and say when it acted.
+
+    ``acted_at`` is the real clock (whole seconds, as the node's status files are
+    stamped) taken just before systemctl runs. The dispatcher's postcondition only
+    accepts evidence written at or after it, polled for ``settle_s`` every
+    ``poll_s`` seconds, so the pre-action status can never verify the action.
+    """
+    from . import adapter
+
+    acted_at = adapter.probe_time()
+    actuation = actuator.honor(
+        paths,
+        {"action": "restart_service", "ts": proposal.get("ts")},
+        target["unit"],
+        runner=runner,
+    )
+    if isinstance(actuation, dict):
+        actuation = {
+            **actuation,
+            "object": target["object"],
+            "node": target["node"],
+            "acted_at": acted_at,
+            "settle_s": fleet_adapter.RESTART_SETTLE_S,
+            "poll_s": fleet_adapter.RESTART_POLL_S,
+        }
+    return actuation
+
+
 def build_apply_fn(
     paths,
     now_iso: str,
@@ -99,6 +129,16 @@ def build_apply_fn(
         adapter_name = route_action(action)
         if adapter_name not in HONOR_ADAPTERS:
             raise ValueError(f"no honor adapter for action {action!r} (step-1: {HONOR_ADAPTERS})")
+
+        # Resolve the fleet target BEFORE anything is recorded or run: the unit comes
+        # from the fleet spec and the object must be placed on this node. A refusal
+        # raises actuator.NotAttemptedError (nothing attempted, no ITIL change opened,
+        # no annotation written), and the dispatcher escalates it to a human.
+        target = (
+            fleet_adapter.resolve_restart_target(paths, proposal)
+            if adapter_name == "fleet"
+            else None
+        )
 
         rollback = proposal.get("rollback_plan") or "revert via controller reconcile"
         record = itil_intent.build_change_record(
@@ -124,13 +164,7 @@ def build_apply_fn(
                 )
             else:  # fleet: annotate the signed intent, then physically honor it.
                 fleet_adapter.fleet_act(paths, proposal, classification, now_iso=now_iso)
-                unit = proposal.get("unit") or proposal.get("object")
-                actuation = actuator.honor(
-                    paths,
-                    {"action": "restart_service", "ts": proposal.get("ts")},
-                    unit,
-                    runner=runner,
-                )
+                actuation = _honor_fleet(paths, proposal, target, runner=runner)
             if not isinstance(actuation, dict) or actuation.get("performed") is not True:
                 reason = (
                     actuation.get("reason", "actuator did not perform action")
@@ -184,13 +218,8 @@ def build_rollback_fn(
                 paths, rollback_proposal, classification, runner=runner
             )
         if adapter_name == "fleet":
-            unit = rollback_proposal.get("unit") or rollback_proposal.get("object")
-            return actuator.honor(
-                paths,
-                {"action": action, "ts": rollback_proposal.get("ts")},
-                unit,
-                runner=runner,
-            )
+            target = fleet_adapter.resolve_restart_target(paths, rollback_proposal)
+            return _honor_fleet(paths, rollback_proposal, target, runner=runner)
         raise ValueError(f"no rollback adapter for action {action!r}")
 
     return rollback_fn

@@ -9,6 +9,7 @@ act verb is wired in the fleet adapter CLI card; observe here writes nothing.
 from __future__ import annotations
 
 import logging
+import re
 
 from ..fleet import (
     agent_controller,
@@ -20,6 +21,8 @@ from ..fleet import (
     store,
 )
 from ..fleet.paths import self_node_name
+from ..fleet.services import ServiceSpecError, normalize_service_spec
+from . import actuator
 
 logger = logging.getLogger(__name__)
 
@@ -119,45 +122,76 @@ def fleet_explain() -> dict:
     }
 
 
+def _status_written_at(paths, kind: str, name: str, node: str | None) -> str | None:
+    """When the node daemon last WROTE the status a row was derived from, or None.
+
+    The controllers below pick the status of the placed node when there is one,
+    else the first status on disk (``store.merged`` order). This picks the same
+    file. Status files are write-on-change (``store.write_status``), so
+    ``updatedAt`` is the last time sknoded observed this content and found it
+    different: the data was certainly true then. It is a lower bound, never an
+    invented "now": an unchanged reading ages, and old evidence is refused at the
+    decision point rather than passed off as fresh.
+    """
+    if node is not None:
+        status = store.read_status(paths, kind, name, node)
+    else:
+        statuses = (store.merged(paths, kind, name) or {}).get("statuses") or []
+        status = statuses[0] if statuses else None
+    stamp = (status or {}).get("updatedAt")
+    return stamp if isinstance(stamp, str) and stamp else None
+
+
+def _cond(ctype: str, status, obj: str, source_time: str | None) -> dict:
+    item = {"type": ctype, "status": status, "object": obj}
+    if source_time is not None:
+        item["source_observed_at"] = source_time
+    return item
+
+
 def fleet_observe(paths, now_iso: str) -> dict:
     """Read-only snapshot of every fleet object's key condition(s).
 
     Never writes: the operator's observe verb only reads derived state.
+
+    Source time (card 21b01d01): each condition carries ``source_observed_at``,
+    the ``updatedAt`` its node wrote on the file the condition was derived from
+    (the object's status file, or ``node.json`` for node conditions). The pass
+    clock ``now_iso`` is NOT a source time and is never reported as one: it only
+    says when this pass evaluated the files. A condition with no status file has
+    no source time and therefore cannot be actuated on (operator_seat.evidence).
     """
     conds: list[dict] = []
 
     for nv in node_controller.node_views(paths):
+        report = store.read_node_file(paths, nv.name, "node.json") or {}
+        stamp = report.get("updatedAt") if isinstance(report.get("updatedAt"), str) else None
         for c in nv.conditions:
-            conds.append({"type": c.get("type"), "status": c.get("status"), "object": nv.name})
+            conds.append(_cond(c.get("type"), c.get("status"), nv.name, stamp))
 
     for row in cron_controller.cron_rows(paths, now_iso):
-        conds.append({"type": "MissedRun", "status": _b(row.missed), "object": row.name})
+        stamp = _status_written_at(paths, "cronjob", row.name, row.node)
+        conds.append(_cond("MissedRun", _b(row.missed), row.name, stamp))
 
     for row in agent_controller.agent_rows(paths, now_iso):
-        conds.append({"type": "AgentReady", "status": row.ready, "object": row.name})
+        stamp = _status_written_at(paths, "agent", row.name, row.node)
+        conds.append(_cond("AgentReady", row.ready, row.name, stamp))
 
     for row in modelserver_controller.modelserver_rows(paths, now_iso):
-        conds.append({"type": "Serving", "status": _b(row.serving), "object": row.name})
+        stamp = _status_written_at(paths, "modelserver", row.name, row.node)
+        conds.append(_cond("Serving", _b(row.serving), row.name, stamp))
 
     for row in config_controller.config_rows(paths, now_iso):
-        conds.append(
-            {"type": "SecretPresent", "status": _b(row.secrets_present), "object": row.name}
-        )
-        conds.append({"type": "ConfigDrift", "status": _b(row.drift), "object": row.name})
-        conds.append(
-            {"type": "RotationOverdue", "status": _b(row.rotation_overdue), "object": row.name}
-        )
+        stamp = _status_written_at(paths, "config", row.name, row.node)
+        conds.append(_cond("SecretPresent", _b(row.secrets_present), row.name, stamp))
+        conds.append(_cond("ConfigDrift", _b(row.drift), row.name, stamp))
+        conds.append(_cond("RotationOverdue", _b(row.rotation_overdue), row.name, stamp))
 
     for row in service_controller.service_rows(paths):
-        conds.append({"type": "Ready", "status": row.ready, "object": row.name})
+        stamp = _status_written_at(paths, "service", row.name, row.node)
+        conds.append(_cond("Ready", row.ready, row.name, stamp))
 
-    # Every row above is derived from the fleet store AS OF ``now_iso`` (heartbeat
-    # ages and cron windows are evaluated against it), so that evaluation instant is
-    # the source time. The pass clock is a fair source time here only because the
-    # decision-point check measures it against the real clock: an old pass clock
-    # makes this evidence old. Cached or stale store data shows up as the derived
-    # conditions themselves (NotReady, MissedRun), not as a fresh-looking stamp.
-    return {"conditions": conds, "source_observed_at": now_iso}
+    return {"conditions": conds}
 
 
 def fleet_target_known(paths, proposal: dict) -> bool:
@@ -173,6 +207,86 @@ def fleet_target_known(paths, proposal: dict) -> bool:
     if kind is None:
         return True
     return store.read_spec(paths, kind, proposal.get("object")) is not None
+
+
+#: How long the postcondition may wait for this node's sknoded to re-observe a
+#: restarted unit. Converge runs every ``converge.ACTUATION_INTERVAL_S`` (30 s)
+#: and writes status only on change, so two passes plus slack covers it.
+RESTART_SETTLE_S = 75
+RESTART_POLL_S = 5
+
+#: A plain systemd unit name: no whitespace, no leading dash (never an option to
+#: systemctl), no path separators.
+_UNIT_RE = re.compile(r"^[A-Za-z0-9_.@:-]+$")
+
+
+def resolve_restart_target(paths, proposal: dict, *, local_node: str | None = None) -> dict:
+    """Resolve a fleet ``restart_service`` proposal to a concrete unit on THIS node.
+
+    Returns ``{"object", "unit", "node", "runtime"}`` or raises
+    ``actuator.NotAttemptedError`` with the reason. Fails closed, never guesses:
+
+    * only ``restart_service`` has physical muscle; ``rerun_cronjob`` and
+      ``replace_workload`` are refused rather than run as a unit restart;
+    * the unit is ``spec.unit`` of the fleet Service object, the same field
+      sknoded's converge actuates (``services.normalize_service_spec``). The
+      object name is never used as a unit, and a proposal that names a
+      different unit is refused (the brain does not choose the unit);
+    * the object must be placed, and placed on this node. There is no reviewed
+      remote actuation path (the operator plane's ``act`` route is reserved and
+      never actuates), so an object placed elsewhere is refused, not restarted
+      locally;
+    * only the ``systemd-user`` runtime is restarted; a paused or deleted object
+      is refused.
+    """
+    action = proposal.get("action")
+    if action != "restart_service":
+        raise actuator.NotAttemptedError(
+            f"fleet action {action!r} has no physical muscle on the honor path"
+        )
+    name = proposal.get("object")
+    payload = store.read_spec(paths, "service", name) if isinstance(name, str) else None
+    if payload is None:
+        raise actuator.NotAttemptedError(f"unknown service object {name!r}")
+    raw = payload.get("spec") or {}
+    if not raw.get("unit"):
+        raise actuator.NotAttemptedError(
+            f"service {name!r} has no unit mapping (spec.unit); refusing to guess"
+        )
+    try:
+        spec = normalize_service_spec(raw)
+    except ServiceSpecError as exc:
+        raise actuator.NotAttemptedError(f"service {name!r} spec invalid: {exc}") from exc
+    unit = spec["unit"]
+    if not _UNIT_RE.match(unit) or unit.startswith("-"):
+        raise actuator.NotAttemptedError(
+            f"service {name!r} spec.unit {unit!r} is not a plain systemd unit name"
+        )
+    claimed = proposal.get("unit")
+    if claimed is not None and claimed != unit:
+        raise actuator.NotAttemptedError(
+            f"proposal names unit {claimed!r} but service {name!r} maps to {unit!r}"
+        )
+    if spec["deleted"] or spec["paused"]:
+        state = "deleted" if spec["deleted"] else "paused"
+        raise actuator.NotAttemptedError(f"service {name!r} is {state}; not restarted")
+    if spec["runtime"] != "systemd-user":
+        raise actuator.NotAttemptedError(
+            f"service {name!r} runtime {spec['runtime']!r} has no restart muscle here"
+        )
+    placement = store.read_placement(paths, "service", name)
+    node = (placement or {}).get("node")
+    if not node:
+        raise actuator.NotAttemptedError(
+            f"service {name!r} has no placement; cannot tell which node runs it"
+        )
+    here = local_node or self_node_name()
+    if node != here:
+        raise actuator.NotAttemptedError(
+            f"service {name!r} is placed on {node!r}, this seat runs on {here!r}; "
+            "no reviewed remote actuation path exists, refusing"
+        )
+    return {"object": name, "unit": unit, "node": node, "runtime": spec["runtime"]}
 
 
 def _acting_identity() -> str:
@@ -274,4 +388,10 @@ def fleet_act(paths, proposal: dict, classification: dict, *, now_iso: str, writ
     return store.write_spec(paths, kind, name, spec, writer=writer)
 
 
-__all__ = ["fleet_explain", "fleet_observe", "fleet_act", "PROBLEM_WHEN_TRUE"]
+__all__ = [
+    "fleet_explain",
+    "fleet_observe",
+    "fleet_act",
+    "resolve_restart_target",
+    "PROBLEM_WHEN_TRUE",
+]
