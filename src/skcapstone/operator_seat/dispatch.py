@@ -185,6 +185,62 @@ def stored_lane(ledger: action_ledger.ActionLedger, intent_id: str) -> str | Non
     return lane if lane in ("auto", "escalate") else None
 
 
+#: Identities that never approve (card bada5c86): the operator seat runs as
+#: ``SKAGENT=operator`` and writes its ledger as ``atlas``; device seats are machines.
+_MACHINE_VOTERS = frozenset({"operator", "atlas"})
+_MACHINE_VOTER_PREFIXES = ("device:", "operator:")
+#: Labels that name no one (what a caller writes when it has no identity).
+_PLACEHOLDER_VOTERS = frozenset({"", "human", "unattributed", "unknown"})
+_HUMAN_APPROVER_ROLES = ("owner", "approver")
+
+
+def _identity_key(identity: Any) -> str:
+    """Spelling-independent key: lowercase local part, ``capauth:`` stripped."""
+    key = str(identity or "").strip().lower()
+    if key.startswith("capauth:"):
+        key = key[len("capauth:") :]
+    return key.split("@", 1)[0]
+
+
+def _is_machine_identity(identity: Any) -> bool:
+    key = _identity_key(identity)
+    return (
+        key in _MACHINE_VOTERS
+        or key in _PLACEHOLDER_VOTERS
+        or key.startswith(_MACHINE_VOTER_PREFIXES)
+    )
+
+
+def qualifying_human_approval(vote: Any, change: Any) -> bool:
+    """Whether *vote* is a human approval this dispatcher may act on (card bada5c86).
+
+    All of: an APPROVE that ITIL's ``_is_human_approval`` accepts; authenticated
+    provenance (a human approver role, signer fingerprint and the id of the signed
+    authorization it was verified against); a voter that names a person, not a
+    placeholder such as ``human`` and not the operator seat or a device; and a voter
+    who is not the change's drafter, creator or managed-by owner.
+
+    Checked here as well as in the skcoord fold so the actuation boundary does not
+    depend on which skcoord release is installed: before bada5c86 the fold counted a
+    bare ``agent="human"`` vote and any vote by the change's creator. A historical
+    unprovenanced vote never qualifies here; it is older than any usable approval age.
+    """
+    if vote.decision != CABDecisionValue.APPROVED or not _is_human_approval(vote):
+        return False
+    if not (
+        vote.subject_role in _HUMAN_APPROVER_ROLES
+        and vote.subject_fingerprint
+        and vote.authorization_id
+    ):
+        return False
+    if _is_machine_identity(vote.agent):
+        return False
+    owners = {
+        _identity_key(x) for x in (change.prepared_by, change.created_by, change.managed_by) if x
+    }
+    return _identity_key(vote.agent) not in owners
+
+
 def human_approval_times(itil: Any, change: Any) -> list[str]:
     """``decided_at`` of every qualifying human approval; ``[]`` means NOT human-approved.
 
@@ -192,9 +248,10 @@ def human_approval_times(itil: Any, change: Any) -> list[str]:
     fold only writes that marker while a change is still PROPOSED, so a standard change that
     goes approved, scheduled, unscheduled folds ``approved`` with no marker and used to read
     as human. A change is human-approved only when there is a qualifying human approval vote
-    (``_is_human_approval``, the drafter's own excluded, exactly as the fold does) and no
-    rejection. A ``standard`` change, or one that meets the fold's auto-normal derivation, is
-    auto-approved whatever its timeline says, and a human vote on it does not change that.
+    (``qualifying_human_approval``: authenticated, and not by the drafter, creator,
+    managed-by owner or the operator seat) and no rejection. A ``standard`` change, or one
+    that meets the fold's auto-normal derivation, is auto-approved whatever its timeline
+    says, and a human vote on it does not change that.
     Fails closed: a vote store that cannot be read means no human approval.
     """
     if change.change_type.value == "standard":
@@ -215,13 +272,7 @@ def human_approval_times(itil: Any, change: Any) -> list[str]:
         return []
     if rejected:
         return []
-    return [
-        str(v.decided_at)
-        for v in votes
-        if v.decision == CABDecisionValue.APPROVED
-        and v.agent != change.prepared_by
-        and _is_human_approval(v)
-    ]
+    return [str(v.decided_at) for v in votes if qualifying_human_approval(v, change)]
 
 
 def change_human_approved(itil: Any, change: Any) -> bool:
@@ -417,6 +468,33 @@ def reobserve(
 # ---------------------------------------------------------------------------
 
 
+def decision_option(decisions_dir: str, decision_id: str, choice: int | None) -> tuple[dict, str]:
+    """The chosen option of a pending decision and the ITIL change it links.
+
+    Raises:
+        ValueError: unknown or already-resolved decision, or an out-of-range choice.
+        UnauthorizedDecisionError: the chosen option links no ITIL change.
+    """
+    pending = {record["id"]: record for record in decisions.list_pending(decisions_dir)}
+    record = pending.get(decision_id)
+    if record is None:
+        raise ValueError(f"unknown or already-resolved decision: {decision_id}")
+    options = record.get("options") or []
+    index = choice if (choice is not None and len(options) > 1) else 0
+    if not options or not 0 <= index < len(options):
+        raise ValueError(f"choice out of range for {len(options)} option(s)")
+    change_id = options[index].get("itil_change_id") or options[index].get("change_id")
+    if not change_id:
+        raise UnauthorizedDecisionError(
+            f"decision {decision_id!r} has no ITIL change linked to option {index}; "
+            "approving it here would authorize nothing (no store on this estate "
+            "can turn a bare decisions-store approval into an actuation) -- "
+            "the proposal must be re-parked with a bound change before it can "
+            "be approved"
+        )
+    return options[index], change_id
+
+
 def resolve_decision(
     decisions_dir: str,
     itil: Any,
@@ -427,6 +505,8 @@ def resolve_decision(
     subject: str,
     resolved_iso: str,
     subject_role: str = "approver",
+    subject_fingerprint: str = "",
+    authorization_id: str = "",
 ) -> dict:
     """Resolve a parked decision, write-through to a CAB vote when approving.
 
@@ -453,6 +533,12 @@ def resolve_decision(
             ITIL's fold treats as a qualifying human role ("owner" or
             "approver"); the default matches what a human resolving a
             decision through this seat is doing.
+        subject_fingerprint: The signer fingerprint of the verified human
+            CapAuth authorization behind this approval (card bada5c86).
+        authorization_id: That authorization's id. Approving without both, or
+            as the operator seat's own identity, raises before any write: such
+            a vote could never authorize, and the running agent's identity is
+            not a human approval.
 
     Returns:
         The updated decision record.
@@ -473,27 +559,22 @@ def resolve_decision(
             resolved_iso=resolved_iso,
         )
 
-    pending = {record["id"]: record for record in decisions.list_pending(decisions_dir)}
-    record = pending.get(decision_id)
-    if record is None:
-        raise ValueError(f"unknown or already-resolved decision: {decision_id}")
-    options = record.get("options") or []
-    index = choice if (choice is not None and len(options) > 1) else 0
-    if not options or not 0 <= index < len(options):
-        raise ValueError(f"choice out of range for {len(options)} option(s)")
-    change_id = options[index].get("itil_change_id") or options[index].get("change_id")
-    if not change_id:
+    option, change_id = decision_option(decisions_dir, decision_id, choice)
+    if (
+        subject_role not in _HUMAN_APPROVER_ROLES
+        or not subject_fingerprint
+        or not authorization_id
+        or _is_machine_identity(subject)
+    ):
         raise UnauthorizedDecisionError(
-            f"decision {decision_id!r} has no ITIL change linked to option {index}; "
-            "approving it here would authorize nothing (no store on this estate "
-            "can turn a bare decisions-store approval into an actuation) -- "
-            "the proposal must be re-parked with a bound change before it can "
-            "be approved"
+            f"decision {decision_id!r}: approving needs a verified human CapAuth "
+            "authorization (role, signer fingerprint and authorization id) for a human "
+            "subject; the running agent's or operator seat's own identity is not a human "
+            "approval"
         )
     # The change must be bound to THIS decision's proposal (app, action, target): a decision
     # whose option points at a change drafted for something else would put a human vote on
     # the wrong change. Checked before any write.
-    option = options[index]
     try:
         expected = change_binding_tag(
             str(option.get("app") or "unknown"),
@@ -522,6 +603,8 @@ def resolve_decision(
         decision="approved",
         subject=subject,
         subject_role=subject_role,
+        subject_fingerprint=subject_fingerprint,
+        authorization_id=authorization_id,
     )
     return decisions.resolve(
         decisions_dir,
@@ -1494,6 +1577,8 @@ __all__ = [
     "DispatchOutcome",
     "condition_firing",
     "verify_postcondition",
+    "decision_option",
+    "qualifying_human_approval",
     "resolve_decision",
     "dispatch_intent",
     "run_dispatch_pass",

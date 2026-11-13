@@ -104,7 +104,8 @@ def test_decide_approve_with_no_linked_change_refuses_and_names_reason(tmp_path,
         decision_id="d1",
         created_iso="2026-07-29T00:00:00Z",
     )
-    out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0"])
+    _stub_grant(monkeypatch)
+    out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0", *_GRANT])
     assert out.exit_code != 0
     assert "d1 ->" not in out.output  # never prints the success line
     assert "no ITIL change linked" in out.output
@@ -112,12 +113,28 @@ def test_decide_approve_with_no_linked_change_refuses_and_names_reason(tmp_path,
     assert len(decisions.list_pending(ddir)) == 1
 
 
-def test_decide_approve_with_linked_change_submits_a_cab_vote(tmp_path, monkeypatch):
-    """Positive counterpart: a decision whose option carries a real
-    itil_change_id write-throughs to a provenance-bound CAB vote (never the
-    literal by="human"), and the ITIL change folds approved as a result."""
-    from skcapstone.fleet import store as fleet_store
+_GRANT = ["--authorization", "grant.json", "--target", "x", "--scope", "scope-1"]
 
+
+def _stub_grant(monkeypatch, calls=None):
+    """Stand in for the signed-grant verifier (PGP and the human profile are
+    covered by the `itil cab vote --authorization` tests); record its inputs."""
+    from types import SimpleNamespace
+
+    def verified(path, change_id, decision, target, scope):
+        if calls is not None:
+            calls.append((str(path), change_id, decision, target, scope))
+        return SimpleNamespace(
+            issuer="chef",
+            issuer_role="owner",
+            issuer_fingerprint="A" * 40,
+            authorization_id="authz-test",
+        )
+
+    monkeypatch.setattr("skcapstone.cli.itil._verified_cab_authorization", verified)
+
+
+def _linked_decision(tmp_path, monkeypatch):
     paths = _enroll(tmp_path, monkeypatch)
     home = _redirect_kedb_home(tmp_path, monkeypatch)
     itil = ITILManager(home)
@@ -137,17 +154,44 @@ def test_decide_approve_with_linked_change_submits_a_cab_vote(tmp_path, monkeypa
         decision_id="d1",
         created_iso="2026-07-29T00:00:00Z",
     )
+    return itil, chg, ddir
+
+
+def test_decide_approve_without_a_signed_grant_refuses(tmp_path, monkeypatch):
+    """Card bada5c86: `decide --approve` used to record the running agent's own
+    identity with a self-asserted `approver` role. Without a signed human grant it
+    now refuses before any write."""
+    itil, chg, ddir = _linked_decision(tmp_path, monkeypatch)
     out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0"])
+    assert out.exit_code != 0
+    assert "signed human grant" in out.output
+    assert itil.get_cab_votes(chg.id) == []
+    assert len(decisions.list_pending(ddir)) == 1
+
+
+def test_decide_approve_with_a_signed_grant_records_the_human_issuer(tmp_path, monkeypatch):
+    """A decision whose option carries a real itil_change_id write-throughs to a CAB
+    vote bound to the verified grant: the issuer, role, fingerprint and
+    authorization id, never the running agent's identity."""
+    from skcapstone.fleet import store as fleet_store
+
+    itil, chg, ddir = _linked_decision(tmp_path, monkeypatch)
+    calls = []
+    _stub_grant(monkeypatch, calls)
+    out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0", *_GRANT])
     assert out.exit_code == 0, out.output
     assert "approved" in out.output
     assert decisions.list_pending(ddir) == []  # resolved, no longer pending
+    # The grant is verified against the decision's own linked change.
+    assert calls == [("grant.json", chg.id, "approved", "x", "scope-1")]
 
     votes = itil.get_cab_votes(chg.id)
     assert len(votes) == 1
-    assert votes[0].agent == fleet_store.resolved_writer_identity()  # never "human"
-    assert votes[0].subject_role == "approver"
-    refolded = [c for c in itil.list_changes() if c.id == chg.id][0]
-    assert refolded.status.value == "approved"
+    assert votes[0].agent == "chef"
+    assert votes[0].agent != fleet_store.resolved_writer_identity()
+    assert votes[0].subject_role == "owner"
+    assert votes[0].subject_fingerprint == "A" * 40
+    assert votes[0].authorization_id == "authz-test"
 
 
 def test_pending_empty(tmp_path, monkeypatch):

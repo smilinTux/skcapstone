@@ -19,6 +19,7 @@ from __future__ import annotations
 import functools
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 import click
 
@@ -299,7 +300,22 @@ def pending_cmd() -> None:
 @click.argument("decision_id")
 @click.option("--approve/--reject", required=True)
 @click.option("--choice", type=int, default=None, help="Option index when several are offered.")
-def decide_cmd(decision_id: str, approve: bool, choice: int | None) -> None:
+@click.option(
+    "--authorization",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Signed human CAB grant (`skcapstone itil cab authorize`). Required to approve.",
+)
+@click.option("--target", default="", help="Exact governed mutation target of the grant.")
+@click.option("--scope", default="", help="Exact governed mutation scope of the grant.")
+def decide_cmd(
+    decision_id: str,
+    approve: bool,
+    choice: int | None,
+    authorization: Path | None,
+    target: str,
+    scope: str,
+) -> None:
     """Approve or reject a parked decision (human only).
 
     Resolution is write-through (AUTONOMY_ARCHITECTURE.md section 3.1): the
@@ -310,25 +326,56 @@ def decide_cmd(decision_id: str, approve: bool, choice: int | None) -> None:
     bans exactly that). A decision parked with no linked change authorizes
     nothing: this command refuses and names the reason instead of printing
     success.
+
+    Approving needs a signed human CapAuth authorization for the linked change
+    (card bada5c86). The vote is recorded as the authorization's verified
+    issuer, role and fingerprint, never as the running agent's own identity:
+    that identity is an agent's (or the operator seat's), so it is no human
+    approval. Rejecting needs no grant and is attributed to the resolved
+    identity.
     """
     from .. import SHARED_ROOT
+    from ..cli.itil import _verified_cab_authorization
     from ..itil import ITILManager
 
-    subject = store.resolved_writer_identity()
-    if subject in ("", "unattributed"):
-        raise click.ClickException(
-            "cannot resolve an authenticated CapAuth identity for this approval; "
-            "failing closed rather than recording an unattributed decision"
-        )
+    decisions_dir = _decisions_dir(default_paths())
+    provenance: dict = {}
+    if approve:
+        if authorization is None or not target or not scope:
+            raise click.ClickException(
+                "approving needs a signed human grant: create one with `skcapstone itil cab "
+                "authorize <change> --decision approved --target ... --scope ...`, then pass "
+                "--authorization, --target and --scope; the running agent's own identity "
+                "cannot approve"
+            )
+        try:
+            _, change_id = dispatch.decision_option(decisions_dir, decision_id, choice)
+        except ValueError as exc:
+            raise click.ClickException(str(exc))
+        envelope = _verified_cab_authorization(authorization, change_id, "approved", target, scope)
+        subject = envelope.issuer
+        provenance = {
+            "subject_role": envelope.issuer_role,
+            "subject_fingerprint": envelope.issuer_fingerprint,
+            "authorization_id": envelope.authorization_id,
+        }
+    else:
+        subject = store.resolved_writer_identity()
+        if subject in ("", "unattributed"):
+            raise click.ClickException(
+                "cannot resolve an authenticated CapAuth identity for this rejection; "
+                "failing closed rather than recording an unattributed decision"
+            )
     try:
         out = dispatch.resolve_decision(
-            _decisions_dir(default_paths()),
+            decisions_dir,
             ITILManager(SHARED_ROOT),
             decision_id,
             approve=approve,
             choice=choice,
             subject=subject,
             resolved_iso=_now_iso(),
+            **provenance,
         )
     except dispatch.UnauthorizedDecisionError as exc:
         raise click.ClickException(str(exc))

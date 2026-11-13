@@ -254,9 +254,10 @@ async def test_mcp_cab_vote_binds_authenticated_subject_not_free_text_agent(tmp_
 
 
 @pytest.mark.asyncio
-async def test_mcp_cab_vote_falls_back_to_free_text_when_resolver_unavailable(tmp_path):
-    """When no authenticated identity is resolvable (subject=None), submit_cab_vote
-    keeps its pre-existing free-text behavior (non-breaking for dev/legacy callers)."""
+async def test_mcp_cab_vote_refuses_an_approval_when_resolver_unavailable(tmp_path):
+    """Card bada5c86: with no authenticated identity (subject=None) this tool used
+    to record the free-text label, and a bare "human" folded as a qualifying
+    approval. An approval is now refused and nothing is written."""
     from skcapstone.mcp_tools import itil_tools
 
     mgr = ITILManager(tmp_path)
@@ -267,10 +268,31 @@ async def test_mcp_cab_vote_falls_back_to_free_text_when_resolver_unavailable(tm
         patch.object(itil_tools, "_resolve_authenticated_subject", return_value=None),
     ):
         result = await itil_tools._handle_itil_cab_vote(
-            {"change_id": chg.id, "agent": "legacy-caller", "decision": "approved"}
+            {"change_id": chg.id, "agent": "human", "decision": "approved"}
+        )
+    assert "authenticated" in result[0].text
+    assert mgr.get_cab_votes(chg.id) == []
+    assert mgr.list_changes()[0].status.value == "proposed"
+
+
+@pytest.mark.asyncio
+async def test_mcp_cab_vote_still_records_a_rejection_when_resolver_unavailable(tmp_path):
+    """A veto is always safe, so a rejection keeps the free-text fallback."""
+    from skcapstone.mcp_tools import itil_tools
+
+    mgr = ITILManager(tmp_path)
+    chg = mgr.propose_change(title="veto me", managed_by="lumina")
+
+    with (
+        patch("skcapstone.mcp_tools._helpers.SHARED_ROOT", str(tmp_path)),
+        patch.object(itil_tools, "_resolve_authenticated_subject", return_value=None),
+    ):
+        result = await itil_tools._handle_itil_cab_vote(
+            {"change_id": chg.id, "agent": "legacy-caller", "decision": "rejected"}
         )
     payload = json.loads(result[0].text)
     assert payload["agent"] == "legacy-caller"
+    assert mgr.list_changes()[0].status.value == "rejected"
 
 
 def test_resolve_authenticated_subject_swallows_resolver_errors():
