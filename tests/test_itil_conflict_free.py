@@ -285,7 +285,7 @@ def test_cab_rejection_derives_rejected(tmp_path: Path):
     mgr = ITILManager(tmp_path)
     chg = mgr.propose_change(title="risky", change_type="normal", managed_by="lumina")
     cast_signed_vote(mgr, chg.id, subject="chef", role="owner")
-    mgr.submit_cab_vote(chg.id, agent="sentinel", decision="rejected")
+    mgr.submit_cab_vote(chg.id, agent="sentinel", decision="rejected", subject="sentinel")
     folded = mgr.list_changes()[0]
     assert folded.status.value == "rejected"
 
