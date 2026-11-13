@@ -49,6 +49,12 @@ tests/test_integration_backbone.py::TestIntegratedMode::*[skvoice]
 # pytest.yml closes this.
 tests/test_version_single_source.py::test_resolve_version_fallback_uses_the_git_tag
 
+# 2 tests (card bada5c86). They need the skcoord release carrying the fixed CAB
+# fold (skcoord PR 145); CI pins skcoord 0.1.90 in deploy/fleet-constraints.txt.
+# They run locally with the skcoord branch on PYTHONPATH. Closes when the pin
+# moves to that release; then delete this entry.
+tests/operator_seat/test_dispatch_approval_identity.py::test_auto_lane_does_not_ride_an_unauthenticated_vote
+
 # --- LOCAL-ONLY: genuinely cannot run on a runner ------------------------
 # `skref` is not installed anywhere in the fleet, not even locally. Until it is
 # publishable these should be marked `integration` so they are DESELECTED
