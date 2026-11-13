@@ -33,7 +33,15 @@ def _cli() -> click.Group:
 
 
 def _approve(mgr: ITILManager, change_id: str) -> None:
-    mgr.submit_cab_vote(change_id, agent="human", decision="approved")
+    mgr.submit_cab_vote(
+        change_id,
+        agent="chef",
+        decision="approved",
+        subject="chef",
+        subject_role="owner",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
+    )
 
 
 # ═══════════════════════════════════════════════════════════

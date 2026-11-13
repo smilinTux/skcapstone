@@ -135,7 +135,15 @@ def test_process_one_execute_blocked_once_approved(home):
     # the approvals pool. A raw update_change(..., new_status="approved")
     # deliberately no longer reaches "approved" (skcoord 941570f closed that
     # self-approval bypass); see the negative control below.
-    mgr.submit_cab_vote(chg.id, agent="human", decision="approved")
+    mgr.submit_cab_vote(
+        chg.id,
+        agent="chef",
+        decision="approved",
+        subject="chef",
+        subject_role="owner",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
+    )
     assert mgr._fold_record(mgr.changes_dir, chg.id, Change).status.value == "approved"
 
     ar.request_run(home, chg.id, "implement it now", agent="lumina", mode="execute")

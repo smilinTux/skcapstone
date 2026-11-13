@@ -55,7 +55,15 @@ def _approved_change(home: Path, title: str = "rotate for test") -> str:
 
     mgr = ITILManager(home)
     change = mgr.propose_change(title=title, managed_by="atlas")
-    mgr.submit_cab_vote(change.id, agent="human", decision="approved")
+    mgr.submit_cab_vote(
+        change.id,
+        agent="chef",
+        decision="approved",
+        subject="chef",
+        subject_role="owner",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
+    )
     return change.id
 
 

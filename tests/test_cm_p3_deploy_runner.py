@@ -20,7 +20,15 @@ from skcapstone.itil import ITILManager
 
 
 def _approve_via_human_vote(mgr: ITILManager, change_id: str) -> None:
-    mgr.submit_cab_vote(change_id, agent="human", decision="approved")
+    mgr.submit_cab_vote(
+        change_id,
+        agent="chef",
+        decision="approved",
+        subject="chef",
+        subject_role="owner",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
+    )
 
 
 def _scheduled_change(mgr: ITILManager, window_start: str, window_end: str, **kw):

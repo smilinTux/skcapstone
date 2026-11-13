@@ -632,7 +632,15 @@ class TestTrusteeTools:
 
         manager = ITILManager(home)
         change = manager.propose_change(title="rotate for MCP test", managed_by="atlas")
-        manager.submit_cab_vote(change.id, agent="human", decision="approved")
+        manager.submit_cab_vote(
+            change.id,
+            agent="chef",
+            decision="approved",
+            subject="chef",
+            subject_role="owner",
+            subject_fingerprint="A" * 40,
+            authorization_id="authz-test",
+        )
         return change.id
 
     def _setup_deployment(self, home: Path) -> str:
