@@ -188,7 +188,11 @@ systemctl call:
 * the spec and placement verify with `converge.verify_desired` against the local trust
   roster, and the unit is allowed by the node's profile (`profiles.unit_allowed`). Unlike
   converge, neither check is gated by its rollout mode: the autonomous seat never
-  restarts on an unsigned spec or outside the profile;
+  restarts on an unsigned spec or outside the profile. Limit: the roster always trusts
+  the seat's own key, and `SKFLEET_SIGNING=permissive` signs every local write with it,
+  so a valid signature means "written on a trusted seat", not "authored by Chef".
+  `profiles.unit_allowed` only denies `mustNot` units. Requiring a signer other than
+  the seat is an open decision;
 * the object is `systemd-user`, not paused and not deleted. Pause, deletion, unit and
   placement are checked again immediately before systemctl.
 

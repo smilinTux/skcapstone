@@ -323,7 +323,11 @@ def resolve_restart_target(
     * the spec and placement must verify against the trust roster, with the same
       ``converge.verify_desired`` sknoded uses before healing. Unlike converge,
       this is not gated by the signing rollout mode: an autonomous seat never
-      restarts on an unsigned spec;
+      restarts on an unsigned spec. Limit: the roster always trusts this seat's
+      own key, and permissive signing signs every local write with it, so this
+      proves "written on a trusted seat", not "authored by Chef". The real
+      guards are placement on this node, the .service suffix and the rollback
+      binding;
     * the unit must be allowed for this node's install profile, with the same
       ``profiles.unit_allowed`` converge uses (not gated by the profile rollout
       mode either).
