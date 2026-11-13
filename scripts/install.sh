@@ -74,12 +74,18 @@ fi
 
 PIP="$SKENV/bin/pip"
 # Security floors for transitive dependencies (constraints are inert for packages
-# an install does not use). See constraints/security-floors.txt.
-SK_SECURITY_FLOORS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/constraints/security-floors.txt"
-if [[ -f "$SK_SECURITY_FLOORS" ]]; then
+# an install does not use). See constraints/security-floors.txt. A conflict between
+# these floors and a dependency cap aborts the install (scripts/lib/guarded-pip.sh)
+# instead of silently installing less; SK_SKIP_SECURITY_FLOORS=1 opts out.
+# shellcheck source=lib/guarded-pip.sh
+source "$SCRIPT_DIR/lib/guarded-pip.sh"
+SK_SECURITY_FLOORS="$REPO_ROOT/constraints/security-floors.txt"
+if [[ "${SK_SKIP_SECURITY_FLOORS:-0}" == "1" ]]; then
+    echo "WARNING: SK_SKIP_SECURITY_FLOORS=1, installing without the security floors." >&2
+elif [[ -f "$SK_SECURITY_FLOORS" ]]; then
     export PIP_CONSTRAINT="$SK_SECURITY_FLOORS"
 fi
-$PIP install --upgrade pip -q 2>/dev/null
+guarded_pip_install --upgrade pip -q || echo "  (pip self-upgrade skipped)" >&2
 
 # ---------------------------------------------------------------------------
 # Step 3: Install SK* packages
@@ -95,21 +101,21 @@ install_pkg() {
     for path in $paths; do
         if [[ -d "$path" ]]; then
             if [[ -n "$extras" ]]; then
-                $PIP install -e "${path}[${extras}]" -q 2>/dev/null && echo "  $name (editable: $path)" && return 0
+                guarded_pip_install -e "${path}[${extras}]" -q && echo "  $name (editable: $path)" && return 0
                 # Retry without extras if they fail
-                $PIP install -e "$path" -q 2>/dev/null && echo "  $name (editable, no extras: $path)" && return 0
+                guarded_pip_install -e "$path" -q && echo "  $name (editable, no extras: $path)" && return 0
             else
-                $PIP install -e "$path" -q 2>/dev/null && echo "  $name (editable: $path)" && return 0
+                guarded_pip_install -e "$path" -q && echo "  $name (editable: $path)" && return 0
             fi
         fi
     done
 
     # Fall back to PyPI
     if [[ -n "$extras" ]]; then
-        $PIP install "${name}[${extras}]" -q 2>/dev/null && echo "  $name (PyPI)" && return 0
-        $PIP install "$name" -q 2>/dev/null && echo "  $name (PyPI, no extras)" && return 0
+        guarded_pip_install "${name}[${extras}]" -q && echo "  $name (PyPI)" && return 0
+        guarded_pip_install "$name" -q && echo "  $name (PyPI, no extras)" && return 0
     else
-        $PIP install "$name" -q 2>/dev/null && echo "  $name (PyPI)" && return 0
+        guarded_pip_install "$name" -q && echo "  $name (PyPI)" && return 0
     fi
 
     echo "  $name (FAILED — skipping)" && return 1
@@ -137,7 +143,7 @@ install_pkg "skwhisper"  ""                         "$PARENT/skwhisper-dev $PILL
 # ---------------------------------------------------------------------------
 if [[ "$DEV_MODE" == "true" ]]; then
     echo "[4/6] Installing dev tools..."
-    $PIP install pytest pytest-cov ruff black -q 2>/dev/null
+    guarded_pip_install pytest pytest-cov ruff black -q
     echo "  pytest, pytest-cov, ruff, black"
 else
     echo "[4/6] Skipping dev tools (use --dev to include)"
