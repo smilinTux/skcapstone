@@ -32,6 +32,43 @@ def _freeze_state(result: dict[str, Any]) -> str:
     return "frozen" if result.get("frozen") else "active"
 
 
+def _mid_pass_text(result: dict[str, Any]) -> str | None:
+    """What a freeze that landed MID-pass left, or None when there was none.
+
+    A pass that started frozen stood down and says so. A freeze that landed after
+    the pass began did not: some actions may already have run, so the brief reports
+    what was taken, what the freeze refused and what is still firing, never "standing
+    down".
+    """
+    summary = result.get("freeze_summary")
+    if not result.get("frozen_mid_pass") or not isinstance(summary, dict):
+        return None
+    frozen_now = bool(result.get("frozen")) or _freeze_state(result) == "frozen"
+    lifted = "" if frozen_now else " and was lifted before the pass ended"
+    return (
+        f"landed mid-pass{lifted}: {len(summary.get('taken_before_freeze', []))} action(s) taken "
+        f"before the freeze, {len(summary.get('refused_by_freeze', []))} refused, "
+        f"{len(summary.get('still_firing', []))} condition(s) still firing."
+    )
+
+
+def _state_line(result: dict[str, Any], firing: int, stale: int) -> str:
+    """One stable, machine-readable line a downstream reader (the skos watchdog) can
+    parse without scraping the banner. ``firing`` is what is firing NOW: after a
+    mid-pass freeze that is the unresolved set, not the count at the start."""
+    summary = result.get("freeze_summary")
+    mid_pass = bool(result.get("frozen_mid_pass")) and isinstance(summary, dict)
+    acted = 0
+    if mid_pass:
+        firing = len(summary.get("still_firing", []))
+        acted = len(summary.get("taken_before_freeze", []))
+    frozen = bool(result.get("frozen")) or _freeze_state(result) == "frozen"
+    return (
+        f"state: frozen={str(frozen).lower()} mid_pass={str(mid_pass).lower()} "
+        f"firing={firing} stale={stale} acted_before_freeze={acted}"
+    )
+
+
 def _rows(entries: list[dict[str, Any]]) -> str:
     """Render firing/stale entries as HTML table rows (escaped)."""
     out = []
@@ -64,7 +101,10 @@ def render_html(result: dict[str, Any], now_iso: str) -> str:
     report = html.escape(str(result.get("report") or ""))
 
     freeze_state = _freeze_state(result)
-    if frozen or freeze_state == "frozen":
+    mid_pass = _mid_pass_text(result)
+    if mid_pass and (frozen or freeze_state == "frozen"):
+        state = f'<span class="frozen">FROZEN</span> {html.escape(mid_pass)}'
+    elif frozen or freeze_state == "frozen":
         state = '<span class="frozen">FROZEN</span> Atlas is standing down.'
     elif freeze_state == "unprovisioned":
         state = (
@@ -75,6 +115,9 @@ def render_html(result: dict[str, Any], now_iso: str) -> str:
         state = '<span class="ok">ALL QUIET</span> nothing firing.'
     else:
         state = f'<span class="alert">{len(firing)} firing</span>, {len(stale)} stale.'
+
+    if mid_pass and not (frozen or freeze_state == "frozen"):
+        state += f' <span class="muted">A freeze {html.escape(mid_pass)}</span>'
 
     firing_table = (
         f"<table><thead><tr><th>app</th><th>condition</th><th>object</th>"
@@ -151,7 +194,13 @@ def render_markdown(result: dict[str, Any], now_iso: str) -> str:
         "",
     ]
     freeze_state = _freeze_state(result)
-    if frozen or freeze_state == "frozen":
+    mid_pass = _mid_pass_text(result)
+    if mid_pass and (frozen or freeze_state == "frozen"):
+        # "**FROZEN**" is kept: the fleet IS frozen now and downstream readers key
+        # on that token. What changed is that the line no longer claims Atlas stood
+        # down, because some actions may already have run.
+        lines.append(f"**FROZEN** - {mid_pass}")
+    elif frozen or freeze_state == "frozen":
         lines.append("**FROZEN** - Atlas is standing down.")
     elif freeze_state == "unprovisioned":
         lines.append(
@@ -162,6 +211,10 @@ def render_markdown(result: dict[str, Any], now_iso: str) -> str:
         lines.append("**All quiet** - nothing firing.")
     else:
         lines.append(f"**{len(firing)} firing**, {len(stale)} stale.")
+    if mid_pass and not (frozen or freeze_state == "frozen"):
+        lines.append(f"A freeze {mid_pass}")
+    lines.append("")
+    lines.append(_state_line(result, len(firing), len(stale)))
     lines.append("")
 
     lines.append("## Firing")

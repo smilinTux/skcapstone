@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from . import adapter
+
 CONDITIONS = ["EmbedServing", "ReconcileFresh"]
 
 #: skmemory health conditions are health-type (they fire when status is False), so
@@ -100,7 +102,10 @@ def skmemory_observe(probe: Callable[[], dict] | None = None) -> dict:
 
 #: A loop-compatible observe (name, now_iso) -> {conditions}; ignores now_iso.
 def observe(paths=None, now_iso: str | None = None) -> dict:
-    return skmemory_observe()
+    # A live probe: the data is as old as the moment it was read, on the REAL
+    # clock (never the pass clock), reported as the evidence source time.
+    probed_at = adapter.probe_time()
+    return {**skmemory_observe(), "source_observed_at": probed_at}
 
 
 __all__ = ["skmemory_explain", "skmemory_observe", "observe", "CONDITIONS"]

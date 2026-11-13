@@ -33,13 +33,26 @@ from . import (
     decisions,
     discovery,
     dispatch,
+    evidence,
     fleet_adapter,
     kedb_seeds,
     loop,
+    node_local,
     notify,
     proposer,
     registration,
 )
+
+
+def _execution_state(paths) -> "loop.safety.ExecutionState":
+    """Cooldown and circuit state under the fleet root, with the single-flight lock in the
+    node-local state directory (an flock only orders processes on one kernel, so it does not
+    belong in a tree Syncthing replicates). ``run`` and ``honor-pending`` share it."""
+    return loop.safety.ExecutionState(
+        paths.root / "atlas" / "state",
+        lock_dir=node_local.state_dir() / "atlas",
+        verify_lock_dir=True,
+    )
 
 
 def _now_iso() -> str:
@@ -120,6 +133,16 @@ def operator() -> None:
     default=False,
     help="Skip the startup bootstrap (register app adapters + seed the KEDB) this tick.",
 )
+@click.option(
+    "--max-evidence-age",
+    "max_evidence_age",
+    type=click.FloatRange(min=0, min_open=True, max=evidence.MAX_ALLOWED_AGE_SECONDS),
+    default=evidence.DEFAULT_MAX_AGE_SECONDS,
+    show_default=True,
+    help="Oldest evidence (seconds) an action may rest on, at most "
+    f"{evidence.MAX_ALLOWED_AGE_SECONDS:g}. Stale or missing evidence is refused, never "
+    "acted on.",
+)
 def run_cmd(
     execute: bool,
     honor_flag: bool,
@@ -127,6 +150,7 @@ def run_cmd(
     publish_dir: str | None,
     no_publish: bool,
     no_bootstrap: bool,
+    max_evidence_age: float,
 ) -> None:
     """One operator pass: observe, reason, report. Report-only by default."""
     paths = default_paths()
@@ -225,13 +249,18 @@ def run_cmd(
         # so it can name an app ('skgateway') where the real objects are
         # 'upstreams' and 'connection-pool'. Unresolvable targets escalate.
         target_known=lambda p: fleet_adapter.fleet_target_known(paths, p),
-        execution_state=loop.safety.ExecutionState(paths.root / "atlas" / "state"),
+        execution_state=_execution_state(paths),
         # Physical execution is allowed only for a proposal bound to its owning
         # app + condition, human-ratified there, and verified by re-observation.
         require_verified_actions=honor,
         require_signed_catalog=honor,
         lifecycle_ledger=ledger,
         itil=itil_manager,
+        max_evidence_age_s=max_evidence_age,
+        # Production honor mode: every physical action goes through the ITIL lane
+        # (ledger, change, lock, re-observation). The inline lane stays for the
+        # annotation-only deployment (--execute without --honor), which actuates nothing.
+        allow_inline_actuation=not honor,
     )
     if honor:
         click.echo("honor: ON (CR-9.1 step-1 physical actuation: fleet + skchat)")
@@ -307,7 +336,18 @@ def decide_cmd(decision_id: str, approve: bool, choice: int | None) -> None:
 
 
 @operator.command("honor-pending")
-def honor_pending_cmd() -> None:
+@click.option(
+    "--max-approval-age",
+    "max_approval_age",
+    type=click.FloatRange(min=0, min_open=True, max=dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS),
+    default=dispatch.DEFAULT_MAX_APPROVAL_AGE_SECONDS,
+    show_default=True,
+    help="Oldest human CAB approval (seconds, from the vote's decided_at) that may still be "
+    f"honored, at most {dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS:g}. A human approves a change "
+    "for one episode: past this, or once the condition has cleared, the intent is closed and "
+    "a new proposal needs a new vote.",
+)
+def honor_pending_cmd(max_approval_age: float) -> None:
     """Dispatch every PROPOSED ledger intent whose linked ITIL change now folds
     approved: the slow half of the dispatcher's "one code path, two speeds"
     (AUTONOMY_ARCHITECTURE.md section 3.2). Run this after `skoperator decide
@@ -342,20 +382,34 @@ def honor_pending_cmd() -> None:
     rollback_fn = act_dispatch.build_rollback_fn(paths)
     extra_observers = discovery.discover_observers()
     adapters = {**extra_observers, **loop.ADAPTERS}
-    outcomes = dispatch.run_dispatch_pass(
-        paths,
-        ledger,
-        itil_manager,
-        adapters=adapters,
-        problem_types=loop.PROBLEM_WHEN_TRUE,
-        apply_fn=apply_fn,
-        rollback_fn=rollback_fn,
-        execution_state=loop.safety.ExecutionState(paths.root / "atlas" / "state"),
-        decisions_dir=_decisions_dir(paths),
-        now_iso=now,
-        actor="dispatcher",
-        emit=click.echo,
-    )
+    try:
+        outcomes = dispatch.run_dispatch_pass(
+            paths,
+            ledger,
+            itil_manager,
+            adapters=adapters,
+            problem_types=loop.PROBLEM_WHEN_TRUE,
+            apply_fn=apply_fn,
+            rollback_fn=rollback_fn,
+            execution_state=_execution_state(paths),
+            decisions_dir=_decisions_dir(paths),
+            now_iso=now,
+            actor="dispatcher",
+            emit=click.echo,
+            # The planner's verdicts at proposal time are not permissions that last: the
+            # target must still resolve and the action must still be ratified for the app
+            # (against the signed catalog) when the human approval is finally honored.
+            target_known=lambda p: fleet_adapter.fleet_target_known(paths, p),
+            action_allowed=lambda p: loop._operatorapp_allows(paths, p, require_signature=True),
+            max_approval_age_s=max_approval_age,
+        )
+    except RuntimeError as exc:
+        if "another Atlas operator pass is active" not in str(exc):
+            raise
+        raise click.ClickException(
+            "honor-pending: another Atlas operator pass (or honor-pending) is already running; "
+            "nothing was dispatched"
+        ) from exc
     if not outcomes:
         click.echo("honor-pending: nothing to dispatch")
         return

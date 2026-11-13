@@ -113,18 +113,25 @@ def test_full_drill_runs_clean_against_an_isolated_root(tmp_path):
     assert any((ledger_dir / "intents").glob("*.json"))
     assert state_path.is_file()
 
-    # Documented gaps are surfaced, not swallowed.
-    finding_scenarios = {
-        name
-        for name in (
-            "7. signed ledger (real PGP) + ITIL correlation",
-            "9. stale evidence is not rejected [GAP]",
-            "11. ledger cannot represent a later, separate occurrence [GAP]",
-            "12. mid-run freeze race",
-        )
-    }
-    reported = {r.name for r in report.results if r.finding}
-    assert finding_scenarios & reported, "expected at least the known gaps to surface a finding"
+    # Gate 5 closed three documented gaps; they are PASS criteria now, so a
+    # regression fails the drill instead of "passing by documenting a gap".
+    by_name = {r.name: r for r in report.results}
+    for name in (
+        "1. baseline self-heal (detect -> act -> verify)",
+        "9. stale, missing or unparseable evidence is refused",
+        "12. mid-run freeze race",
+        "22. unverified outcome is never reported as applied",
+        "23. evidence age is the source's age on the real clock",
+        "24. a leftover PROPOSED intent is not actuated later",
+        "25. an escalated proposal needs a human and keeps its decision",
+        "26. an approval authorizes one thing, once, and only a vote is a human",
+        "27. one approval, one actuation, per episode",
+        "28. one actuator node, node-local locks, live dispatches left alone",
+        "29. the actuator rule is decided once; decisions are not shadowed",
+    ):
+        assert name in by_name, f"scenario missing from the drill: {name}"
+        assert by_name[name].passed, f"{name}: {by_name[name].note}"
+    assert not [r.name for r in report.results if r.finding], "no scenario may carry a finding"
 
     # The drill root is never, ever the resolved production tree.
     assert report.root != fleet_drill.sovereign_home() / "fleet"

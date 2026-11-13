@@ -35,7 +35,7 @@ from typing import Any, Callable
 from urllib.parse import urlencode
 
 from ..fleet import store
-from . import actuator
+from . import actuator, adapter
 
 CONDITIONS = ["HostdReady", "SessionsHealthy", "RegistryConsistent", "AuthEnforced"]
 
@@ -378,7 +378,10 @@ def skcode_act(
 
 #: A loop-compatible observe (paths, now_iso) -> {conditions}; ignores both.
 def observe(paths=None, now_iso: str | None = None) -> dict:
-    return skcode_observe()
+    # A live probe: the data is as old as the moment it was read, on the REAL
+    # clock (never the pass clock), reported as the evidence source time.
+    probed_at = adapter.probe_time()
+    return {**skcode_observe(), "source_observed_at": probed_at}
 
 
 __all__ = [

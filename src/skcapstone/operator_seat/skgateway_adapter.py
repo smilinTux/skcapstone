@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from . import adapter
+
 CONDITIONS = ["UpstreamServing", "PoolHealthy"]
 
 #: Health-type conditions (fire when status is False): a dead upstream or a
@@ -96,7 +98,10 @@ def skgateway_observe(probe: Callable[[], dict] | None = None) -> dict:
 
 #: A loop-compatible observe (paths, now_iso) -> {conditions}; ignores both.
 def observe(paths=None, now_iso: str | None = None) -> dict:
-    return skgateway_observe()
+    # A live probe: the data is as old as the moment it was read, on the REAL
+    # clock (never the pass clock), reported as the evidence source time.
+    probed_at = adapter.probe_time()
+    return {**skgateway_observe(), "source_observed_at": probed_at}
 
 
 __all__ = ["skgateway_explain", "skgateway_observe", "observe", "CONDITIONS"]

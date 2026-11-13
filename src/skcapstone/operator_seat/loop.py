@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from ..fleet import signing, store
@@ -25,8 +25,10 @@ from . import (
     cmdb_adapter,
     decisions,
     dispatch,
+    evidence,
     fleet_adapter,
     itil_intent,
+    node_local,
     plan,
     safety,
     skchat_adapter,
@@ -166,6 +168,149 @@ _condition_firing = dispatch.condition_firing
 _verify_postcondition = dispatch.verify_postcondition
 
 
+def _close_cleared_escalations(
+    ledger, itil, observations: dict, ptypes: set[str], clock, actor: str, emit
+) -> list[str]:
+    """Close every open escalate-lane intent whose condition now reads DEFINITELY cleared.
+
+    A human approves a change for an EPISODE. The dispatcher can only see a clear when a
+    dispatch pass happens to run while it is cleared; the loop sees every pass, so it closes
+    the intent (and retires its change) the moment the bound condition reads definitely
+    not-firing (a real True/False, never Unknown). A recurrence is then a new episode: a new
+    proposal, a new change, a new human vote. A clear-and-refire that falls entirely between
+    two passes is indistinguishable from one episode (the loop only knows what it observed).
+    """
+    closed: list[str] = []
+    for intent_id in ledger.list_intents(state=action_ledger.ActionState.PROPOSED):
+        if dispatch.stored_lane(ledger, intent_id) != "escalate":
+            continue
+        intent = ledger.read_intent(intent_id)
+        matches = [
+            c
+            for c in observations.get(intent.application, [])
+            if c.get("type") == intent.condition_type and c.get("object") == intent.target_id
+        ]
+        if not matches or any(c.get("status") not in ("True", "False") for c in matches):
+            continue
+        if any(dispatch.condition_firing(c, ptypes) for c in matches):
+            continue
+        if dispatch.close_episode(
+            ledger,
+            itil,
+            intent_id,
+            clock=clock,
+            actor=actor,
+            reason="condition cleared before dispatch (the episode this approval covered ended)",
+        ):
+            emit(f"operator: closed {intent_id}: its condition cleared")
+            closed.append(intent_id)
+    return closed
+
+
+_OPEN_CHANGE_STATES = frozenset({"proposed", "reviewing", "approved", "scheduled"})
+
+
+def _open_escalated_intent(ledger, itil, prop: dict, catalog_generation: str) -> str | None:
+    """An OPEN escalate-lane intent for this same proposal, or None.
+
+    Open means PROPOSED in the escalate lane for the same app, action, target, condition
+    and catalog generation, with its ITIL change still open (not rejected, closed or
+    spent). Such an intent is a decision already waiting for a human, and drafting another
+    change and intent for it on every pass only piles up approvals to ride.
+    """
+    key = (
+        str(prop.get("app") or "unknown"),
+        str(prop.get("action") or "unknown"),
+        str(prop.get("object") or "unknown"),
+        prop.get("condition"),
+        catalog_generation,
+    )
+    open_changes: dict[str, str] | None = None
+    for intent_id in ledger.list_intents(state=action_ledger.ActionState.PROPOSED):
+        intent = ledger.read_intent(intent_id)
+        if (
+            intent.application,
+            intent.action,
+            intent.target_id,
+            intent.condition_type,
+            intent.catalog_generation,
+        ) != key:
+            continue
+        if dispatch.stored_lane(ledger, intent_id) != "escalate" or not intent.itil_change_id:
+            continue
+        if open_changes is None:
+            open_changes = {c.id: c.status.value for c in itil.list_changes()}
+        if open_changes.get(intent.itil_change_id) in _OPEN_CHANGE_STATES:
+            return intent_id
+    return None
+
+
+#: Outcome words for an auto action that actually ran.
+_ACTED = frozenset({"verified", "performed, unverified"})
+
+
+def _event_now(clock: Callable[[], datetime] | None) -> datetime:
+    """Lifecycle events are stamped from the clock AT WRITE TIME, never the pass start."""
+    return dispatch._event_dt(clock)
+
+
+def _decision_now_iso(clock: Callable[[], datetime] | None) -> str:
+    """The REAL clock now (or the injected one) as an aware ISO 8601 string.
+
+    This, never the pass's ``now_iso``, is what evidence age is measured against.
+    """
+    moment = (clock or (lambda: datetime.now(timezone.utc)))()
+    if moment.tzinfo is None:
+        # Never read a naive clock as local time: leave it naive so evidence.refusal
+        # refuses it ("the clock is not a timezone-aware timestamp").
+        return moment.isoformat()
+    return moment.astimezone(timezone.utc).isoformat()
+
+
+def _outcome(
+    prop: dict,
+    disposition: str,
+    outcome: str,
+    intent_id: str | None,
+    freeze_state: str,
+    freeze_after: str | None = None,
+) -> dict:
+    return {
+        "action": prop.get("action"),
+        "app": prop.get("app"),
+        "condition": prop.get("condition"),
+        "object": prop.get("object"),
+        "disposition": disposition,
+        "outcome": outcome,
+        "intent_id": intent_id,
+        "freeze_state": freeze_state,
+        "freeze_after": freeze_after if freeze_after is not None else freeze_state,
+    }
+
+
+def _freeze_summary(the_brief: dict, outcomes: list[dict]) -> dict:
+    """What a mid-pass freeze left behind, from the outcomes that were recorded."""
+    taken = [o["action"] for o in outcomes if o["outcome"] in _ACTED]
+    refused = [
+        o["action"]
+        for o in outcomes
+        if o["outcome"].startswith("refused: ") and o["freeze_state"] == store.REASON_FROZEN
+    ]
+    resolved = {
+        (o["app"], o["condition"], o["object"]) for o in outcomes if o["outcome"] == "verified"
+    }
+    still_firing = [
+        entry
+        for entry in the_brief.get("firing", [])
+        if (entry.get("app"), entry.get("type"), entry.get("object")) not in resolved
+    ]
+    return {
+        "taken_before_freeze": taken,
+        "refused_by_freeze": refused,
+        "still_firing": still_firing,
+    }
+
+
 def _run_once(
     paths=None,
     *,
@@ -188,6 +333,10 @@ def _run_once(
     ledger_actor: str = "atlas",
     deadline: float | None = None,
     itil: Any | None = None,
+    max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
+    clock: Callable[[], datetime] | None = None,
+    max_approval_age_s: float = dispatch.DEFAULT_MAX_APPROVAL_AGE_SECONDS,
+    allow_inline_actuation: bool = True,
 ) -> dict:
     """Run one operator pass.
 
@@ -215,7 +364,56 @@ def _run_once(
     wired one), this pass is byte-identical to before: no change is drafted,
     and the auto lane keeps its pre-existing self-contained inline actuation.
 
-    Returns {frozen, brief, route, proposals, planned, outcomes, report}.
+    Actuation needs fresh, structured evidence (``evidence.refusal``): a proposal
+    whose ``evidence`` is missing, unparseable, future-dated or older than
+    ``max_evidence_age_s`` is refused BEFORE any ITIL change, ledger intent or
+    apply_fn call, and the outcome reads ``refused: ...``. A bad
+    ``max_evidence_age_s`` refuses too; the check cannot be switched off. Age is
+    measured against ``clock`` (default: the REAL wall clock) read at the decision
+    point, never against ``now_iso``, which is only the pass's own timestamp: the
+    evidence is stamped from the source data's time, and a pass clock that is
+    wrong, or a model call that was slow, must not make old evidence look fresh.
+
+    The actuation gate is re-read at every actuation decision point, not only at
+    the top of the pass. ANY closed gate (frozen, unprovisioned) refuses before an
+    ITIL change or ledger intent is written. ``frozen`` is True when the fleet was
+    frozen at any decision point, after any attempt, or at the end of the pass;
+    ``frozen_mid_pass`` says the freeze landed after the pass had started;
+    ``freeze_summary`` then says what actually happened (actions taken before the
+    freeze, actions refused by it, conditions still firing); and each outcome
+    carries ``freeze_state`` (at its decision point) and ``freeze_after``. A freeze
+    REFUSAL is not a fault of the action and never feeds the circuit breaker; a real
+    failure that merely coincides with a freeze still does.
+
+    An intent written for an auto action that is not actuated in this pass (a gate
+    closed after the write, the deadline fired, the dispatcher refused) is voided
+    (``dispatch.void_proposed``) so it can never be acted on later, unattended.
+
+    Outcome words for an auto action that ran: ``verified`` only when the
+    post-action re-observation ran and passed (a lifecycle ledger or
+    ``require_verified_actions`` makes it mandatory), otherwise
+    ``performed, unverified``. Nothing reports ``applied`` any more.
+
+    The single-actuator-node rule (``node_local.actuator_refusal``) is evaluated ONCE per pass,
+    at its start, and that one answer is used everywhere in the pass: asking again mid-pass
+    could flip a refusal into an approval (a designation file written meanwhile, a failed
+    read) after the ledger and ITIL wiring had already been dropped for a non-actuator.
+
+    ``allow_inline_actuation`` (default True, for report and annotate deployments, tests and
+    the drill) permits the inline lane: actuation with no ITIL change, no ``dispatch_intent``,
+    no change lock and no re-observation. Production ``--execute --honor`` passes False, so
+    that lane is refused outright and every physical action goes through the ITIL lane. The
+    inline lane also never actuates in a pass whose ledger or ITIL wiring was dropped.
+
+    An escalate-lane proposal that already has an OPEN escalate-lane intent (same app,
+    action, target, condition and catalog generation, its change still open) reuses it:
+    the loop does not draft a new change and intent on every pass for a decision that is
+    already waiting. Intents a crash stranded in AUTHORIZED or EXECUTING are escalated with
+    an alert at the start of the pass (``dispatch.escalate_stranded``), never re-run, and
+    listed under ``stranded``.
+
+    Returns {frozen, frozen_mid_pass, freeze_state, freeze_summary, stranded, brief, route,
+    proposals, planned, outcomes, report}.
     """
     paths = paths or default_paths()
 
@@ -226,7 +424,11 @@ def _run_once(
         emit(report)
         return {
             "frozen": True,
+            "frozen_mid_pass": False,
             "freeze_state": "frozen",
+            "freeze_summary": None,
+            "stranded": [],
+            "closed_episodes": [],
             "brief": None,
             "route": None,
             "proposals": [],
@@ -235,6 +437,43 @@ def _run_once(
             "report": report,
         }
 
+    actuator_refusal_now = node_local.actuator_refusal()  # ONCE per pass, used everywhere
+    wiring_dropped = False
+    if (lifecycle_ledger is not None or itil is not None) and actuator_refusal_now:
+        wiring_dropped = True
+        # Not the designated actuator node: observe, propose and park decisions only. The
+        # ledger and the ITIL records are replicated, but a node that is not the actuator
+        # must not sweep, close or draft against them: its clock or its local view of a
+        # condition could escalate the actuator's live intent, or close a human-approved
+        # one the actuator is about to honor.
+        lifecycle_ledger = None
+        itil = None
+    stranded: list[str] = []
+    if lifecycle_ledger is not None and itil is not None:
+        try:
+            # Before anything else: leftovers of a killed loop (auto-lane intents older than
+            # one pass) are voided so nothing can act on them unattended.
+            dispatch.void_stale_auto_intents(
+                lifecycle_ledger, itil, clock=clock, actor=ledger_actor, emit=emit
+            )
+        except Exception as exc:  # noqa: BLE001 - bookkeeping must never stop the pass
+            emit(f"operator: stale auto-lane sweep failed: {exc}")
+    if lifecycle_ledger is not None:
+        try:
+            stranded = [
+                o.intent_id
+                for o in dispatch.escalate_stranded(
+                    lifecycle_ledger,
+                    itil,
+                    now_iso=now_iso,
+                    clock=clock,
+                    actor=ledger_actor,
+                    decisions_dir=decisions_dir,
+                    emit=emit,
+                )
+            ]
+        except Exception as exc:  # noqa: BLE001 - bookkeeping must never stop the pass
+            emit(f"operator: stranded-intent sweep failed: {exc}")
     ptypes = problem_types if problem_types is not None else set(PROBLEM_WHEN_TRUE)
     # Discovered observers merge UNDER the built-ins: ADAPTERS spreads last so a
     # built-in always wins a name clash. Each observe fails safe on its own.
@@ -263,6 +502,14 @@ def _run_once(
         observations[name] = envelope["conditions"]
     if deadline is not None:
         safety.assert_before_deadline(deadline)
+    closed_episodes: list[str] = []
+    if lifecycle_ledger is not None and itil is not None:
+        try:
+            closed_episodes = _close_cleared_escalations(
+                lifecycle_ledger, itil, observations, ptypes, clock, ledger_actor, emit
+            )
+        except Exception as exc:  # noqa: BLE001 - bookkeeping must never stop the pass
+            emit(f"operator: episode-close sweep failed: {exc}")
     the_brief = brief.build_brief(observations, ptypes)
     route = brain.route_brain(the_brief)
     proposals = list(propose(the_brief, route))
@@ -286,6 +533,10 @@ def _run_once(
     )
 
     outcomes: list[dict] = []
+    froze_mid_pass = False
+    # Verification (performed=True proof plus post-action re-observation) is
+    # mandatory whenever a lifecycle ledger is attached or the caller asked for it.
+    verify_required = require_verified_actions or lifecycle_ledger is not None
     # Per-PASS memo of resolved occurrences (keyed on the same 9-field base
     # identity ActionIntent.identity() uses at occurrence=0). Two proposals for
     # the same identity within this ONE pass ("same episode, repeated
@@ -298,12 +549,90 @@ def _run_once(
     # real-world recurrence earns its own intent.
     occurrence_memo: dict[tuple, int] = {}
     for i, pl in enumerate(planned):
-        prop, disp = pl["proposal"], pl["disposition"]
-        if (
-            itil is not None
-            and lifecycle_ledger is not None
-            and not (prop.get("change_id") or prop.get("itil_change_id"))
-        ):
+        # Never trust a proposal-supplied change id: a proposal is model output, and a
+        # change id on it could point at ANY approved change. The loop drafts its own
+        # (below, bound to this proposal) and the intent identity takes that one.
+        prop = {
+            k: v for k, v in pl["proposal"].items() if k not in ("change_id", "itil_change_id")
+        }
+        disp = pl["disposition"]
+        # Decision point: the freeze is read fresh for every proposal, because it
+        # can land at any moment after the top-of-pass check (the observe calls and
+        # the model run in between). Whatever the gate says here is what this
+        # outcome reports.
+        gate = store.check_actuation_gate(paths)
+        decision_freeze = "active" if gate.allowed else (gate.reason or "unknown")
+        if decision_freeze == store.REASON_FROZEN:
+            froze_mid_pass = True
+        actuating = disp == "auto" and execute and apply_fn is not None
+        if actuating:
+            if not gate.allowed:
+                # ANY closed gate refuses here, before anything is written: a blocked
+                # gate that only the dispatcher noticed used to leave a drafted ITIL
+                # change and a PROPOSED intent behind for a later pass to act on.
+                if gate.reason == store.REASON_FROZEN:
+                    refusal = "fleet is frozen: the operator does not actuate"
+                elif gate.reason == store.REASON_UNPROVISIONED:
+                    refusal = (
+                        "freeze store unprovisioned: no human has provisioned the kill switch"
+                    )
+                else:
+                    refusal = f"actuation gate closed: {gate.reason}"
+            else:
+                # Single actuator node: only the designated node may actuate, and with no
+                # designation (the default) nothing does. Checked before anything is written.
+                refusal = actuator_refusal_now or evidence.refusal(
+                    prop, _decision_now_iso(clock), max_evidence_age_s
+                )
+                if refusal is None and (
+                    wiring_dropped
+                    or (not allow_inline_actuation and (itil is None or lifecycle_ledger is None))
+                ):
+                    # The inline lane has no ITIL change, no change lock and no
+                    # re-observation: never in a pass that disallows it, and never in one
+                    # whose ledger or ITIL wiring was dropped.
+                    refusal = (
+                        "inline actuation is not allowed in this pass "
+                        "(every physical action must go through the ITIL lane)"
+                    )
+            if refusal is not None:
+                # Refused before any write: no ITIL change, no ledger intent, no
+                # apply_fn call, nothing against the retry budget.
+                outcomes.append(_outcome(prop, disp, f"refused: {refusal}", None, decision_freeze))
+                continue
+        reuse_id: str | None = None
+        if itil is not None and lifecycle_ledger is not None:
+            try:
+                dispatch.change_binding_tag(
+                    str(prop.get("app") or "unknown"),
+                    str(prop.get("action") or "unknown"),
+                    str(prop.get("object") or "unknown"),
+                )
+            except ValueError as exc:
+                outcomes.append(
+                    _outcome(
+                        prop,
+                        disp,
+                        f"refused: cannot be bound to a change ({exc})",
+                        None,
+                        decision_freeze,
+                    )
+                )
+                continue
+            if disp != "auto":
+                reuse_id = _open_escalated_intent(
+                    lifecycle_ledger,
+                    itil,
+                    prop,
+                    str(prop.get("catalog_generation") or catalog_generation),
+                )
+                if reuse_id is not None:
+                    # No new change is drafted, but the decision parked below must still
+                    # carry the REUSED intent's change: the decisions store is replicated,
+                    # and if a non-actuator's unbound copy won the race, this bound option
+                    # is what upgrades it (otherwise approving it raises forever).
+                    prop["itil_change_id"] = lifecycle_ledger.read_intent(reuse_id).itil_change_id
+        if itil is not None and lifecycle_ledger is not None and reuse_id is None:
             # Draft the ITIL change BEFORE the ledger intent exists, so its
             # frozen itil_change_id field (action_ledger.py, ``identity()``)
             # is set at birth and never needs rewriting later -- the
@@ -320,8 +649,27 @@ def _run_once(
                 dry_run="false",
                 rollback_plan=prop.get("rollback_plan") or "revert via controller reconcile",
             )
+            # The change type follows the DISPOSITION, not the class. A proposal the
+            # planner escalated (an unresolvable target, a denied binding, a major
+            # change) must get a CAB-gated change: a ``standard`` one auto-approves at
+            # the ITIL fold, which let ``run_dispatch_pass`` act on an escalated
+            # proposal with no human vote. The auto-normal tag is stripped for the
+            # same reason (the fold auto-approves a tagged operator-authored change).
+            auto_lane = disp == "auto"
             change_type = (
-                "standard" if pl["classification"].get("change_class") == "standard" else "normal"
+                "standard"
+                if auto_lane and pl["classification"].get("change_class") == "standard"
+                else "normal"
+            )
+            tags = [t for t in record["tags"] if auto_lane or t != "auto-normal"]
+            # Bind the change to the ONE intent it is for (app, action, target, the same
+            # three the ledger identity uses): the dispatcher refuses any other.
+            tags.append(
+                dispatch.change_binding_tag(
+                    str(prop.get("app") or "unknown"),
+                    str(prop.get("action") or "unknown"),
+                    str(prop.get("object") or "unknown"),
+                )
             )
             chg = itil.propose_change(
                 title=record["title"],
@@ -329,12 +677,12 @@ def _run_once(
                 risk=record["risk"],
                 rollback_plan=record["rollback_plan"],
                 created_by=ledger_actor,
-                tags=list(record["tags"]),
+                tags=tags,
             )
             prop["itil_change_id"] = chg.id
-        intent_id: str | None = None
-        if lifecycle_ledger is not None:
-            created_at = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+        intent_id: str | None = reuse_id
+        if lifecycle_ledger is not None and reuse_id is None:
+            created_at = _event_now(clock)
             base_identity = {
                 "condition_fingerprint": safety.action_fingerprint(prop),
                 "application": str(prop.get("app") or "unknown"),
@@ -371,7 +719,7 @@ def _run_once(
             lifecycle_ledger.create(
                 intent,
                 actor=ledger_actor,
-                evidence_ref=prop.get("evidence_ref"),
+                evidence_ref=evidence.ledger_ref(prop),
             )
             intent_id = intent.intent_id
             current = lifecycle_ledger.current_state(intent_id)
@@ -384,11 +732,19 @@ def _run_once(
                 )
                 current = action_ledger.ActionState.DIAGNOSED
             if current is action_ledger.ActionState.DIAGNOSED:
+                # The structured evidence stamp rides on this (hash-chained, signed)
+                # event so the dispatcher can later require it to be fresh before
+                # it acts on an auto-approved change, however long the intent waited.
+                stamp = prop.get("evidence")
                 lifecycle_ledger.append(
                     intent_id,
                     action_ledger.ActionState.PROPOSED,
                     occurred_at=created_at,
                     actor=ledger_actor,
+                    detail={
+                        "disposition": disp,
+                        **({"evidence": dict(stamp)} if isinstance(stamp, dict) else {}),
+                    },
                 )
         if (
             disp == "auto"
@@ -407,24 +763,86 @@ def _run_once(
             # pass's own classification, so "standard change, auto-approved
             # by the fold" really is just the fastest kind of approved
             # change -- one code path, two speeds.
-            if deadline is not None:
-                safety.assert_before_deadline(deadline)
-            outcome = dispatch.dispatch_intent(
-                paths,
+            event_at = _event_now(clock)
+            try:
+                if deadline is not None:
+                    safety.assert_before_deadline(deadline)
+                outcome = dispatch.dispatch_intent(
+                    paths,
+                    lifecycle_ledger,
+                    itil,
+                    intent_id,
+                    adapters=adapters,
+                    problem_types=ptypes,
+                    apply_fn=apply_fn,
+                    rollback_fn=rollback_fn,
+                    execution_state=execution_state,
+                    decisions_dir=decisions_dir,
+                    now_iso=now_iso,
+                    actor=ledger_actor,
+                    emit=emit,
+                    clock=clock,
+                    max_evidence_age_s=max_evidence_age_s,
+                    max_approval_age_s=max_approval_age_s,
+                    target_known=target_known,
+                    action_allowed=(
+                        (
+                            lambda proposal: _operatorapp_allows(
+                                paths, proposal, require_signature=require_signed_catalog
+                            )
+                        )
+                        if require_verified_actions
+                        else None
+                    ),
+                ).outcome
+            except Exception as exc:
+                # The deadline (a TimeoutError) fired after the intent was written, or
+                # anything else did. Either way close the intent so it cannot be dispatched
+                # later. The deadline then fails the pass, as it must; any other error (an
+                # OSError taking a lock, a ledger fault) is contained to this proposal: it is
+                # recorded and the pass carries on with the next one.
+                try:
+                    dispatch.void_proposed(
+                        lifecycle_ledger,
+                        intent_id,
+                        occurred_at=event_at,
+                        actor=ledger_actor,
+                        reason=f"pass aborted before dispatch: {exc}",
+                    )
+                except Exception:  # noqa: BLE001 - never mask the original failure
+                    pass
+                if isinstance(exc, TimeoutError):
+                    raise
+                emit(f"operator: error dispatching {intent_id}: {exc}")
+                outcomes.append(_outcome(prop, disp, f"error: {exc}", intent_id, decision_freeze))
+                continue
+            except BaseException:
+                # An interrupt (KeyboardInterrupt, SystemExit): close the intent, but a
+                # failing void must never REPLACE the interrupt. Log it and re-raise the
+                # original.
+                try:
+                    dispatch.void_proposed(
+                        lifecycle_ledger,
+                        intent_id,
+                        occurred_at=event_at,
+                        actor=ledger_actor,
+                        reason="pass interrupted before dispatch",
+                    )
+                except Exception as void_exc:  # noqa: BLE001
+                    emit(f"operator: could not void {intent_id} after an interrupt: {void_exc}")
+                raise
+            # The dispatcher left it PROPOSED (a gate that closed after our check, an
+            # approval that never came, the change not found): this is the auto lane,
+            # there is no human waiting on it, so close it instead of leaving it for a
+            # later pass to act on unattended.
+            dispatch.void_proposed(
                 lifecycle_ledger,
-                itil,
                 intent_id,
-                adapters=adapters,
-                problem_types=ptypes,
-                apply_fn=apply_fn,
-                rollback_fn=rollback_fn,
-                execution_state=execution_state,
-                decisions_dir=decisions_dir,
-                now_iso=now_iso,
+                occurred_at=event_at,
                 actor=ledger_actor,
-                emit=emit,
-            ).outcome
-        elif disp == "auto" and execute and apply_fn is not None:
+                reason=f"not actuated in the pass that wrote it: {outcome}",
+            )
+        elif disp == "auto" and execute and apply_fn is not None and not wiring_dropped:
             # Pre-itil, self-contained inline actuation. Kept byte-identical
             # for callers that have not wired an ITIL manager into this pass
             # (every caller before this change): AUTHORIZED/EXECUTING are
@@ -447,7 +865,7 @@ def _run_once(
                     if not eligible:
                         raise RuntimeError(f"execution suppressed: {reason}")
                 if intent_id is not None:
-                    event_at = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+                    event_at = _event_now(clock)
                     lifecycle_ledger.append(
                         intent_id,
                         action_ledger.ActionState.AUTHORIZED,
@@ -473,37 +891,56 @@ def _run_once(
                 proof_required = require_verified_actions or lifecycle_ledger is not None
                 if proof_required and performed is not True:
                     raise RuntimeError("actuator omitted performed=True proof")
-                if require_verified_actions or lifecycle_ledger is not None:
+                if verify_required:
                     verified, reason = _verify_postcondition(
                         adapters, prop, paths, now_iso, ptypes
                     )
                     if not verified:
                         raise RuntimeError(reason)
-                if execution_state is not None:
-                    execution_state.record(fingerprint, time.time(), success=True)
-                if intent_id is not None:
-                    # ActionIntent.itil_change_id is frozen identity, set only
-                    # when the PROPOSER pre-supplied change_id/itil_change_id
-                    # (see base_identity above); it cannot be rewritten after
-                    # the intent exists without silently changing what
-                    # identity it hashes to. When the honor apply_fn instead
-                    # AUTO-creates its own ITIL change (act_dispatch.
-                    # build_apply_fn, no proposer-supplied change_id), that
-                    # change's id is only known once apply_fn returns here --
-                    # record it on this durable, append-only VERIFIED event so
-                    # the correlation is never lost, even though the frozen
-                    # intent core itself stays proposer-scoped.
-                    auto_change_id = result.get("change_id") if isinstance(result, dict) else None
-                    lifecycle_ledger.append(
-                        intent_id,
-                        action_ledger.ActionState.VERIFIED,
-                        occurred_at=datetime.fromisoformat(now_iso.replace("Z", "+00:00")),
-                        actor=ledger_actor,
-                        detail={"itil_change_id": auto_change_id} if auto_change_id else {},
+                # The action ran AND (when required) verified. A bookkeeping error from here on
+                # is alerted, never treated as a failed action: a fix that worked is not
+                # rolled back because the ledger could not record it.
+                outcome = "verified" if verify_required else "performed, unverified"
+                try:
+                    if execution_state is not None:
+                        execution_state.record(fingerprint, time.time(), success=True)
+                    if intent_id is not None:
+                        # ActionIntent.itil_change_id is frozen identity, set only
+                        # when the PROPOSER pre-supplied change_id/itil_change_id
+                        # (see base_identity above); it cannot be rewritten after
+                        # the intent exists without silently changing what
+                        # identity it hashes to. When the honor apply_fn instead
+                        # AUTO-creates its own ITIL change (act_dispatch.
+                        # build_apply_fn, no proposer-supplied change_id), that
+                        # change's id is only known once apply_fn returns here --
+                        # record it on this durable, append-only VERIFIED event so
+                        # the correlation is never lost, even though the frozen
+                        # intent core itself stays proposer-scoped.
+                        auto_change_id = (
+                            result.get("change_id") if isinstance(result, dict) else None
+                        )
+                        lifecycle_ledger.append(
+                            intent_id,
+                            action_ledger.ActionState.VERIFIED,
+                            occurred_at=_event_now(clock),
+                            actor=ledger_actor,
+                            detail={"itil_change_id": auto_change_id} if auto_change_id else {},
+                        )
+                except Exception as rec_exc:  # noqa: BLE001 - alert, never roll back
+                    outcome = (
+                        "error: the action ran and verified but could not be recorded: "
+                        f"{rec_exc}; it is NOT rolled back, a human must reconcile the ledger"
                     )
-                outcome = "verified" if require_verified_actions else "applied"
+                    emit(f"operator: ALERT {outcome}")
             except Exception as exc:
-                if execution_state is not None and attempt_started:
+                # The kill switch REFUSING is not a fault of the action and stays away
+                # from the circuit breaker; a real failure that merely coincides
+                # with a freeze is still a failure and still counts.
+                if (
+                    execution_state is not None
+                    and attempt_started
+                    and not dispatch.is_freeze_refusal(exc)
+                ):
                     try:
                         execution_state.record(
                             safety.action_fingerprint(prop),
@@ -542,7 +979,7 @@ def _run_once(
                     and lifecycle_ledger.current_state(intent_id)
                     is action_ledger.ActionState.EXECUTING
                 ):
-                    event_at = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+                    event_at = _event_now(clock)
                     # apply_fn's own exception (e.g. act_dispatch's "actuation
                     # failed: ...") loses its return value, but build_apply_fn
                     # stamps the ITIL change it already opened onto the
@@ -582,6 +1019,16 @@ def _run_once(
                                 "rollback_error": str(rollback_error) if rollback_error else None,
                             },
                         )
+                elif intent_id is not None:
+                    # Refused before AUTHORIZED (cooldown, circuit, deadline): the
+                    # intent was written but will not run, so close it.
+                    dispatch.void_proposed(
+                        lifecycle_ledger,
+                        intent_id,
+                        occurred_at=_event_now(clock),
+                        actor=ledger_actor,
+                        reason=f"not actuated in the pass that wrote it: {exc}",
+                    )
                 outcome = (
                     f"failed then rolled back: {exc}"
                     if rollback_result is not None and rollback_error is None
@@ -599,14 +1046,15 @@ def _run_once(
             outcome = "escalated (parked for approval)"
         else:
             outcome = "escalate (no decision store)"
-        outcomes.append(
-            {
-                "action": prop.get("action"),
-                "disposition": disp,
-                "outcome": outcome,
-                "intent_id": intent_id,
-            }
-        )
+        freeze_after = decision_freeze
+        if actuating:
+            # A freeze AFTER an attempt is flagged whether the attempt succeeded or
+            # failed (the success path used to say nothing).
+            after = store.check_actuation_gate(paths)
+            freeze_after = "active" if after.allowed else (after.reason or "unknown")
+            if after.reason == store.REASON_FROZEN:
+                froze_mid_pass = True
+        outcomes.append(_outcome(prop, disp, outcome, intent_id, decision_freeze, freeze_after))
 
     report = brain.format_report(the_brief, proposals)
     if outcomes:
@@ -618,15 +1066,43 @@ def _run_once(
     # the guard already refuses actuation, this makes the REPORT say so.
     gate = store.check_actuation_gate(paths)
     freeze_state = "active" if gate.allowed else (gate.reason or "unknown")
+    end_frozen = gate.reason == store.REASON_FROZEN
+    if end_frozen:
+        froze_mid_pass = True
+    freeze_summary = None
+    if froze_mid_pass:
+        # ``freeze_state`` and ``frozen`` are the state at the END of the pass, as it
+        # is; ``frozen_mid_pass`` is the separate fact that a freeze landed after the
+        # pass began (even if it was lifted again). It is reported as what happened:
+        # what ran before it, what it refused, and what is still firing, not as the
+        # whole pass standing down.
+        freeze_summary = _freeze_summary(the_brief, outcomes)
+        report += (
+            "\nfreeze: landed mid-pass"
+            + ("" if end_frozen else " and was lifted before the pass ended")
+            + ". "
+            f"{len(freeze_summary['taken_before_freeze'])} action(s) taken before the freeze, "
+            f"{len(freeze_summary['refused_by_freeze'])} refused, "
+            f"{len(freeze_summary['still_firing'])} condition(s) still firing."
+        )
     if freeze_state == store.REASON_UNPROVISIONED:
         report += (
             "\nfreeze store: UNPROVISIONED. No human operator has provisioned the "
             "kill switch; every actuation refuses until `skoperator provision` runs."
         )
+    if stranded:
+        report += (
+            f"\nALERT: {len(stranded)} intent(s) stranded in AUTHORIZED/EXECUTING by a crash "
+            "were escalated and not re-run: " + ", ".join(stranded)
+        )
     emit(report)
     return {
-        "frozen": False,
+        "stranded": stranded,
+        "closed_episodes": closed_episodes,
+        "frozen": end_frozen,
+        "frozen_mid_pass": froze_mid_pass,
         "freeze_state": freeze_state,
+        "freeze_summary": freeze_summary,
         "brief": the_brief,
         "route": route,
         "proposals": proposals,

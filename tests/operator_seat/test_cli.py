@@ -127,7 +127,8 @@ def test_decide_approve_with_linked_change_submits_a_cab_vote(tmp_path, monkeypa
         risk="low",
         rollback_plan="revert",
         created_by="atlas",
-        tags=["operator"],
+        # Bound to the decision's own app, action and target, as the loop drafts it.
+        tags=["operator", "op-bind:unknown|restart_service|x"],
     )
     ddir = str(paths.root / "decisions")
     decisions.park(
@@ -324,3 +325,70 @@ def test_seat_writer_identity_degrades_to_unattributed_never_raises(tmp_path, mo
 
     monkeypatch.setattr("capauth.resolve_agent_identity", _boom)
     assert cli._seat_writer().identity == "unattributed"
+
+
+def test_run_passes_max_evidence_age_through_to_the_loop(tmp_path, monkeypatch):
+    _enroll(tmp_path, monkeypatch)
+    seen = {}
+
+    def _capture(*_a, **kwargs):
+        seen.update(kwargs)
+        return {
+            "frozen": False,
+            "brief": {"firing": [], "stale": [], "quiet": True, "counts": {}},
+            "route": "quiet",
+            "proposals": [],
+            "outcomes": [],
+            "report": "all quiet",
+        }
+
+    monkeypatch.setattr(cli.loop, "run_once", _capture)
+    out = CliRunner().invoke(
+        cli.operator, ["run", "--no-publish", "--no-bootstrap", "--max-evidence-age", "90"]
+    )
+    assert out.exit_code == 0, out.output
+    assert seen["max_evidence_age_s"] == 90.0
+
+
+def test_run_defaults_max_evidence_age_to_the_module_default(tmp_path, monkeypatch):
+    _enroll(tmp_path, monkeypatch)
+    seen = {}
+    monkeypatch.setattr(
+        cli.loop,
+        "run_once",
+        lambda *_a, **k: seen.update(k)
+        or {"brief": {"counts": {}}, "outcomes": [], "report": "", "frozen": False},
+    )
+    out = CliRunner().invoke(cli.operator, ["run", "--no-publish", "--no-bootstrap"])
+    assert out.exit_code == 0, out.output
+    assert seen["max_evidence_age_s"] == cli.evidence.DEFAULT_MAX_AGE_SECONDS
+
+
+def test_run_rejects_a_max_evidence_age_above_the_cap(tmp_path, monkeypatch):
+    _enroll(tmp_path, monkeypatch)
+    _stub_run_once(monkeypatch)
+    cap = cli.evidence.MAX_ALLOWED_AGE_SECONDS
+    too_big = CliRunner().invoke(
+        cli.operator, ["run", "--no-publish", "--no-bootstrap", "--max-evidence-age", str(cap + 1)]
+    )
+    assert too_big.exit_code == 2
+    at_cap = CliRunner().invoke(
+        cli.operator, ["run", "--no-publish", "--no-bootstrap", "--max-evidence-age", str(cap)]
+    )
+    assert at_cap.exit_code == 0, at_cap.output
+
+
+def test_honor_pending_rejects_a_max_approval_age_above_the_cap():
+    from skcapstone.operator_seat import dispatch
+
+    runner = CliRunner()
+    too_big = runner.invoke(
+        cli.operator,
+        [
+            "honor-pending",
+            "--max-approval-age",
+            str(dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS + 1),
+        ],
+    )
+    assert too_big.exit_code == 2
+    assert "max-approval-age" in too_big.output.lower() or "invalid" in too_big.output.lower()

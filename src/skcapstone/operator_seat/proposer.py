@@ -77,9 +77,10 @@ def propose(
     if brief.get("quiet"):
         return []
     catalog = {a["name"] for a in explain.get("actions", [])}
-    firing_identities = {
-        (c.get("app"), c.get("type"), c.get("object")) for c in brief.get("firing", [])
+    firing_by_identity = {
+        (c.get("app"), c.get("type"), c.get("object")): c for c in brief.get("firing", [])
     }
+    firing_identities = set(firing_by_identity)
     firing = (
         "\n".join(
             f"- {c.get('app')}: {c.get('object')} {c.get('type')}={c.get('status')}"
@@ -104,14 +105,23 @@ def propose(
             and item.get("action") in catalog
             and identity in firing_identities
         ):
-            out.append(
-                {
-                    "app": item["app"],
-                    "condition": item["condition"],
-                    "action": item["action"],
-                    "object": item.get("object", ""),
-                    "change_class": item.get("change_class", "normal"),
-                    "rationale": str(item.get("rationale", "")),
+            proposal = {
+                "app": item["app"],
+                "condition": item["condition"],
+                "action": item["action"],
+                "object": item.get("object", ""),
+                "change_class": item.get("change_class", "normal"),
+                "rationale": str(item.get("rationale", "")),
+            }
+            # Evidence comes from the observation that put the condition in the
+            # brief, never from the model's reply: the model cannot vouch for its
+            # own freshness. No SOURCE time on the firing entry means no stamp, and
+            # the loop then refuses to actuate (fail closed).
+            observed_at = firing_by_identity[identity].get("source_observed_at")
+            if observed_at:
+                proposal["evidence"] = {
+                    "source": f"observation:{identity[0]}/{identity[1]}/{identity[2]}",
+                    "observed_at": observed_at,
                 }
-            )
+            out.append(proposal)
     return out

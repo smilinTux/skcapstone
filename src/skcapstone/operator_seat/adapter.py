@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from . import evidence
+
 BLAST_RADII = frozenset({"low", "medium", "delete", "drain_always_on", "fleet_restart"})
 
 OBSERVE_STATUSES = frozenset({"True", "False", "Unknown"})
@@ -24,6 +26,16 @@ _ACTION_REQUIRED_KEYS = (
     "runbook",
     "kedb_refs",
 )
+
+
+def probe_time() -> str:
+    """The REAL clock now, as the source time of a live probe.
+
+    Live adapters (an HTTP probe, a subprocess, a status read) report this as
+    ``source_observed_at``: the data is as old as the moment it was read. It is
+    taken from the wall clock on purpose, never from the pass clock.
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def action_contract_id(app: str, action: str) -> str:
@@ -168,6 +180,12 @@ def normalize_observe(
 
     Every declared condition is emitted exactly once. Malformed, absent, or
     undeclared evidence cannot silently become healthy.
+
+    ``observed_at`` is the probe (or pass) clock and is NOT evidence. A condition
+    carries ``source_observed_at`` only when the adapter reported when its source
+    data was true, on the condition or once for the whole payload, as a
+    timezone-aware ISO 8601 string. It is never defaulted: a condition without one
+    cannot be actuated on (operator_seat.evidence). An unusable value is dropped.
     """
     now = observed_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     raw = payload if isinstance(payload, Mapping) else {}
@@ -181,6 +199,7 @@ def normalize_observe(
         if isinstance(items, list)
         else {}
     )
+    payload_source_time = raw.get("source_observed_at")
     conditions: list[dict[str, Any]] = []
     for name, definition in schema.items():
         polarity = definition.get("polarity")
@@ -201,6 +220,7 @@ def normalize_observe(
                 "message": "adapter did not provide valid evidence",
             }
         )
+        source_time = item.pop("source_observed_at", payload_source_time) if valid else None
         item.update(
             {
                 "type": name,
@@ -212,6 +232,8 @@ def normalize_observe(
                 "polarity": polarity,
             }
         )
+        if evidence.parse_aware(source_time) is not None:
+            item["source_observed_at"] = source_time
         conditions.append(item)
     return {"schema": OBSERVATION_SCHEMA, "app": app, "conditions": conditions}
 

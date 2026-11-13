@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 
 from ..fleet import store
-from . import actuator
+from . import actuator, adapter
 
 #: The order MUST match the skdashboard manifest's operator.conditions exactly;
 #: the drift-guard test asserts it.
@@ -139,7 +139,10 @@ def skdashboard_act(paths, proposal: dict, classification: dict, *, runner=None)
 
 #: A loop-compatible observe (paths, now_iso) -> {conditions}; ignores both.
 def observe(paths=None, now_iso: str | None = None) -> dict:
-    return skdashboard_observe()
+    # A live probe: the data is as old as the moment it was read, on the REAL
+    # clock (never the pass clock), reported as the evidence source time.
+    probed_at = adapter.probe_time()
+    return {**skdashboard_observe(), "source_observed_at": probed_at}
 
 
 __all__ = [

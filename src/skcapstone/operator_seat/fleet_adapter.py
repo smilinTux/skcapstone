@@ -151,7 +151,13 @@ def fleet_observe(paths, now_iso: str) -> dict:
     for row in service_controller.service_rows(paths):
         conds.append({"type": "Ready", "status": row.ready, "object": row.name})
 
-    return {"conditions": conds}
+    # Every row above is derived from the fleet store AS OF ``now_iso`` (heartbeat
+    # ages and cron windows are evaluated against it), so that evaluation instant is
+    # the source time. The pass clock is a fair source time here only because the
+    # decision-point check measures it against the real clock: an old pass clock
+    # makes this evidence old. Cached or stale store data shows up as the derived
+    # conditions themselves (NotReady, MissedRun), not as a fresh-looking stamp.
+    return {"conditions": conds, "source_observed_at": now_iso}
 
 
 def fleet_target_known(paths, proposal: dict) -> bool:
