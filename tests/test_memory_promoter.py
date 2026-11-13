@@ -562,6 +562,9 @@ def _sealed_skmemory_record(home: Path, memory_id: str, layer: str, content: str
         json.dumps(
             {
                 "id": memory_id,
+                # Both keys, as in the 2026-10-20 incident: a record carrying `memory_id`
+                # too must still be skipped, or the legacy model rewrites it.
+                "memory_id": memory_id,
                 "title": title,
                 "content": content,
                 "layer": layer,
