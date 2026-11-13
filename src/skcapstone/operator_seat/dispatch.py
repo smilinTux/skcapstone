@@ -368,6 +368,22 @@ def _actuation_timing(result: Any) -> tuple[datetime, int, float] | None:
     return acted_at, 1 + int(settle // poll), poll
 
 
+def _written_after(raw: Any, acted_at: datetime) -> bool:
+    """True only when a source time is STRICTLY after the action.
+
+    A stamp with sub-second precision is compared exactly. A whole-second stamp (the
+    fleet store's ``updatedAt``) may have been truncated from any instant inside its
+    second, so it only counts when its second is later than the action's second. A
+    missing or unparseable stamp is never fresh.
+    """
+    stamp = evidence.parse_aware(raw)
+    if stamp is None:
+        return False
+    if "." in str(raw).split("T", 1)[-1]:
+        return stamp > acted_at
+    return stamp > acted_at.replace(microsecond=0)
+
+
 def _fresh_verdict(
     observer: Callable[..., dict],
     proposal: dict,
@@ -385,10 +401,9 @@ def _fresh_verdict(
     if not matches:
         return False, "bound condition missing after action"
     for item in matches:
-        stamp = evidence.parse_aware(
-            item.get("source_observed_at", payload.get("source_observed_at"))
-        )
-        if stamp is None or stamp < acted_at:
+        if not _written_after(
+            item.get("source_observed_at", payload.get("source_observed_at")), acted_at
+        ):
             return False, "no evidence newer than the action yet"
     if any(condition_firing(item, problem_types) for item in matches):
         return False, "bound condition still firing after action"
@@ -404,13 +419,17 @@ def verify_postcondition(
     *,
     result: Any = None,
     sleep: Callable[[float], Any] | None = None,
+    deadline: float | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[bool, str]:
     """Re-observe the owning app and require the bound condition to clear.
 
     When the actuation reports when it acted (``acted_at``, with a ``settle_s`` /
     ``poll_s`` window; the fleet restart does, card 21b01d01) the postcondition is
-    judged only on evidence whose source time is at or after that instant, re-read every
-    ``poll_s`` seconds for at most ``settle_s`` (capped at ``MAX_POSTCONDITION_SETTLE_S``).
+    judged only on evidence whose source time is strictly after that instant
+    (``_written_after``), re-read every ``poll_s`` seconds for at most ``settle_s`` (capped
+    at ``MAX_POSTCONDITION_SETTLE_S``, and never past the pass ``deadline``, a monotonic
+    instant: polling stops early rather than overrun the pass budget).
     A store-mediated adapter only reports a restart once its node re-observes, so an
     immediate read would see the pre-action status and fail every real restart; and the
     pre-action status, however healthy, never verifies the action. ``sleep`` is
@@ -435,13 +454,16 @@ def verify_postcondition(
     acted_at, attempts, poll = timing
     sleep = time.sleep if sleep is None else sleep
     reason = "postcondition not evaluated"
+    waited = 0.0
     for attempt in range(attempts):
         if attempt:
+            if deadline is not None and monotonic() + poll >= deadline:
+                return False, f"{reason} (settle cut short by the pass deadline after {waited:g}s)"
             sleep(poll)
+            waited += poll
         ok, reason = _fresh_verdict(observer, proposal, paths, now_iso, problem_types, acted_at)
         if ok:
             return True, reason
-    waited = (attempts - 1) * poll
     return False, f"{reason} (after {waited:g}s settle)"
 
 
@@ -1150,6 +1172,7 @@ def dispatch_intent(
     action_allowed: Callable[[dict], bool] | None = None,
     max_approval_age_s: float = DEFAULT_MAX_APPROVAL_AGE_SECONDS,
     postcondition_sleep: Callable[[float], Any] | None = None,
+    deadline: float | None = None,
 ) -> DispatchOutcome:
     """Dispatch one PROPOSED intent: refuse, verify, authorize, actuate, verify.
 
@@ -1340,6 +1363,7 @@ def dispatch_intent(
                 problem_types,
                 result=result,
                 sleep=postcondition_sleep,
+                deadline=deadline,
             )
             if not verified:
                 raise RuntimeError(reason)

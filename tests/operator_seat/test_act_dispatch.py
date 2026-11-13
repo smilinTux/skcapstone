@@ -95,15 +95,29 @@ def test_honor_fleet_annotates_then_actuates(tmp_path, monkeypatch):
     _provision_ready(paths)
     # Seed a fleet Service object so fleet_act can annotate its spec, placed on this
     # node: the honor path only restarts an object placed where it runs (21b01d01).
+    # The spec and placement are signed and verified like converge's (test keys).
     monkeypatch.setenv("SKFLEET_NODE", "n")
+    monkeypatch.setenv("SKFLEET_SIGNING", "off")
+
+    def sign(data):
+        return "sig-" + str(len(data))
+
     seat = store.Writer(role="operator", node="n", identity="operator", agent_seat=True)
-    store.write_spec(paths, "service", "svc-x", {"unit": "svc-x.service"}, writer=seat)
+    store.write_spec(
+        paths, "service", "svc-x", {"unit": "svc-x.service"}, writer=seat, signer=sign
+    )
     sched = store.Writer(role="scheduler", node="n", identity="scheduler")
-    store.write_placement(paths, "service", "svc-x", node="n", reason="test", writer=sched)
+    store.write_placement(
+        paths, "service", "svc-x", node="n", reason="test", writer=sched, signer=sign
+    )
 
     calls = []
     apply_fn = act_dispatch.build_apply_fn(
-        paths, "2026-08-07T00:00:00Z", runner=_capture_runner(calls), itil=None
+        paths,
+        "2026-08-07T00:00:00Z",
+        runner=_capture_runner(calls),
+        itil=None,
+        verifier=lambda data, sig: sig == sign(data),
     )
     prop = {"action": "restart_service", "object": "svc-x", "ts": "t2"}
     cls = {"change_class": "standard", "risk": "low", "auto_approvable": True}

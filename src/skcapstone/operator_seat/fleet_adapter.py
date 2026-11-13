@@ -194,7 +194,12 @@ def fleet_observe(paths, now_iso: str) -> dict:
     return {"conditions": conds}
 
 
-def fleet_target_known(paths, proposal: dict) -> bool:
+#: Sentinel: "use the local CapAuth trust roster" (``signing.capauth_verifier``).
+#: Passing ``None`` explicitly means "no verifier", which refuses.
+DEFAULT_VERIFIER = object()
+
+
+def fleet_target_known(paths, proposal: dict, *, verifier=DEFAULT_VERIFIER) -> bool:
     """True when the proposal's object resolves to an existing fleet object.
 
     The decision layer validates the ACTION against the catalog but had no way
@@ -202,8 +207,20 @@ def fleet_target_known(paths, proposal: dict) -> bool:
     still classified auto and was handed to the act verb, which then raised.
     Actions with no ops-channel mapping return True: the action-level check
     already governs those, and this must not second-guess that disposition.
+
+    ``restart_service`` is judged by ``resolve_restart_target`` itself (card
+    21b01d01): a target this seat would refuse to restart is not a known target,
+    so the planner escalates it and the dispatcher refuses it in preflight,
+    before the approved change is spent or EXECUTING is written.
     """
-    kind = _ACTION_KIND.get(proposal.get("action"))
+    action = proposal.get("action")
+    if action == "restart_service":
+        try:
+            resolve_restart_target(paths, proposal, verifier=verifier)
+        except actuator.NotAttemptedError:
+            return False
+        return True
+    kind = _ACTION_KIND.get(action)
     if kind is None:
         return True
     return store.read_spec(paths, kind, proposal.get("object")) is not None
@@ -219,35 +236,32 @@ RESTART_POLL_S = 5
 #: systemctl), no path separators.
 _UNIT_RE = re.compile(r"^[A-Za-z0-9_.@:-]+$")
 
+#: systemd unit types other than ``service``. A spec.unit ending in one of these
+#: is refused: restarting a target, timer or socket is not "restart a service".
+_NON_SERVICE_TYPES = frozenset(
+    {"target", "timer", "socket", "mount", "automount", "swap", "path", "slice", "scope", "device"}
+)
 
-def resolve_restart_target(paths, proposal: dict, *, local_node: str | None = None) -> dict:
-    """Resolve a fleet ``restart_service`` proposal to a concrete unit on THIS node.
 
-    Returns ``{"object", "unit", "node", "runtime"}`` or raises
-    ``actuator.NotAttemptedError`` with the reason. Fails closed, never guesses:
-
-    * only ``restart_service`` has physical muscle; ``rerun_cronjob`` and
-      ``replace_workload`` are refused rather than run as a unit restart;
-    * the unit is ``spec.unit`` of the fleet Service object, the same field
-      sknoded's converge actuates (``services.normalize_service_spec``). The
-      object name is never used as a unit, and a proposal that names a
-      different unit is refused (the brain does not choose the unit);
-    * the object must be placed, and placed on this node. There is no reviewed
-      remote actuation path (the operator plane's ``act`` route is reserved and
-      never actuates), so an object placed elsewhere is refused, not restarted
-      locally;
-    * only the ``systemd-user`` runtime is restarted; a paused or deleted object
-      is refused.
-    """
-    action = proposal.get("action")
-    if action != "restart_service":
+def _service_unit(name: str, raw: str) -> str:
+    """``raw`` as a ``.service`` unit name, or refuse. A bare name gets ``.service``."""
+    if not _UNIT_RE.match(raw) or raw.startswith("-"):
         raise actuator.NotAttemptedError(
-            f"fleet action {action!r} has no physical muscle on the honor path"
+            f"service {name!r} spec.unit {raw!r} is not a plain systemd unit name"
         )
-    name = proposal.get("object")
-    payload = store.read_spec(paths, "service", name) if isinstance(name, str) else None
-    if payload is None:
-        raise actuator.NotAttemptedError(f"unknown service object {name!r}")
+    if raw.endswith(".service"):
+        return raw
+    suffix = raw.rsplit(".", 1)[-1] if "." in raw else ""
+    if suffix in _NON_SERVICE_TYPES:
+        raise actuator.NotAttemptedError(
+            f"service {name!r} spec.unit {raw!r} is a .{suffix} unit; only .service units "
+            "are restarted"
+        )
+    return f"{raw}.service"
+
+
+def _restartable(name: str, payload: dict) -> tuple[dict, str]:
+    """The normalized spec and ``.service`` unit of a restartable object, or refuse."""
     raw = payload.get("spec") or {}
     if not raw.get("unit"):
         raise actuator.NotAttemptedError(
@@ -257,23 +271,19 @@ def resolve_restart_target(paths, proposal: dict, *, local_node: str | None = No
         spec = normalize_service_spec(raw)
     except ServiceSpecError as exc:
         raise actuator.NotAttemptedError(f"service {name!r} spec invalid: {exc}") from exc
-    unit = spec["unit"]
-    if not _UNIT_RE.match(unit) or unit.startswith("-"):
-        raise actuator.NotAttemptedError(
-            f"service {name!r} spec.unit {unit!r} is not a plain systemd unit name"
-        )
-    claimed = proposal.get("unit")
-    if claimed is not None and claimed != unit:
-        raise actuator.NotAttemptedError(
-            f"proposal names unit {claimed!r} but service {name!r} maps to {unit!r}"
-        )
-    if spec["deleted"] or spec["paused"]:
-        state = "deleted" if spec["deleted"] else "paused"
-        raise actuator.NotAttemptedError(f"service {name!r} is {state}; not restarted")
+    unit = _service_unit(name, spec["unit"])
+    if spec["deleted"]:
+        raise actuator.NotAttemptedError(f"service {name!r} is deleted; not restarted")
+    if spec["paused"]:
+        raise actuator.NotAttemptedError(f"service {name!r} is paused; not restarted")
     if spec["runtime"] != "systemd-user":
         raise actuator.NotAttemptedError(
             f"service {name!r} runtime {spec['runtime']!r} has no restart muscle here"
         )
+    return spec, unit
+
+
+def _placed_here(paths, name: str, local_node: str | None) -> tuple[dict, str]:
     placement = store.read_placement(paths, "service", name)
     node = (placement or {}).get("node")
     if not node:
@@ -286,7 +296,87 @@ def resolve_restart_target(paths, proposal: dict, *, local_node: str | None = No
             f"service {name!r} is placed on {node!r}, this seat runs on {here!r}; "
             "no reviewed remote actuation path exists, refusing"
         )
+    return placement, node
+
+
+def resolve_restart_target(
+    paths, proposal: dict, *, local_node: str | None = None, verifier=DEFAULT_VERIFIER
+) -> dict:
+    """Resolve a fleet ``restart_service`` proposal to a concrete unit on THIS node.
+
+    Returns ``{"object", "unit", "node", "runtime"}`` or raises
+    ``actuator.NotAttemptedError`` with the reason. Fails closed, never guesses:
+
+    * only ``restart_service`` has physical muscle; ``rerun_cronjob`` and
+      ``replace_workload`` are refused rather than run as a unit restart;
+    * the unit is ``spec.unit`` of the fleet Service object, the same field
+      sknoded's converge actuates (``services.normalize_service_spec``). It must
+      be a ``.service`` unit (a bare name is normalized to one). The object name
+      is never used as a unit, and a proposal that names a different unit is
+      refused (the brain does not choose the unit);
+    * the object must be placed, and placed on this node. There is no reviewed
+      remote actuation path (the operator plane's ``act`` route is reserved and
+      never actuates), so an object placed elsewhere is refused, not restarted
+      locally;
+    * only the ``systemd-user`` runtime is restarted; a paused or deleted object
+      is refused;
+    * the spec and placement must verify against the trust roster, with the same
+      ``converge.verify_desired`` sknoded uses before healing. Unlike converge,
+      this is not gated by the signing rollout mode: an autonomous seat never
+      restarts on an unsigned spec;
+    * the unit must be allowed for this node's install profile, with the same
+      ``profiles.unit_allowed`` converge uses (not gated by the profile rollout
+      mode either).
+    """
+    from ..fleet import converge, profiles, signing
+
+    action = proposal.get("action")
+    if action != "restart_service":
+        raise actuator.NotAttemptedError(
+            f"fleet action {action!r} has no physical muscle on the honor path"
+        )
+    name = proposal.get("object")
+    payload = store.read_spec(paths, "service", name) if isinstance(name, str) else None
+    if payload is None:
+        raise actuator.NotAttemptedError(f"unknown service object {name!r}")
+    spec, unit = _restartable(name, payload)
+    claimed = proposal.get("unit")
+    if claimed is not None and claimed not in (unit, spec["unit"]):
+        raise actuator.NotAttemptedError(
+            f"proposal names unit {claimed!r} but service {name!r} maps to {unit!r}"
+        )
+    placement, node = _placed_here(paths, name, local_node)
+    trust = signing.capauth_verifier() if verifier is DEFAULT_VERIFIER else verifier
+    verified, detail = converge.verify_desired(payload, placement, trust)
+    if not verified:
+        raise actuator.NotAttemptedError(f"service {name!r} not verified: {detail}")
+    role = profiles.profile_of(store.read_spec(paths, "node", node)) or ""
+    manifests = profiles.manifest_dir(paths)
+    for candidate in {spec["unit"], unit}:
+        if not profiles.unit_allowed(role, candidate, manifests=manifests):
+            raise actuator.NotAttemptedError(
+                f"unit {candidate!r} is forbidden for node {node!r} profile {role!r}"
+            )
     return {"object": name, "unit": unit, "node": node, "runtime": spec["runtime"]}
+
+
+def recheck_restart_target(paths, target: dict, *, local_node: str | None = None) -> None:
+    """Re-check pause, deletion, unit and placement immediately before the restart.
+
+    The full resolution (including the signature) ran before the ITIL record and the
+    ``operatorActions`` annotation; this closes the window between them and systemctl.
+    The annotation itself re-writes the spec, so the signature is not re-judged here.
+    """
+    name = target["object"]
+    payload = store.read_spec(paths, "service", name)
+    if payload is None:
+        raise actuator.NotAttemptedError(f"service {name!r} disappeared before the restart")
+    _spec, unit = _restartable(name, payload)
+    if unit != target["unit"]:
+        raise actuator.NotAttemptedError(
+            f"service {name!r} unit changed to {unit!r} before the restart"
+        )
+    _placed_here(paths, name, local_node)
 
 
 def _acting_identity() -> str:
@@ -393,5 +483,6 @@ __all__ = [
     "fleet_observe",
     "fleet_act",
     "resolve_restart_target",
+    "recheck_restart_target",
     "PROBLEM_WHEN_TRUE",
 ]

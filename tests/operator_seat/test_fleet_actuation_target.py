@@ -1,6 +1,7 @@
 """Fleet actuation target, unit mapping, postcondition and source time (card 21b01d01).
 
-Found by the independent review of #1357 (gate 5 hardening):
+Found by the independent review of #1357 (gate 5 hardening), then tightened by the review
+of #1359:
 
 * ``act_dispatch`` restarted ``systemctl --user <fleet object name>`` on the LOCAL node.
   It ignored placement, and the object name is not always the unit (``capauth-keystore``
@@ -8,18 +9,24 @@ Found by the independent review of #1357 (gate 5 hardening):
 * ``verify_postcondition`` re-read the store right after the restart, so it saw the
   pre-action status and a real restart came out FAILED and escalated.
 * ``fleet_observe`` stamped ``source_observed_at`` with the pass clock.
+* (#1359 review) a brain-supplied rollback could name another object; ``spec.unit`` was
+  trusted unsigned and could be a target or timer; a refusal fed the inline breaker.
 
-These tests pin the fixed behaviour: the unit comes from the fleet spec and nothing else,
-an object placed on another node never actuates here, the postcondition is judged only on
-evidence written after the action (polled for a bounded settle window), and every fleet
-condition carries the time its node actually wrote the status it was derived from.
+These tests pin the fixed behaviour: the unit comes from a SIGNED fleet spec, must be a
+``.service`` allowed by the node's profile, the object must be placed on this node, a
+rollback is bound to the approved object, the postcondition is judged only on evidence
+written strictly after the action (polled for a bounded settle window, never past the pass
+deadline), and every fleet condition carries the time its node wrote the status file.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -32,8 +39,12 @@ from skcapstone.operator_seat import (
     actuator,
     dispatch,
     fleet_adapter,
+    loop,
     policy,
 )
+
+from .test_loop import _EV_0820, _clock_for, _enroll
+from .test_loop import _provision as _provision_loop
 
 LOCAL = "node-local-a"
 REMOTE = "node-remote-b"
@@ -45,6 +56,14 @@ OPERATOR = store.Writer(role="operator", node=LOCAL, identity="operator")
 SCHEDULER = store.Writer(role="scheduler", node=LOCAL, identity="scheduler")
 
 
+def _sign(data: bytes) -> str:
+    return "sig-" + hashlib.sha256(data).hexdigest()
+
+
+def _verify_sig(data: bytes, signature: str) -> bool:
+    return signature == _sign(data)
+
+
 def _iso(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -52,18 +71,25 @@ def _iso(moment: datetime) -> str:
 @pytest.fixture
 def paths(tmp_path, monkeypatch):
     monkeypatch.setenv("SKFLEET_NODE", LOCAL)
+    # Store writes sign only through the explicit test signer; the host's own signing
+    # mode must not leak a real signature into these fixtures.
+    monkeypatch.setenv("SKFLEET_SIGNING", "off")
+    monkeypatch.setenv("SKFLEET_PROFILE_MANIFESTS", str(tmp_path / "no-manifests"))
     p = FleetPaths(root=tmp_path / "fleet")
     store.set_frozen(p, False, writer=HUMAN, reason="test provisioning")
     return p
 
 
-def _service(paths, *, name=OBJECT, unit=UNIT, node=LOCAL, runtime=None, **extra):
+def _service(paths, *, name=OBJECT, unit=UNIT, node=LOCAL, runtime=None, signed=True, **extra):
     spec = {"unit": unit, **extra} if unit is not None else dict(extra)
     if runtime is not None:
         spec["runtime"] = runtime
-    payload = store.write_spec(paths, "service", name, spec, writer=OPERATOR)
+    signer = _sign if signed else None
+    payload = store.write_spec(paths, "service", name, spec, writer=OPERATOR, signer=signer)
     if node is not None:
-        store.write_placement(paths, "service", name, node=node, reason="test", writer=SCHEDULER)
+        store.write_placement(
+            paths, "service", name, node=node, reason="test", writer=SCHEDULER, signer=signer
+        )
     return payload
 
 
@@ -118,6 +144,15 @@ def test_fleet_observe_stamps_each_condition_with_its_status_write_time(paths):
     assert all(c.get("source_observed_at") != "2030-01-01T00:00:00Z" for c in out["conditions"])
 
 
+def test_fleet_source_time_is_read_from_the_placed_node(paths):
+    # Another node's status sorts first on disk; the placed node's is the one that counts.
+    _service(paths, node="zz-placed")
+    _status(paths, ready=False, node="aa-other", updated_at="2026-11-13T09:00:00Z")
+    _status(paths, ready=False, node="zz-placed", updated_at="2026-11-13T11:00:00Z")
+    out = fleet_adapter.fleet_observe(paths, "2030-01-01T00:00:00Z")
+    assert _ready_row(out)["source_observed_at"] == "2026-11-13T11:00:00Z"
+
+
 def test_fleet_condition_without_a_status_has_no_source_time(paths):
     _service(paths)
     out = fleet_adapter.fleet_observe(paths, "2030-01-01T00:00:00Z")
@@ -149,7 +184,7 @@ def test_fleet_node_conditions_carry_the_node_report_write_time(paths):
 
 def _apply(paths, calls, itil=None):
     return act_dispatch.build_apply_fn(
-        paths, "2026-11-13T00:00:00Z", runner=_runner(calls), itil=itil
+        paths, "2026-11-13T00:00:00Z", runner=_runner(calls), itil=itil, verifier=_verify_sig
     )
 
 
@@ -164,6 +199,13 @@ def test_restart_uses_the_unit_from_the_spec_not_the_object_name(paths):
     assert calls == [["systemctl", "--user", "restart", UNIT]]
     assert out["actuation"]["unit"] == UNIT
     assert out["actuation"]["node"] == LOCAL
+
+
+def test_a_bare_unit_name_is_normalized_to_a_service(paths):
+    _service(paths, unit="capauth-authz")
+    calls = []
+    _apply(paths, calls)({"action": "restart_service", "object": OBJECT, "ts": "t"}, _STD)
+    assert calls == [["systemctl", "--user", "restart", "capauth-authz.service"]]
 
 
 class _ITIL:
@@ -183,7 +225,11 @@ class _ITIL:
         (dict(runtime="docker"), {}, "runtime 'docker'"),
         (dict(unit=None), {}, "no unit mapping"),
         (dict(unit="-bad unit"), {}, "not a plain systemd unit name"),
-        (dict(paused=True), {}, "paused"),
+        (dict(unit="default.target"), {}, "is a .target unit"),
+        (dict(unit="capauth-backup.timer"), {}, "is a .timer unit"),
+        (dict(paused=True), {}, "is paused"),
+        (dict(deleted=True), {}, "is deleted"),
+        (dict(signed=False), {}, "not verified"),
         (dict(), {"unit": "something-else.service"}, "proposal names unit"),
     ],
 )
@@ -201,6 +247,49 @@ def test_unresolvable_targets_are_refused_before_anything_runs(
     assert itil.changes == [], "a refused target opens no ITIL change"
     spec = store.read_spec(paths, "service", OBJECT)["spec"]
     assert "operatorActions" not in spec, "a refused target is not annotated as acted on"
+    assert fleet_adapter.fleet_target_known(paths, prop, verifier=_verify_sig) is False
+
+
+def test_no_trust_roster_refuses(paths):
+    _service(paths)
+    with pytest.raises(actuator.NotAttemptedError, match="no verifier"):
+        fleet_adapter.resolve_restart_target(
+            paths, {"action": "restart_service", "object": OBJECT}, verifier=None
+        )
+
+
+def test_an_unsigned_placement_refuses(paths):
+    store.write_spec(paths, "service", OBJECT, {"unit": UNIT}, writer=OPERATOR, signer=_sign)
+    store.write_placement(paths, "service", OBJECT, node=LOCAL, reason="t", writer=SCHEDULER)
+    with pytest.raises(actuator.NotAttemptedError, match="placement unsigned"):
+        fleet_adapter.resolve_restart_target(
+            paths, {"action": "restart_service", "object": OBJECT}, verifier=_verify_sig
+        )
+
+
+def test_a_unit_outside_the_node_profile_is_refused(paths, tmp_path, monkeypatch):
+    shipped = Path(__file__).resolve().parents[2] / "deploy/fleet-objects/profile/control.json"
+    manifest = json.loads(shipped.read_text())
+    units = manifest["spec"]["units"]
+    units["allowed"] = [u for u in units.get("allowed", []) if u != UNIT]
+    units["required"] = [u for u in units.get("required", []) if u != UNIT]
+    units["mustNot"] = sorted(set(units.get("mustNot", [])) | {UNIT})
+    mdir = tmp_path / "manifests"
+    mdir.mkdir()
+    (mdir / "control.json").write_text(json.dumps(manifest))
+    monkeypatch.setenv("SKFLEET_PROFILE_MANIFESTS", str(mdir))
+    store.write_spec(paths, "node", LOCAL, {"role": "control"}, writer=OPERATOR)
+    _service(paths)
+    calls = []
+    with pytest.raises(actuator.NotAttemptedError, match="forbidden for node"):
+        _apply(paths, calls)({"action": "restart_service", "object": OBJECT, "ts": "t"}, _STD)
+    assert calls == []
+
+
+def test_target_known_accepts_a_resolvable_target(paths):
+    _service(paths)
+    prop = {"action": "restart_service", "object": OBJECT}
+    assert fleet_adapter.fleet_target_known(paths, prop, verifier=_verify_sig) is True
 
 
 def test_unknown_object_is_refused(paths):
@@ -220,17 +309,70 @@ def test_fleet_actions_without_physical_muscle_are_refused_not_restarted(paths):
     assert calls == [], "a cronjob must never be 'restarted' as if it were a service unit"
 
 
-def test_rollback_resolves_the_same_way(paths):
+def test_pause_and_placement_are_rechecked_immediately_before_the_restart(paths):
+    _service(paths)
+    target = fleet_adapter.resolve_restart_target(
+        paths, {"action": "restart_service", "object": OBJECT}, verifier=_verify_sig
+    )
+    store.write_spec(paths, "service", OBJECT, {"unit": UNIT, "paused": True}, writer=OPERATOR)
+    calls = []
+    with pytest.raises(actuator.NotAttemptedError, match="paused"):
+        act_dispatch._honor_fleet(paths, {"ts": "t"}, target, runner=_runner(calls))
+    store.write_spec(paths, "service", OBJECT, {"unit": UNIT}, writer=OPERATOR)
+    store.write_placement(paths, "service", OBJECT, node=REMOTE, reason="moved", writer=SCHEDULER)
+    with pytest.raises(actuator.NotAttemptedError, match="placed on"):
+        act_dispatch._honor_fleet(paths, {"ts": "t"}, target, runner=_runner(calls))
+    assert calls == []
+
+
+# --- rollback is bound to the approved object ---------------------------------
+
+
+def _rollback(paths, calls):
+    return act_dispatch.build_rollback_fn(paths, runner=_runner(calls), verifier=_verify_sig)
+
+
+def test_rollback_restarts_the_approved_unit(paths):
+    _service(paths)
+    calls = []
+    prop = {
+        "action": "restart_service",
+        "object": OBJECT,
+        "rollback": {"action": "restart_service"},
+    }
+    out = _rollback(paths, calls)(prop, _STD, None)
+    assert out["performed"] is True
+    assert calls == [["systemctl", "--user", "restart", UNIT]]
+
+
+@pytest.mark.parametrize(
+    "rollback",
+    [
+        {"action": "restart_service", "object": "other"},  # restarts default.target
+        {"action": "restart_service", "unit": "default.target"},
+        {"action": "restart-daemon", "object": "skchat-daemon"},  # leaves the fleet adapter
+    ],
+)
+def test_rollback_naming_another_object_or_unit_is_refused(paths, rollback):
+    _service(paths)
+    _service(paths, name="other", unit="default.target")
+    calls = []
+    prop = {"action": "restart_service", "object": OBJECT, "rollback": rollback}
+    with pytest.raises(actuator.NotAttemptedError, match="refused|proposal names unit"):
+        _rollback(paths, calls)(prop, _STD, None)
+    assert calls == []
+
+
+def test_rollback_of_a_remote_object_is_refused(paths):
     _service(paths, node=REMOTE)
     calls = []
-    rollback = act_dispatch.build_rollback_fn(paths, runner=_runner(calls))
     prop = {
         "action": "restart_service",
         "object": OBJECT,
         "rollback": {"action": "restart_service"},
     }
     with pytest.raises(actuator.NotAttemptedError):
-        rollback(prop, _STD, None)
+        _rollback(paths, calls)(prop, _STD, None)
     assert calls == []
 
 
@@ -258,15 +400,25 @@ class _Observer:
 
 
 def _row(status, stamp):
-    return {"type": "Ready", "status": status, "object": OBJECT, "source_observed_at": stamp}
+    item = {"type": "Ready", "status": status, "object": OBJECT}
+    if stamp is not None:
+        item["source_observed_at"] = stamp
+    return item
 
 
-_ACTED = "2026-11-13T12:00:10Z"
+_ACTED = "2026-11-13T12:00:10.400000+00:00"
 _RESULT = {"actuation": {"performed": True, "acted_at": _ACTED, "settle_s": 20, "poll_s": 5}}
 _PROP = {"app": "fleet", "condition": "Ready", "object": OBJECT}
 
 
-def test_postcondition_waits_for_evidence_newer_than_the_action(paths):
+def _verify(obs, result=_RESULT, **kw):
+    kw.setdefault("sleep", lambda _s: None)
+    return dispatch.verify_postcondition(
+        {"fleet": obs}, _PROP, None, "x", set(), result=result, **kw
+    )
+
+
+def test_postcondition_waits_for_evidence_newer_than_the_action():
     obs = _Observer(
         [
             _row("True", "2026-11-13T12:00:00Z"),  # healthy, but written BEFORE the action
@@ -275,19 +427,15 @@ def test_postcondition_waits_for_evidence_newer_than_the_action(paths):
         ]
     )
     sleeps = []
-    ok, reason = dispatch.verify_postcondition(
-        {"fleet": obs}, _PROP, paths, "x", set(), result=_RESULT, sleep=sleeps.append
-    )
+    ok, reason = _verify(obs, sleep=sleeps.append)
     assert ok is True, reason
     assert sleeps == [5, 5]
 
 
-def test_postcondition_never_accepts_pre_action_evidence(paths):
+def test_postcondition_never_accepts_pre_action_evidence():
     obs = _Observer([_row("True", "2026-11-13T12:00:00Z")])
     sleeps = []
-    ok, reason = dispatch.verify_postcondition(
-        {"fleet": obs}, _PROP, paths, "x", set(), result=_RESULT, sleep=sleeps.append
-    )
+    ok, reason = _verify(obs, sleep=sleeps.append)
     assert ok is False
     assert "no evidence newer than the action" in reason
     # Bounded: settle 20 s polled every 5 s is 5 reads and 4 sleeps, never more.
@@ -295,41 +443,188 @@ def test_postcondition_never_accepts_pre_action_evidence(paths):
     assert sleeps == [5, 5, 5, 5]
 
 
-def test_postcondition_fails_on_fresh_evidence_that_is_still_firing(paths):
-    obs = _Observer([_row("False", "2026-11-13T12:00:30Z")])
-    ok, reason = dispatch.verify_postcondition(
-        {"fleet": obs}, _PROP, paths, "x", set(), result=_RESULT, sleep=lambda _s: None
-    )
+@pytest.mark.parametrize(
+    ("stamp", "fresh"),
+    [
+        (None, False),  # a missing stamp is never fresh
+        ("not a time", False),
+        ("2026-11-13T12:00:10Z", False),  # same whole second as the action: may predate it
+        ("2026-11-13T12:00:11Z", True),
+        ("2026-11-13T12:00:10.300000+00:00", False),  # sub-second, before the action
+        ("2026-11-13T12:00:10.400000+00:00", False),  # equal is not strictly after
+        ("2026-11-13T12:00:10.500000+00:00", True),
+    ],
+)
+def test_postcondition_needs_evidence_strictly_after_the_action(stamp, fresh):
+    ok, _ = _verify(_Observer([_row("True", stamp)]))
+    assert ok is fresh
+
+
+def test_postcondition_fails_on_fresh_evidence_that_is_still_firing():
+    ok, reason = _verify(_Observer([_row("False", "2026-11-13T12:00:30Z")]))
     assert ok is False
     assert "still firing" in reason
 
 
-def test_postcondition_settle_window_is_capped(paths):
+def test_postcondition_settle_window_is_capped():
     obs = _Observer([_row("True", "2026-11-13T12:00:00Z")])
     huge = {"actuation": {**_RESULT["actuation"], "settle_s": 10**9, "poll_s": 1}}
-    ok, _ = dispatch.verify_postcondition(
-        {"fleet": obs}, _PROP, paths, "x", set(), result=huge, sleep=lambda _s: None
-    )
+    ok, _ = _verify(obs, result=huge)
     assert ok is False
     assert obs.calls <= dispatch.MAX_POSTCONDITION_SETTLE_S + 1
 
 
-def test_postcondition_without_an_action_time_is_unchanged(paths):
+def test_postcondition_settle_stops_at_the_pass_deadline():
+    obs = _Observer([_row("True", "2026-11-13T12:00:00Z")])
+    clock = {"t": 100.0}
+
+    def sleep(seconds):
+        clock["t"] += seconds
+
+    ok, reason = _verify(obs, sleep=sleep, deadline=112.0, monotonic=lambda: clock["t"])
+    assert ok is False
+    assert "pass deadline" in reason
+    assert obs.calls == 3  # reads at t=100, 105, 110; sleeping to 115 would pass 112
+    assert clock["t"] == 110.0
+
+
+def test_postcondition_without_an_action_time_is_unchanged():
     # An actuation that does not say when it acted (skchat's live probes) keeps the
     # single immediate re-read.
     obs = _Observer([_row("True", "2026-11-13T12:00:00Z")])
-    ok, _ = dispatch.verify_postcondition({"fleet": obs}, _PROP, paths, "x", set())
+    ok, _ = dispatch.verify_postcondition({"fleet": obs}, _PROP, None, "x", set())
     assert ok is True
     assert obs.calls == 1
 
 
 def test_fleet_actuation_reports_when_it_acted(paths):
     _service(paths)
-    before = datetime.now(timezone.utc).replace(microsecond=0)
+    before = datetime.now(timezone.utc)
     out = _apply(paths, [])({"action": "restart_service", "object": OBJECT, "ts": "t"}, _STD)
-    acted = datetime.fromisoformat(out["actuation"]["acted_at"].replace("Z", "+00:00"))
+    acted = datetime.fromisoformat(out["actuation"]["acted_at"])
     assert before <= acted <= datetime.now(timezone.utc)
     assert 0 < out["actuation"]["settle_s"] <= dispatch.MAX_POSTCONDITION_SETTLE_S
+
+
+# ---------------------------------------------------------------------------
+# The inline loop lane (no ITIL) agrees with the dispatch lane
+# ---------------------------------------------------------------------------
+
+
+class _SpyState:
+    def __init__(self):
+        self.recorded = []
+
+    def eligibility(self, _fp, _now):
+        return True, ""
+
+    def record(self, *args, **kwargs):
+        self.recorded.append((args, kwargs))
+
+
+def _ratify_demo(paths):
+    human = store.Writer(role="operator", node="node-158", identity="chef")
+    store.write_spec(
+        paths,
+        "operatorapp",
+        "demo",
+        {
+            "name": "demo",
+            "conditions": ["Ready"],
+            "proposedStandardActions": ["restart"],
+            "ratifiedStandardActions": ["restart"],
+        },
+        writer=human,
+    )
+
+
+def _inline(paths, tmp_path, monkeypatch, observer, apply_fn, **kwargs):
+    monkeypatch.setattr(loop, "ADAPTERS", {"demo": observer})
+    return loop.run_once(
+        paths,
+        now_iso="2026-08-20T00:00:00Z",
+        clock=_clock_for("2026-08-20T00:00:00Z"),
+        propose=lambda _b, _r: [
+            {
+                "app": "demo",
+                "condition": "Ready",
+                "action": "restart",
+                "object": "svc",
+                "evidence": _EV_0820,
+                "rollback": {"action": "restart"},
+            }
+        ],
+        explain={"actions": [{"name": "restart", "standard": True, "reversible": True}]},
+        apply_fn=apply_fn,
+        execute=True,
+        require_verified_actions=True,
+        lifecycle_ledger=action_ledger.ActionLedger(tmp_path / "ledger"),
+        emit=lambda _s: None,
+        **kwargs,
+    )
+
+
+def test_inline_lane_judges_the_postcondition_on_the_actuation_time(tmp_path, monkeypatch):
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision_loop(paths)
+    _ratify_demo(paths)
+    reads = {"n": 0}
+
+    def observer(_p, _n):
+        reads["n"] += 1
+        status = "False" if reads["n"] == 1 else "True"
+        return {
+            "conditions": [
+                {
+                    "type": "Ready",
+                    "status": status,
+                    "object": "svc",
+                    "source_observed_at": "2026-08-19T23:59:30Z",
+                }
+            ]
+        }
+
+    result = {"performed": True, "acted_at": "2026-08-20T00:00:05.000000+00:00", "settle_s": 0}
+    res = _inline(paths, tmp_path, monkeypatch, observer, lambda _p, _c: result)
+    # Healthy, but only on evidence written before the action: not verified.
+    assert res["outcomes"][0]["outcome"].startswith("failed:"), res["outcomes"][0]
+    assert "no evidence newer than the action" in res["outcomes"][0]["outcome"]
+
+
+def test_inline_lane_refusal_is_not_an_attempt(tmp_path, monkeypatch):
+    paths, _ = _enroll(tmp_path, monkeypatch)
+    _provision_loop(paths)
+    _ratify_demo(paths)
+
+    def observer(_p, _n):
+        return {
+            "conditions": [
+                {
+                    "type": "Ready",
+                    "status": "False",
+                    "object": "svc",
+                    "source_observed_at": "2026-08-19T23:59:30Z",
+                }
+            ]
+        }
+
+    def refuse(_p, _c):
+        raise actuator.NotAttemptedError("service 'svc' is placed on 'elsewhere'")
+
+    state = loop.safety.ExecutionState(tmp_path / "state", cooldown_seconds=0)
+    rollbacks = []
+    res = _inline(
+        paths,
+        tmp_path,
+        monkeypatch,
+        observer,
+        refuse,
+        execution_state=state,
+        rollback_fn=lambda p, c, r: rollbacks.append(p) or {"performed": True},
+    )
+    assert "placed on" in res["outcomes"][0]["outcome"]
+    assert state._load()["actions"] == {}, "a refusal never feeds the circuit breaker"
+    assert rollbacks == [], "nothing ran, so nothing is rolled back"
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +663,7 @@ def _intent(ledger, change_id, evidence_at):
             },
         },
     )
-    return intent.intent_id
+    return intent.intent_id, change_id
 
 
 def _world(tmp_path, paths, *, node=LOCAL):
@@ -385,22 +680,12 @@ def _world(tmp_path, paths, *, node=LOCAL):
         created_by="atlas",
         tags=["operator", f"op-bind:fleet|restart_service|{OBJECT}"],
     )
-    return itil, ledger, _intent(ledger, chg.id, stamp)
+    intent_id, change_id = _intent(ledger, chg.id, stamp)
+    return itil, ledger, intent_id, change_id
 
 
-def test_e2e_fleet_restart_verifies_once_the_node_reports_after_the_action(tmp_path, paths):
-    itil, ledger, intent_id = _world(tmp_path, paths)
-    calls = []
-    sleeps = []
-
-    def sleep(seconds):
-        # The node's sknoded converge pass notices the restarted unit (new pid) on its
-        # second poll and writes a fresh status against the current spec generation.
-        sleeps.append(seconds)
-        if len(sleeps) == 2:
-            _status(paths, ready=True, pid=200)
-
-    outcome = dispatch.dispatch_intent(
+def _dispatch(paths, itil, ledger, intent_id, calls, **kw):
+    return dispatch.dispatch_intent(
         paths,
         ledger,
         itil,
@@ -408,10 +693,39 @@ def test_e2e_fleet_restart_verifies_once_the_node_reports_after_the_action(tmp_p
         adapters={"fleet": fleet_adapter.fleet_observe},
         problem_types=set(fleet_adapter.PROBLEM_WHEN_TRUE),
         apply_fn=act_dispatch.build_apply_fn(
-            paths, _iso(datetime.now(timezone.utc)), runner=_runner(calls), itil=itil
+            paths,
+            _iso(datetime.now(timezone.utc)),
+            runner=_runner(calls),
+            itil=itil,
+            verifier=_verify_sig,
         ),
         now_iso=_iso(datetime.now(timezone.utc)),
+        **kw,
+    )
+
+
+def test_e2e_fleet_restart_verifies_once_the_node_reports_after_the_action(tmp_path, paths):
+    itil, ledger, intent_id, _ = _world(tmp_path, paths)
+    calls = []
+    sleeps = []
+
+    def sleep(seconds):
+        # The node's sknoded converge pass notices the restarted unit (new pid) on its
+        # second poll and writes a fresh status against the current spec generation, in
+        # a later second than the restart (status files are stamped to the second).
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            time.sleep(1.05)
+            _status(paths, ready=True, pid=200)
+
+    outcome = _dispatch(
+        paths,
+        itil,
+        ledger,
+        intent_id,
+        calls,
         postcondition_sleep=sleep,
+        target_known=lambda p: fleet_adapter.fleet_target_known(paths, p, verifier=_verify_sig),
     )
     assert outcome.outcome == "verified", outcome.outcome
     assert calls == [["systemctl", "--user", "restart", UNIT]]
@@ -421,60 +735,55 @@ def test_e2e_fleet_restart_verifies_once_the_node_reports_after_the_action(tmp_p
 
 
 def test_e2e_fleet_restart_fails_when_no_fresh_status_arrives(tmp_path, paths):
-    itil, ledger, intent_id = _world(tmp_path, paths)
+    itil, ledger, intent_id, _ = _world(tmp_path, paths)
     calls = []
     sleeps = []
-    outcome = dispatch.dispatch_intent(
-        paths,
-        ledger,
-        itil,
-        intent_id,
-        adapters={"fleet": fleet_adapter.fleet_observe},
-        problem_types=set(fleet_adapter.PROBLEM_WHEN_TRUE),
-        apply_fn=act_dispatch.build_apply_fn(
-            paths, _iso(datetime.now(timezone.utc)), runner=_runner(calls), itil=itil
-        ),
-        now_iso=_iso(datetime.now(timezone.utc)),
-        postcondition_sleep=sleeps.append,
-    )
+    outcome = _dispatch(paths, itil, ledger, intent_id, calls, postcondition_sleep=sleeps.append)
     assert outcome.outcome.startswith("failed:"), outcome.outcome
     assert calls == [["systemctl", "--user", "restart", UNIT]]
     assert sleeps, "the postcondition must poll before giving up"
     assert "failed" in [e.state.value for e in ledger.events(intent_id)]
 
 
-def test_e2e_remote_placement_never_actuates_locally(tmp_path, paths):
-    itil, ledger, intent_id = _world(tmp_path, paths, node=REMOTE)
+def test_e2e_remote_placement_is_refused_in_preflight_and_spends_nothing(tmp_path, paths):
+    itil, ledger, intent_id, change_id = _world(tmp_path, paths, node=REMOTE)
     calls = []
-    state = _SpyState()
-    outcome = dispatch.dispatch_intent(
+    outcome = _dispatch(
         paths,
-        ledger,
         itil,
+        ledger,
         intent_id,
-        adapters={"fleet": fleet_adapter.fleet_observe},
-        problem_types=set(fleet_adapter.PROBLEM_WHEN_TRUE),
-        apply_fn=act_dispatch.build_apply_fn(
-            paths, _iso(datetime.now(timezone.utc)), runner=_runner(calls), itil=itil
-        ),
-        execution_state=state,
-        now_iso=_iso(datetime.now(timezone.utc)),
+        calls,
+        execution_state=_SpyState(),
         postcondition_sleep=lambda _s: None,
+        target_known=lambda p: fleet_adapter.fleet_target_known(paths, p, verifier=_verify_sig),
     )
     assert calls == [], "an object placed on another node must not be restarted here"
+    assert outcome.outcome.startswith("refused:"), outcome.outcome
+    states = [e.state.value for e in ledger.events(intent_id)]
+    assert "authorized" not in states and "executing" not in states
+    change = next(c for c in itil.list_changes() if c.id == change_id)
+    assert change.status.value == "approved", "the approved change is not spent"
+
+
+def test_e2e_remote_placement_without_preflight_still_never_actuates(tmp_path, paths):
+    # Defence in depth: a caller that wires no target_known still refuses in apply_fn,
+    # as a preflight refusal that never feeds the breaker.
+    itil, ledger, intent_id, _ = _world(tmp_path, paths, node=REMOTE)
+    calls = []
+    state = _SpyState()
+    outcome = _dispatch(
+        paths,
+        itil,
+        ledger,
+        intent_id,
+        calls,
+        execution_state=state,
+        postcondition_sleep=lambda _s: None,
+    )
+    assert calls == []
     assert outcome.outcome.startswith("escalated:"), outcome.outcome
     assert f"placed on {REMOTE!r}" in outcome.outcome
     failed = next(e for e in ledger.events(intent_id) if e.state.value == "failed")
     assert failed.detail.get("preflight_refusal") is True
     assert state.recorded == [], "a refusal before actuation never feeds the circuit breaker"
-
-
-class _SpyState:
-    def __init__(self):
-        self.recorded = []
-
-    def eligibility(self, _fp, _now):
-        return True, ""
-
-    def record(self, *args, **kwargs):
-        self.recorded.append((args, kwargs))

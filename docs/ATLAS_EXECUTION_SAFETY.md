@@ -52,7 +52,7 @@ proposal that wants to actuate carries `evidence: {source, observed_at}`
 true, as an ISO 8601 timestamp with a timezone. It is never the pass clock: adapters
 report `source_observed_at` (a live probe reports the real clock when it probed, the
 cmdb adapter the reconcile artifact's end time, the skos backlog the digest's own
-window end, the fleet adapter the instant its derived conditions were evaluated),
+window end, the fleet adapter the `updatedAt` its node wrote on the status file the condition came from),
 the envelope keeps it only if it is valid and never invents one, and the brief and
 the proposer carry it through. An observation with no source time carries no
 evidence and cannot actuate. The proposer stamps evidence from the observation,
@@ -171,6 +171,46 @@ condition the outcome is `performed, unverified`. The word `applied` is no longe
 produced. Nothing in the ledger, the ITIL correlation, the dispatcher or
 `skcapstone doctor` branches on the outcome string; the brief artifact and the tick
 report print it verbatim.
+
+## Fleet restarts (card 21b01d01)
+
+The fleet honor path (`act_dispatch` plus `fleet_adapter.resolve_restart_target`) only
+restarts a fleet Service when every one of these holds, and otherwise refuses with
+`actuator.NotAttemptedError` before an ITIL change, an `operatorActions` annotation or a
+systemctl call:
+
+* the action is `restart_service` (the other fleet actions have no physical muscle);
+* the unit is the object's `spec.unit`, a `.service` unit (a bare name is normalized to
+  one; a target, timer, socket or other type is refused). The object name is never used
+  as a unit and a proposal that names a different unit is refused;
+* the object is placed, on THIS node. No reviewed remote actuation path exists, so an
+  object placed elsewhere is refused, never restarted locally;
+* the spec and placement verify with `converge.verify_desired` against the local trust
+  roster, and the unit is allowed by the node's profile (`profiles.unit_allowed`). Unlike
+  converge, neither check is gated by its rollout mode: the autonomous seat never
+  restarts on an unsigned spec or outside the profile;
+* the object is `systemd-user`, not paused and not deleted. Pause, deletion, unit and
+  placement are checked again immediately before systemctl.
+
+`fleet_target_known` uses the same resolver, so the planner escalates an unrestartable
+target and the dispatcher refuses it in preflight, before the approved change is spent
+or EXECUTING is written. A refusal that still reaches `apply_fn` is a preflight refusal
+in both lanes: it never feeds the circuit breaker and never runs a rollback. A typed
+fleet rollback is bound to the approved object and unit; one that names another object,
+unit or adapter is refused.
+
+After the restart the postcondition re-reads the fleet store every 5 seconds for up to
+75 (never more than 120, and never past the pass deadline) and accepts only evidence
+written strictly after the restart: a whole-second `updatedAt` must fall in a later
+second than the restart, so the pre-action status can never verify it.
+
+**Deliberate limitation: a steadily failed service reads as stale.** Status files are
+write-on-change, so `updatedAt` is the last time the node saw the content CHANGE. A
+service that has failed and stayed unchanged for longer than `--max-evidence-age` has
+evidence older than the limit and its restart is refused as stale. That fails closed on
+purpose: the seat cannot prove the failure is still current. The follow-up is on the
+node daemon: sknoded stamps a periodic observed-at on each status it re-checks, so an
+unchanged reading stays provably fresh. Until then, such a restart is a human's call.
 
 ## Multi-node: one actuator, node-local locks, nothing stranded alive
 
