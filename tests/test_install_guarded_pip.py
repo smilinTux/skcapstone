@@ -45,7 +45,7 @@ def _fake_pip(tmp_path: Path, exit_code: int, stderr: str) -> Path:
 
 def test_success_returns_zero(tmp_path):
     pip = _fake_pip(tmp_path, 0, "")
-    r = _run('guarded_pip_install foo -q\necho reached', {"PIP": str(pip)})
+    r = _run("guarded_pip_install foo -q\necho reached", {"PIP": str(pip)})
     assert r.returncode == 0 and "reached" in r.stdout
 
 
@@ -70,7 +70,7 @@ def test_conflict_aborts_the_whole_script_with_a_clear_message(tmp_path):
 
 def test_ordinary_failure_returns_one_and_shows_pip_output(tmp_path):
     pip = _fake_pip(tmp_path, 1, "ERROR: No matching distribution found for nosuchpkg")
-    r = _run('guarded_pip_install nosuchpkg -q || echo FALLBACK-RAN', {"PIP": str(pip)})
+    r = _run("guarded_pip_install nosuchpkg -q || echo FALLBACK-RAN", {"PIP": str(pip)})
     assert r.returncode == 0
     assert "FALLBACK-RAN" in r.stdout
     assert "No matching distribution found" in r.stderr
@@ -114,12 +114,12 @@ def test_real_pip_constraint_conflict_aborts(tmp_path):
     floors.write_text("skfakedep>=3.0\n")
     pip = tmp_path / "pipwrap"
     pip.write_text(
-        f"#!/bin/bash\nexec {sys.executable} -m pip \"$@\" --no-index --find-links {wheels} "
+        f'#!/bin/bash\nexec {sys.executable} -m pip "$@" --no-index --find-links {wheels} '
         f"--target {tmp_path / 'site'} --disable-pip-version-check\n"
     )
     pip.chmod(0o755)
     r = _run(
-        'guarded_pip_install skfakecap -q || echo FALLBACK-RAN\necho reached-after',
+        "guarded_pip_install skfakecap -q || echo FALLBACK-RAN\necho reached-after",
         {"PIP": str(pip), "PIP_CONSTRAINT": str(floors), "HOME": str(tmp_path)},
     )
     assert r.returncode == 3, (r.stdout, r.stderr)
@@ -127,7 +127,7 @@ def test_real_pip_constraint_conflict_aborts(tmp_path):
     assert "dependency or constraint conflict" in r.stderr
     # and without the floor the same install succeeds, so the abort is the floor's doing
     ok = _run(
-        'guarded_pip_install skfakecap -q\necho installed',
+        "guarded_pip_install skfakecap -q\necho installed",
         {"PIP": str(pip), "HOME": str(tmp_path)},
     )
     assert ok.returncode == 0 and "installed" in ok.stdout, ok.stderr
