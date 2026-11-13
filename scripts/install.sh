@@ -138,6 +138,15 @@ install_pkg "sksecurity" ""                         "$PARENT/sksecurity $PILLAR/
 install_pkg "skseed"     ""                         "$PILLAR/skseed $PARENT/skseed"
 install_pkg "skwhisper"  ""                         "$PARENT/skwhisper-dev $PILLAR/skwhisper $PARENT/skwhisper"
 
+# Show what actually landed. A constrained PyPI install can resolve to an OLDER
+# release of a package whose latest one still caps a floored dependency (the
+# resolver backtracks instead of failing); that is not an error pip reports, so
+# make it visible.
+echo "  installed versions:"
+"$PIP" list --format=freeze 2>/dev/null \
+    | grep -iE '^(capauth|cloud9|skmemory|skcomms|skcapstone|skchat[-_a-z]*|skseal|skskills|sksecurity|skseed|skwhisper)==' \
+    | sed 's/^/    /' || true
+
 # ---------------------------------------------------------------------------
 # Step 4: Dev tools (optional)
 # ---------------------------------------------------------------------------
