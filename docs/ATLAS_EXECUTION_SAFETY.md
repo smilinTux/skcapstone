@@ -274,9 +274,12 @@ through a pinned list (skcoord ADR 0002). They are history only: no actuation ga
 Nothing here lifts the freeze. Arming generic actuation is a separate decision.
 
 1. **Chef writes the pin file himself**, as `~/.config/skcapstone/cab-approvers.json`, mode
-   0644, owned by the operator account. The `public_key_file` must be his CapAuth human
-   identity's public key (normally `<capauth home>/identity/public.asc`); `public_key` with the
-   inline armor is accepted instead.
+   0644, owned by the operator account. Put the key inline as `public_key` (the ASCII armor of
+   his CapAuth human identity's public key, normally `<capauth home>/identity/public.asc`, as one
+   JSON string with `\n` line breaks). Inline is recommended: the file is then self-contained
+   and the same bytes work on every node, while a `public_key_file` path differs between
+   noroc2027 and the chi nodes and silently pins nobody where it does not resolve.
+   `public_key_file` is still accepted.
 
    ```json
    {
@@ -286,7 +289,7 @@ Nothing here lifts the freeze. Arming generic actuation is a separate decision.
          "fingerprint": "ADAD14CCAC8D6D0BF5A4209DB994E78200BF6422",
          "roles": ["owner", "approver"],
          "backend": "pgpy",
-         "public_key_file": "<PATH TO CHEF'S CAPAUTH identity/public.asc>"
+         "public_key": "<ASCII ARMOR OF CHEF'S CAPAUTH identity/public.asc>"
        }
      ]
    }
@@ -319,18 +322,36 @@ Nothing here lifts the freeze. Arming generic actuation is a separate decision.
    cab vote <change> --authorization <file> --target <target> --scope <scope>`. Confirm with
    `cab_approval.approval_basis` that the change now reads `human`.
 
+   For a change ATLAS parked as a decision, approve through `skoperator decide <decision>
+   --approve --authorization <file> --target <target> --scope <scope>` instead. There the grant
+   must name exactly the decision's mutation: `--target` (and the grant's target) is the
+   decision option's `object`, and `--scope` is the change's binding tag,
+   `op-bind:<app>|<action>|<object>` with each part percent-escaped (the `op-bind:` tag on the
+   change). `decide` refuses any other pair before it redeems the grant, so create the grant
+   with the same two values.
+
+   A human approval is usable for a day from the grant's signed `issued_at` at every gate (the
+   dispatcher's limit is configurable up to seven days; the CMDB gate and the trustee guard use
+   the default), so vote close to when the change should run.
+
 4. **Rollback:** move the pin file away. Every gate then fails closed (no human approvals);
    auto approvals are unaffected.
 
 ### Trust limit (stated plainly)
 
-Everything here runs as the `cbrd21` account, which has passwordless sudo. The pin stops forged
-approvals that come through the sanctioned surfaces (the MCP tool, the CLI, `skoperator decide`,
-a hand-written vote file) and forged approvals synced in from other nodes, because none of them
-can produce a signature from Chef's key. It does **not** stop a local process already running as
-`cbrd21`: such a process can edit the pin file itself, or the code that reads it. The pin raises
-the bar from "write one JSON file" to "tamper with operator config or code on this node", and it
-makes that tampering visible, but it is not a boundary against the operator account.
+Everything here runs as the `cbrd21` account, which has passwordless sudo. What the pin does
+stop is a vote that no pinned key signed: a vote cast through the sanctioned surfaces (the MCP
+tool, the CLI, `skoperator decide`) without a grant, a hand-written or edited vote file, and a
+vote synced in from another node. A genuine signed vote is bound to the change and voter it was
+cast for, so a copy of its file under another change's or another voter's name counts for
+nothing, and at the gates it expires a day after its `issued_at`.
+
+What the pin does not stop is anything running as `cbrd21` (or as root through sudo). Such a
+process can rewrite the pin file to add its own key, change the code that reads the pin, or
+sign with any key this account can read. Nothing records the pin file's hash or checks it today,
+so such a change would go unnoticed. The pin raises the bar from "write one JSON file" to
+"rewrite operator config or code on this node". It is not a boundary against the operator
+account.
 
 Recommended follow-ups to anchor the pin (not done; Chef decides):
 
