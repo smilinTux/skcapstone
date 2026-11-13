@@ -172,6 +172,8 @@ def _vote(w, change_id):
         decision="approved",
         subject="capauth:approver@scratch",
         subject_role="approver",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
 
 
@@ -538,6 +540,8 @@ def test_a_human_rejection_beats_an_approval(world):
         decision="rejected",
         subject="capauth:other@scratch",
         subject_role="approver",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
     intent_id = _manual_intent(world, change.id, lane="escalate")
     _sweep(world)

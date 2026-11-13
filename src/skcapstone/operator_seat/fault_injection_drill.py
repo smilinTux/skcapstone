@@ -1062,6 +1062,8 @@ def scenario_dispatcher_full_arc(ctx: DrillContext) -> ScenarioResult:
         choice=0,
         subject="capauth:drill-human@scratch",
         resolved_iso=_now_iso(),
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
     fold_after_approval = [c for c in itil.list_changes() if c.id == change_id][0]
 
@@ -1223,6 +1225,8 @@ def scenario_dispatcher_unlinked_decision_never_actuates(ctx: DrillContext) -> S
             choice=0,
             subject="capauth:drill-human@scratch",
             resolved_iso=_now_iso(),
+            subject_fingerprint="A" * 40,
+            authorization_id="authz-test",
         )
     except dispatch.UnauthorizedDecisionError as exc:
         raised = str(exc)
@@ -1291,6 +1295,8 @@ def scenario_dispatcher_stale_catalog_generation_escalates(ctx: DrillContext) ->
         choice=0,
         subject="capauth:drill-human@scratch",
         resolved_iso=_now_iso(),
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
 
     # The live skchat catalog moves on (a human re-touches it) AFTER approval,
@@ -2274,6 +2280,8 @@ def scenario_escalated_proposal_needs_a_human_and_keeps_its_decision(
             decision="approved",
             subject="capauth:drill-human@scratch",
             subject_role="approver",
+            subject_fingerprint="A" * 40,
+            authorization_id="authz-test",
         )
         second = sweep(ctx.runner_success_and_heal())
         acted_after_human = (
@@ -2387,7 +2395,13 @@ def scenario_approval_authorizes_one_thing_once(ctx: DrillContext) -> ScenarioRe
     # (b) one human approval, bound to the bridge restart; another action rides it.
     approved = draft("normal")
     itil.submit_cab_vote(
-        approved.id, agent=voter, decision="approved", subject=voter, subject_role="approver"
+        approved.id,
+        agent=voter,
+        decision="approved",
+        subject=voter,
+        subject_role="approver",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
     other_id = intent(approved.id, "restart-daemon", "escalate", "other")
     calls_before = len(ctx.calls)
@@ -2472,7 +2486,13 @@ def scenario_one_approval_one_actuation_per_episode(ctx: DrillContext) -> Scenar
             tags=["operator", bind],
         )
         itil.submit_cab_vote(
-            change.id, agent=voter, decision="approved", subject=voter, subject_role="approver"
+            change.id,
+            agent=voter,
+            decision="approved",
+            subject=voter,
+            subject_role="approver",
+            subject_fingerprint="A" * 40,
+            authorization_id="authz-test",
         )
         return change
 
@@ -2616,7 +2636,13 @@ def scenario_single_actuator_live_dispatch_and_future_votes(ctx: DrillContext) -
             tags=["operator", bind],
         )
         itil.submit_cab_vote(
-            change.id, agent=voter, decision="approved", subject=voter, subject_role="approver"
+            change.id,
+            agent=voter,
+            decision="approved",
+            subject=voter,
+            subject_role="approver",
+            subject_fingerprint="A" * 40,
+            authorization_id="authz-test",
         )
         if decided_at:
             path = itil.cab_dir / f"{change.id}-{voter}.json"

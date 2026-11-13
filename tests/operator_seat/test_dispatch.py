@@ -178,6 +178,8 @@ def test_dispatch_intent_actuates_and_verifies_an_approved_change(tmp_path):
         decision="approved",
         subject="capauth:approver@scratch",
         subject_role="approver",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
 
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
@@ -281,6 +283,8 @@ def test_rejected_change_never_actuates(tmp_path):
         decision="rejected",
         subject="capauth:approver@scratch",
         subject_role="approver",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
 
@@ -369,6 +373,8 @@ def test_resolve_decision_with_no_linked_change_refuses_before_any_write(tmp_pat
             choice=0,
             subject="capauth:approver@scratch",
             resolved_iso=_NOW,
+            subject_fingerprint="A" * 40,
+            authorization_id="authz-test",
         )
     # Never actuates: the decision is left pending, not silently resolved.
     assert len(decisions.list_pending(ddir)) == 1
@@ -418,6 +424,8 @@ def test_stale_catalog_generation_refuses_and_escalates(tmp_path):
         decision="approved",
         subject="capauth:approver@scratch",
         subject_role="approver",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
     # Proposed against generation "1" (now stale: the live record is "2").
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id, catalog_generation="1")
@@ -660,6 +668,8 @@ def test_freeze_landing_during_dispatch_does_not_feed_the_circuit_breaker(tmp_pa
         decision="approved",
         subject="capauth:approver@scratch",
         subject_role="approver",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
 
@@ -705,6 +715,8 @@ def test_a_real_failure_that_coincides_with_a_freeze_still_feeds_the_circuit_bre
         decision="approved",
         subject="capauth:approver@scratch",
         subject_role="approver",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
 

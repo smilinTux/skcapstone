@@ -30,6 +30,8 @@ def _resolve(world, decision_id):
         choice=0,
         subject=SUBJECT,
         resolved_iso=_iso(world.time.now),
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
 
 

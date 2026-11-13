@@ -176,6 +176,8 @@ def test_the_actuator_upgrades_a_decision_a_non_actuator_parked_unbound(world, m
         choice=0,
         subject="capauth:approver@scratch",
         resolved_iso=_iso(world.time.now),
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
     assert _sweep(world)[0].outcome == "verified"
 

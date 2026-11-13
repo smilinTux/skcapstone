@@ -285,6 +285,8 @@ def _normal_change_approved_by_a_human(itil):
         decision="approved",
         subject="capauth:approver@scratch",
         subject_role="approver",
+        subject_fingerprint="A" * 40,
+        authorization_id="authz-test",
     )
     return chg
 
