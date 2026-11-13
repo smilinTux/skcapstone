@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from skcapstone.cab_grants_testing import cast_signed_vote, envelope
 from skcapstone.fleet import store
 from skcapstone.fleet.paths import FleetPaths
 from skcapstone.itil import ITILManager
 from skcapstone.operator_seat import action_ledger, dispatch, safety
+from tests.cab_grants import cast_signed_vote, envelope
 
 _NOW = "2026-08-25T00:00:00Z"
 #: The injected REAL clock the dispatcher measures evidence age against.
@@ -45,6 +45,12 @@ def _votes_decided_before_the_test_clock(monkeypatch):
         return vote
 
     monkeypatch.setattr(ITILManager, "submit_cab_vote", patched)
+    # Card bada5c86: the approval age is read from the signed grant's issued_at.
+    from datetime import datetime as _dt
+
+    from tests import cab_grants
+
+    monkeypatch.setattr(cab_grants, "ISSUED_AT", _dt.fromisoformat("2026-08-24T23:00:00+00:00"))
 
 
 def _paths(tmp_path) -> FleetPaths:

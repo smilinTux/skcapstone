@@ -16,9 +16,9 @@ from pathlib import Path
 import pytest
 
 from skcapstone import trustee_actuation as ta
-from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.fleet import store
 from skcapstone.fleet.paths import FleetPaths
+from tests.cab_grants import cast_signed_vote
 
 
 def _writer() -> store.Writer:

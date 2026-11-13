@@ -551,7 +551,7 @@ def _pinned_test_approver(monkeypatch, tmp_path_factory):
     No test reads the operator's real pin file. The key is generated once per
     process; each test gets its own pin file.
     """
-    from skcapstone import cab_grants_testing
+    from tests import cab_grants as cab_grants_testing
 
     path = cab_grants_testing.write_pin(tmp_path_factory.mktemp("cab-pin") / "cab-approvers.json")
     for module, attr in cab_grants_testing.pin_targets():

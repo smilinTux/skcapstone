@@ -1,8 +1,11 @@
-"""Throwaway signed CAB grants for tests and the fault-injection drill (card bada5c86).
+"""Throwaway signed CAB grants for tests only (card bada5c86).
 
-Never used for a real approval: the key is generated in memory, its passphrase is a
-constant, and its fingerprint is pinned only in a scratch pin file that the caller
-points ``cab_approval.APPROVERS_FILE`` (and skcoord's, when present) at.
+Not shipped in the package and never used for a real approval: keys are generated
+in memory, their passphrase is a constant, and they are pinned only in a pin file
+under the system temp directory (``tests/conftest.py`` points
+``cab_approval.APPROVERS_FILE``, and skcoord's when present, at it). Every pin write
+is refused unless its target is inside the temp directory. The fault-injection drill
+has its own equivalent, scoped to the guarded drill root.
 """
 
 from __future__ import annotations
@@ -10,18 +13,28 @@ from __future__ import annotations
 import functools
 import json
 import secrets
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 PASSPHRASE = "throwaway-test-key"
-#: The operator's real pin file: never written by this module.
-_REAL_PIN = Path("~/.config/skcapstone/cab-approvers.json")
+#: When set, grants are issued at this time (tests on a fixed past clock set it).
+ISSUED_AT: datetime | None = None
+
+
+def _scratch_only(path: Path) -> Path:
+    """Refuse any pin path outside the system temp directory."""
+    resolved = Path(path).expanduser().resolve()
+    tmp = Path(tempfile.gettempdir()).resolve()
+    if tmp not in resolved.parents:
+        raise RuntimeError(f"test pin files live under {tmp}, not {resolved}")
+    return resolved
 
 
 def key(name: str = "chef"):
     """An in-memory Ed25519 key for *name*, one per identity and process."""
-    from .cab_approval import identity_key
+    from skcapstone.cab_approval import identity_key
 
     return _key(identity_key(name))
 
@@ -37,7 +50,8 @@ def _key(name: str):
 
 
 def write_pin(path: Path, identities=("chef",), roles=("owner", "approver")) -> Path:
-    """Write a pin file trusting the throwaway keys of *identities*."""
+    """Write a pin file trusting the throwaway keys of *identities* (temp dir only)."""
+    path = _scratch_only(path)
     approvers = [
         {
             "identity": name,
@@ -56,13 +70,11 @@ def write_pin(path: Path, identities=("chef",), roles=("owner", "approver")) -> 
 def ensure_pinned(name: str) -> None:
     """Add *name*'s throwaway key to the pin file the code currently reads.
 
-    Test and drill use only: every pin target must already point at a scratch file.
+    The pin target must already point at a file under the temp directory.
     """
-    from . import cab_approval
+    from skcapstone import cab_approval
 
-    path = Path(cab_approval.APPROVERS_FILE).expanduser()
-    if path == _REAL_PIN.expanduser():
-        raise RuntimeError("refusing to add a throwaway key to the operator's real pin file")
+    path = _scratch_only(cab_approval.APPROVERS_FILE)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -85,7 +97,7 @@ def ensure_pinned(name: str) -> None:
 
 def pin_targets() -> list[tuple[Any, str]]:
     """The module attributes that name the pin file (skcapstone's and skcoord's)."""
-    from . import cab_approval
+    from skcapstone import cab_approval
 
     targets: list[tuple[Any, str]] = [(cab_approval, "APPROVERS_FILE")]
     try:
@@ -113,12 +125,12 @@ def envelope(
     """
     from capauth.crypto import get_backend
 
-    from .operator_authorization import AuthorizationEnvelope, authorization_id
+    from skcapstone.operator_authorization import AuthorizationEnvelope, authorization_id
 
     if signer is None:
         ensure_pinned(issuer)
     bundle = key(signer or issuer)
-    now = datetime.now(timezone.utc)
+    now = ISSUED_AT or datetime.now(timezone.utc)
     env = AuthorizationEnvelope(
         authorization_id="pending",
         issuer=issuer,
@@ -146,7 +158,7 @@ def cast_signed_vote(
     signer: str | None = None,
 ):
     """Record a vote carrying a verifying grant, on any skcoord release."""
-    from .cab_approval import record_signed_vote
+    from skcapstone.cab_approval import record_signed_vote
 
     env = envelope(change_id, issuer=subject, role=role, decision=decision, signer=signer)
     return record_signed_vote(itil, env)
@@ -160,7 +172,7 @@ def decision_grant(
     role: str = "approver",
 ) -> dict:
     """A signed approval grant for the change a parked decision's option links."""
-    from .operator_seat.dispatch import decision_option
+    from skcapstone.operator_seat.dispatch import decision_option
 
     _, change_id = decision_option(decisions_dir, decision_id, choice)
     return envelope(change_id, issuer=subject, role=role)

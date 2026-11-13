@@ -7,8 +7,8 @@ import logging
 
 import pytest
 
-from skcapstone.cab_grants_testing import decision_grant
 from skcapstone.operator_seat import decisions, dispatch
+from tests.cab_grants import decision_grant
 
 from .test_dispatch_e2e import (  # noqa: F401  (world is a fixture)
     BIND,

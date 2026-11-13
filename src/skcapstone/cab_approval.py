@@ -225,10 +225,14 @@ def auto_approved(change: Any, votes: list) -> bool:
 
 
 def human_approval_times(itil: Any, change: Any) -> list[str]:
-    """``decided_at`` of every qualifying human approval; ``[]`` means none.
+    """When each qualifying human approval was granted; ``[]`` means none.
 
-    A ``standard`` or auto-normal change is auto-approved whatever its votes say, and
-    any rejection means no human approval. Fails closed on an unreadable vote store.
+    The time is the signed grant's ``issued_at``, not the vote file's ``decided_at``:
+    the grant's time is covered by the signature, while ``decided_at`` is plain text
+    that anyone able to write the vote file could re-date to dodge the approval age
+    limit. A ``standard`` or auto-normal change is auto-approved whatever its votes
+    say, and any named rejection means no human approval. Fails closed on an
+    unreadable vote store.
     """
     try:
         votes = list(itil.get_cab_votes(change.id))
@@ -238,7 +242,9 @@ def human_approval_times(itil: Any, change: Any) -> list[str]:
         return []
     approvers = load_approvers()
     return [
-        str(v.decided_at) for v in votes if qualifying_human_approval(itil, v, change, approvers)
+        str(stored_envelope(itil, v)["issued_at"])
+        for v in votes
+        if qualifying_human_approval(itil, v, change, approvers)
     ]
 
 

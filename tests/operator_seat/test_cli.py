@@ -124,7 +124,7 @@ def _grant_file(tmp_path, change_id, **kw):
     """Write a real signed grant (throwaway pinned key) and return the CLI args."""
     import json
 
-    from skcapstone.cab_grants_testing import envelope
+    from tests.cab_grants import envelope
 
     kw.setdefault("target", "x")
     kw.setdefault("scope", _SCOPE)

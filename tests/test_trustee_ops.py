@@ -14,7 +14,6 @@ from skcapstone.blueprints.schema import (
     BlueprintManifest,
     ProviderType,
 )
-from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.fleet import store as fleet_store
 from skcapstone.fleet.paths import FleetPaths
 from skcapstone.team_engine import (
@@ -30,6 +29,7 @@ from skcapstone.trustee_actuation import (
     ActuationRefusedError,
 )
 from skcapstone.trustee_ops import TrusteeOps
+from tests.cab_grants import cast_signed_vote
 
 # ---------------------------------------------------------------------------
 # Actuation gate helpers (card e51a3e7e / SKW-AUTONOMY-E4)

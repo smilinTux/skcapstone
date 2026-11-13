@@ -15,11 +15,11 @@ import pytest
 
 from skcapstone._trustee_helpers import write_audit as _write_audit
 from skcapstone.blueprints.schema import ProviderType
-from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.fleet import store as fleet_store
 from skcapstone.fleet.paths import FleetPaths
 from skcapstone.team_engine import AgentStatus, DeployedAgent, TeamDeployment, TeamEngine
 from skcapstone.trustee_ops import TrusteeOps
+from tests.cab_grants import cast_signed_vote
 
 # ---------------------------------------------------------------------------
 # Actuation gate helpers (card e51a3e7e / SKW-AUTONOMY-E4)

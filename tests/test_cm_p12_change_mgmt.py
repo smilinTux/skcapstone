@@ -19,9 +19,9 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.cli.itil import register_itil_commands
 from skcapstone.itil import ITILManager
+from tests.cab_grants import cast_signed_vote
 
 
 def _cli() -> click.Group:
@@ -323,7 +323,7 @@ async def test_mcp_cab_vote_cannot_replace_a_signed_vote(tmp_path, decision):
 
 
 def _cli_grant(tmp_path, change_id, decision="approved"):
-    from skcapstone.cab_grants_testing import envelope
+    from tests.cab_grants import envelope
 
     env = envelope(change_id, decision=decision)
     path = tmp_path / f"grant-{decision}.json"
@@ -355,7 +355,7 @@ def test_cli_cab_vote_with_a_signed_grant_stores_it_and_qualifies(tmp_path):
 
 def test_cli_cab_vote_grant_verifies_against_the_pin_not_capauth_home(tmp_path, monkeypatch):
     """Review item 1: CAPAUTH_HOME no longer picks the verifying key."""
-    from skcapstone.cab_grants_testing import envelope
+    from tests.cab_grants import envelope
 
     mgr = ITILManager(tmp_path)
     chg = mgr.propose_change(title="cli forged", managed_by="lumina")
@@ -575,3 +575,47 @@ def test_cli_cab_vote_fails_closed_when_resolver_unavailable(tmp_path):
     assert result.exit_code != 0
     assert "signed --authorization is required" in result.output
     assert mgr.get_cab_votes(chg.id) == []
+
+
+@pytest.mark.parametrize(
+    "issuer,role,pin_roles",
+    [("lumina", "owner", ("owner", "approver")), ("chef", "owner", ("approver",))],
+    ids=["issuer-is-not-the-pinned-identity", "role-not-pinned"],
+)
+def test_cli_cab_vote_grant_must_match_the_pinned_identity_and_role(
+    tmp_path, monkeypatch, issuer, role, pin_roles
+):
+    """Chef's key signing a grant that names lumina, or a role the pin does not
+    give Chef, is refused before the nonce is consumed."""
+    from skcapstone import cab_approval
+    from skcapstone.cli import itil as itil_cli
+    from tests.cab_grants import envelope, write_pin
+
+    pin = write_pin(tmp_path / "pin" / "cab-approvers.json", roles=pin_roles)
+    monkeypatch.setattr(cab_approval, "APPROVERS_FILE", pin)
+    mgr = ITILManager(tmp_path)
+    chg = mgr.propose_change(title="cli identity", managed_by="lumina")
+    env = envelope(chg.id, issuer=issuer, role=role, signer="chef")
+    path = tmp_path / "grant.json"
+    path.write_text(json.dumps(env), encoding="utf-8")
+    with patch("skcapstone.cli.itil.SHARED_ROOT", str(tmp_path)):
+        result = CliRunner().invoke(
+            _cli(),
+            [
+                "itil",
+                "cab",
+                "vote",
+                chg.id,
+                "--authorization",
+                str(path),
+                "--target",
+                env["target"],
+                "--scope",
+                env["scope"],
+            ],
+        )
+    assert result.exit_code != 0
+    assert "does not match the pinned approver" in result.output
+    assert mgr.get_cab_votes(chg.id) == []
+    nonces = itil_cli._cab_nonce_store()
+    assert not nonces.exists() or not list(nonces.glob("*.used"))

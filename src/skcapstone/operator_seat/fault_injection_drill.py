@@ -56,9 +56,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from .. import cab_grants_testing
-from ..cab_grants_testing import cast_signed_vote, decision_grant
-from ..cab_grants_testing import envelope as grant_envelope
 from ..fleet import drill as fleet_drill
 from ..fleet import store
 from ..fleet.paths import FleetPaths, self_node_name
@@ -75,6 +72,133 @@ from . import (
     safety,
     skchat_adapter,
 )
+
+# ── Throwaway signed CAB grants (card bada5c86) ───────────────────────────────
+#
+# A human approval only counts when the vote stores a signed grant that verifies
+# against a pinned approver key, so the drill signs with in-memory throwaway keys
+# and pins them in a file INSIDE the guarded drill root. ``run_all`` points the
+# pin readers at that file for the run and restores them after. Nothing here can
+# write anywhere else: the root must be one ``fleet_drill`` owns.
+
+
+class _DrillGrants:
+    PASSPHRASE = "drill-throwaway-key"
+
+    def __init__(self, root: Path) -> None:
+        owned = fleet_drill.require_owned_root(root)
+        self.pin_path = owned / "cab-approvers.json"
+        self._keys: dict[str, Any] = {}
+        self._approvers: list[dict] = []
+        self._write()
+
+    def _write(self) -> None:
+        self.pin_path.write_text(json.dumps({"approvers": self._approvers}), encoding="utf-8")
+
+    def _key(self, name: str):
+        from capauth.crypto import get_backend
+        from capauth.models import Algorithm
+
+        from ..cab_approval import identity_key
+
+        k = identity_key(name)
+        if k not in self._keys:
+            self._keys[k] = get_backend().generate_keypair(
+                k, f"{k}@drill.invalid", self.PASSPHRASE, algorithm=Algorithm.ED25519
+            )
+            self._approvers.append(
+                {
+                    "identity": k,
+                    "fingerprint": self._keys[k].fingerprint,
+                    "roles": ["owner", "approver"],
+                    "backend": "pgpy",
+                    "public_key": self._keys[k].public_armor,
+                }
+            )
+            self._write()
+        return self._keys[k]
+
+    def envelope(
+        self,
+        change_id: str,
+        issuer: str,
+        role: str = "approver",
+        decision: str = "approved",
+        issued_at: datetime | None = None,
+    ) -> dict:
+        import secrets
+
+        from capauth.crypto import get_backend
+
+        from ..operator_authorization import AuthorizationEnvelope, authorization_id
+
+        bundle = self._key(issuer)
+        now = issued_at or datetime.now(timezone.utc)
+        env = AuthorizationEnvelope(
+            authorization_id="pending",
+            issuer=issuer,
+            issuer_role=role,
+            issuer_fingerprint=bundle.fingerprint,
+            action=f"itil.cab.vote.{decision}",
+            target="drill-target",
+            change_id=change_id,
+            scope="drill-scope",
+            issued_at=now.isoformat(),
+            expires_at=(now + timedelta(minutes=10)).isoformat(),
+            nonce=secrets.token_urlsafe(24),
+        )
+        env.authorization_id = authorization_id(env)
+        env.signature = get_backend().sign(
+            env.signing_bytes(), bundle.private_armor, self.PASSPHRASE
+        )
+        return env.model_dump()
+
+
+_GRANTS: _DrillGrants | None = None
+
+
+def _grants() -> _DrillGrants:
+    if _GRANTS is None:
+        raise RuntimeError("signed drill grants exist only inside run_all")
+    return _GRANTS
+
+
+def grant_envelope(change_id: str, issuer: str, role: str = "approver") -> dict:
+    return _grants().envelope(change_id, issuer, role)
+
+
+def cast_signed_vote(
+    itil: Any,
+    change_id: str,
+    subject: str,
+    role: str = "approver",
+    issued_at: datetime | None = None,
+) -> Any:
+    from ..cab_approval import record_signed_vote
+
+    env = _grants().envelope(change_id, subject, role, issued_at=issued_at)
+    return record_signed_vote(itil, env)
+
+
+def decision_grant(
+    decisions_dir: Any, decision_id: str, choice: int | None, subject: str, role: str = "approver"
+) -> dict:
+    _, change_id = dispatch.decision_option(decisions_dir, decision_id, choice)
+    return _grants().envelope(change_id, subject, role)
+
+
+def _pin_targets() -> list[tuple[Any, str]]:
+    from .. import cab_approval
+
+    targets: list[tuple[Any, str]] = [(cab_approval, "APPROVERS_FILE")]
+    try:
+        import skcoord.cab_authorization as skcoord_pin
+
+        targets.append((skcoord_pin, "APPROVERS_FILE"))
+    except ImportError:  # an skcoord release without signed-grant verification
+        pass
+    return targets
+
 
 SCHEMA_NOTE = "ATLAS P3.2 fault-injection drill (card b993eaaa, epic fb3cc09d)"
 
@@ -2606,7 +2730,7 @@ def scenario_single_actuator_live_dispatch_and_future_votes(ctx: DrillContext) -
     bind = dispatch.change_binding_tag("skchat", "restart-telegram-bridge", "telegram-bridge")
     voter = "capauth:drill-human@scratch"
 
-    def approved(decided_at: str | None = None):
+    def approved(issued_at: datetime | None = None):
         change = itil.propose_change(
             title="restart telegram bridge",
             change_type="normal",
@@ -2615,12 +2739,8 @@ def scenario_single_actuator_live_dispatch_and_future_votes(ctx: DrillContext) -
             created_by="atlas-p32-drill",
             tags=["operator", bind],
         )
-        cast_signed_vote(itil, change.id, subject=voter, role="approver")
-        if decided_at:
-            path = itil.cab_dir / f"{change.id}-{voter}.json"
-            data = json.loads(path.read_text())
-            data["decided_at"] = decided_at
-            path.write_text(json.dumps(data))
+        # Card bada5c86: the approval's time is its signed grant's issued_at.
+        cast_signed_vote(itil, change.id, subject=voter, role="approver", issued_at=issued_at)
         return change
 
     def intent(change_id: str, tag: str) -> str:
@@ -2747,9 +2867,9 @@ def scenario_single_actuator_live_dispatch_and_future_votes(ctx: DrillContext) -
     lock_file = node_local.state_dir() / "atlas" / "change-locks" / f"{live_change.id}.lock"
     locks_ok = lock_file.is_file() and not (ledger.root / "change-locks").exists()
 
-    # (d) a vote dated five days ahead closes the intent instead of waiting
+    # (d) a grant issued five days ahead closes the intent instead of waiting
     ctx.inject_wedge()
-    future_change = approved(decided_at=(created + timedelta(days=5)).isoformat())
+    future_change = approved(issued_at=created + timedelta(days=5))
     future_id = intent(future_change.id, "future")
     future = dispatch.dispatch_intent(
         ctx.paths,
@@ -2939,10 +3059,11 @@ def run_all(root: Path | str | None = None, *, keep_root: bool = True) -> DrillR
     # Card bada5c86: human approvals in the drill are real signed grants from a
     # throwaway key, pinned in a scratch pin file inside the drill root. The
     # operator's real pin file is never read or written.
-    pin_file = cab_grants_testing.write_pin(ctx.root / "cab-approvers.json", identities=())
-    previous_pins = [(m, a, getattr(m, a)) for m, a in cab_grants_testing.pin_targets()]
+    global _GRANTS
+    _GRANTS = _DrillGrants(ctx.root)
+    previous_pins = [(m, a, getattr(m, a)) for m, a in _pin_targets()]
     for module, attr, _ in previous_pins:
-        setattr(module, attr, pin_file)
+        setattr(module, attr, _GRANTS.pin_path)
     results: list[ScenarioResult] = []
     try:
         for scenario in SCENARIOS:
@@ -2966,6 +3087,7 @@ def run_all(root: Path | str | None = None, *, keep_root: bool = True) -> DrillR
         node_local.actuator_refusal = previous_gate
         for module, attr, value in previous_pins:
             setattr(module, attr, value)
+        _GRANTS = None
         ctx.restore_daemon_probe()
         ctx.restore_env()
     finished = _now_iso()

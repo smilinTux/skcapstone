@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 import skcapstone.itil as itil
-from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.itil import ITILManager, _auto_incident_id
+from tests.cab_grants import cast_signed_vote
 
 
 @pytest.fixture(autouse=True)

@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import pytest
 
-from skcapstone.cab_grants_testing import cast_signed_vote, envelope
 from skcapstone.itil import ITILManager
 from skcapstone.operator_seat import action_ledger, decisions, dispatch
+from tests.cab_grants import cast_signed_vote, envelope
 
 from .test_dispatch import (  # noqa: F401  (autouse fixture re-dates votes)
     _CLOCK,
@@ -133,7 +133,7 @@ def test_grant_from_an_unpinned_signer_never_actuates(tmp_path):
 
 
 def test_no_pin_file_means_no_human_approval(tmp_path, monkeypatch):
-    from skcapstone import cab_grants_testing
+    from tests import cab_grants as cab_grants_testing
 
     paths, itil, ledger, chg = _world(tmp_path)
     cast_signed_vote(itil, chg.id, subject="chef", role="owner")
@@ -314,3 +314,29 @@ def test_auto_lane_still_actuates_an_auto_normal_change(tmp_path):
     outcome, calls, _ = _dispatch(paths, ledger, itil, chg, lane="auto")
     assert outcome.outcome == "verified"
     assert len(calls) == 1
+
+
+def test_approval_age_comes_from_the_signed_grant_not_decided_at(tmp_path, monkeypatch):
+    """Round 2: re-dating a vote file's decided_at cannot refresh a stale grant. The
+    autouse fixture re-dates every vote to just before the clock; the grant here was
+    issued thirty days earlier, so the approval is too old."""
+    from datetime import datetime, timedelta
+
+    from tests import cab_grants
+
+    paths, itil, ledger, chg = _world(tmp_path)
+    monkeypatch.setattr(
+        cab_grants,
+        "ISSUED_AT",
+        datetime.fromisoformat(_NOW.replace("Z", "+00:00")) - timedelta(days=30),
+    )
+    cast_signed_vote(itil, chg.id, subject="chef", role="owner")
+    (issued,) = dispatch.human_approval_times(itil, chg)
+    assert issued.startswith(
+        (datetime.fromisoformat(_NOW.replace("Z", "+00:00")) - timedelta(days=30))
+        .date()
+        .isoformat()
+    )
+    outcome, calls, _ = _dispatch(paths, ledger, itil, chg)
+    assert calls == []
+    assert outcome.outcome != "verified"

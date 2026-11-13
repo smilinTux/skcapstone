@@ -11,9 +11,9 @@ from unittest.mock import patch
 import click
 from click.testing import CliRunner
 
-from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.cli.itil import register_itil_commands
 from skcapstone.itil import ITILManager
+from tests.cab_grants import cast_signed_vote
 
 
 def _cli() -> click.Group:

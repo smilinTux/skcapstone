@@ -401,10 +401,10 @@ def decide_cmd(
     type=click.FloatRange(min=0, min_open=True, max=dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS),
     default=dispatch.DEFAULT_MAX_APPROVAL_AGE_SECONDS,
     show_default=True,
-    help="Oldest human CAB approval (seconds, from the vote's decided_at) that may still be "
-    f"honored, at most {dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS:g}. A human approves a change "
-    "for one episode: past this, or once the condition has cleared, the intent is closed and "
-    "a new proposal needs a new vote.",
+    help="Oldest human CAB approval (seconds, from its signed grant's issued_at) that may "
+    f"still be honored, at most {dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS:g}. A human "
+    "approves a change for one episode: past this, or once the condition has cleared, the "
+    "intent is closed and a new proposal needs a new vote.",
 )
 def honor_pending_cmd(max_approval_age: float) -> None:
     """Dispatch every PROPOSED ledger intent whose linked ITIL change now folds

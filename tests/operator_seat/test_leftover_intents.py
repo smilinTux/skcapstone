@@ -15,10 +15,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.fleet import store
 from skcapstone.itil import ITILManager
 from skcapstone.operator_seat import action_ledger, dispatch, loop
+from tests.cab_grants import cast_signed_vote
 
 from .test_loop import _enroll
 
@@ -46,6 +46,12 @@ def _votes_decided_before_the_test_clock(monkeypatch):
         return vote
 
     monkeypatch.setattr(ITILManager, "submit_cab_vote", patched)
+    # Card bada5c86: the approval age is read from the signed grant's issued_at.
+    from datetime import datetime as _dt
+
+    from tests import cab_grants
+
+    monkeypatch.setattr(cab_grants, "ISSUED_AT", _dt.fromisoformat("2026-08-20T12:00:00+00:00"))
 
 
 class _CountingITIL:

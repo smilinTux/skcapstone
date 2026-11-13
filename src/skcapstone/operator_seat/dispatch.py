@@ -65,8 +65,9 @@ from . import action_ledger, decisions, evidence, node_local, policy, safety
 BINDING_TAG_PREFIX = "op-bind:"
 
 
-#: How long a human CAB approval stays usable, measured from the vote's ``decided_at``
-#: against the real clock. A human approves a CHANGE for an EPISODE; a day is generous for
+#: How long a human CAB approval stays usable, measured from its signed grant's
+#: ``issued_at`` (card bada5c86; not the unsigned ``decided_at``) against the real
+#: clock. A human approves a CHANGE for an EPISODE; a day is generous for
 #: the slow lane and short enough that a recurrence next week cannot ride an old vote.
 #: Configurable (``honor-pending --max-approval-age``) up to the cap below; Chef can relax it.
 DEFAULT_MAX_APPROVAL_AGE_SECONDS = 86400.0

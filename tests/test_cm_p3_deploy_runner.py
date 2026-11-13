@@ -16,8 +16,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from skcapstone import change_deploy as cd
-from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.itil import ITILManager
+from tests.cab_grants import cast_signed_vote
 
 
 def _approve_via_human_vote(mgr: ITILManager, change_id: str) -> None:

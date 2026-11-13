@@ -8,10 +8,8 @@ End to end through ITIL, the ledger and ``dispatch_intent`` with the real
 
 from __future__ import annotations
 
-import json
 import os
 import stat
-import subprocess
 from datetime import timedelta
 
 import pytest
@@ -193,13 +191,13 @@ def test_the_loops_inline_lane_never_rolls_back_a_fix_that_worked_either(world, 
 # --------------------------------------------------------------------------
 
 
-def test_a_future_dated_vote_closes_the_intent_and_retires_the_change(world):
+def test_a_future_dated_vote_closes_the_intent_and_retires_the_change(world, monkeypatch):
+    from tests import cab_grants
+
     change = _normal_change(world)
+    # Card bada5c86: the grant itself is issued in the future (its signed time counts).
+    monkeypatch.setattr(cab_grants, "ISSUED_AT", world.time.now + timedelta(days=5))
     _vote(world, change.id)
-    path = world.itil.cab_dir / f"{change.id}-capauth:approver@scratch.json"
-    data = json.loads(path.read_text())
-    data["decided_at"] = _iso(world.time.now + timedelta(days=5))
-    path.write_text(json.dumps(data))
     intent_id = _manual_intent(world, change.id, lane="escalate")
     outcomes = _sweep(world, max_approval_age_s=WEEK)
     assert world.calls == []

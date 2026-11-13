@@ -13,9 +13,9 @@ from __future__ import annotations
 import pytest
 
 from skcapstone import agent_run as ar
-from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.card_store import CardCore, CardStore
 from skcapstone.itil import Change, ITILManager
+from tests.cab_grants import cast_signed_vote
 
 _BLOCKED_REASON = (
     "change tickets require a human/CAB vote to 'approved' "

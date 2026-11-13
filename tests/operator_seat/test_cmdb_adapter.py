@@ -150,7 +150,7 @@ class _Vote:
 
 def _signed_vote(agent="chef", role="owner", **kw):
     """A vote carrying a real grant from the throwaway pinned key (card bada5c86)."""
-    from skcapstone.cab_grants_testing import envelope
+    from tests.cab_grants import envelope
 
     env = envelope("chg-approved", issuer=agent, role=role, **kw)
     return _Vote(

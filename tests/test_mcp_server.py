@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import pytest
 
-from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.mcp_server import (
     _error_response,
     _home,
@@ -16,6 +15,7 @@ from skcapstone.mcp_server import (
     call_tool,
     list_tools,
 )
+from tests.cab_grants import cast_signed_vote
 
 # ---------------------------------------------------------------------------
 # Helpers

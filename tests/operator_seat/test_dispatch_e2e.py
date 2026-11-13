@@ -22,7 +22,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from skcapstone.cab_grants_testing import cast_signed_vote
 from skcapstone.fleet import store
 from skcapstone.itil import ITILManager
 from skcapstone.operator_seat import (
@@ -35,6 +34,7 @@ from skcapstone.operator_seat import (
     proposer,
     skchat_adapter,
 )
+from tests.cab_grants import cast_signed_vote
 
 from .test_loop import _enroll
 

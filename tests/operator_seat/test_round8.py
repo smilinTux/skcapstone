@@ -7,15 +7,15 @@ from __future__ import annotations
 import pytest
 from click.testing import CliRunner
 
-from skcapstone.cab_grants_testing import decision_grant
 from skcapstone.operator_seat import (
-    action_ledger,
     act_dispatch,
+    action_ledger,
     decisions,
     dispatch,
     loop,
     node_local,
 )
+from tests.cab_grants import decision_grant
 
 from .test_dispatch_e2e import (  # noqa: F401  (world is a fixture)
     _iso,
