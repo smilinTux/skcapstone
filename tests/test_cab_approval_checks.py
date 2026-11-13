@@ -156,9 +156,21 @@ def signature_always_ok(monkeypatch):
 
 
 def test_structural_checks_hold_without_the_signature(signature_always_ok):
-    env = _grant(issuer="lumina")
-    assert not ca.verify_vote_envelope(_vote_for(env), env, _pin("chef"))
+    lumina = _grant(issuer="lumina")
+    assert not ca.verify_vote_envelope(_vote_for(lumina), lumina, _pin("chef"))
+    env = _grant()
+    assert ca.verify_vote_envelope(_vote_for(env), env, _pin())
     assert not ca.verify_vote_envelope(_vote_for(env), {**env, "signature": ""}, _pin())
+
+
+def test_an_auto_approved_change_reports_no_human_approval(monkeypatch):
+    """A human vote on a standard or auto-normal change does not make it human-approved."""
+    monkeypatch.setattr(ca, "load_approvers", lambda path=None: _pin())
+    vote = _vote_for(_grant())
+    assert ca.human_approval_times(_ITIL([vote]), _change())
+    assert ca.human_approval_times(_ITIL([vote]), _change(**AUTO)) == []
+    standard = _change(change_type=SimpleNamespace(value="standard"))
+    assert ca.human_approval_times(_ITIL([vote]), standard) == []
 
 
 # ── qualifying_human_approval ──────────────────────────────────────────────

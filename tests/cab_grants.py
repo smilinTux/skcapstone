@@ -117,11 +117,13 @@ def envelope(
     signer: str | None = None,
     target: str = "test-target",
     scope: str = "test-scope",
+    claimed_fingerprint: str | None = None,
 ) -> dict:
     """A signed authorization envelope, as ``itil cab authorize`` writes one.
 
     The issuer is pinned (``ensure_pinned``) unless another *signer* is given, in
     which case neither is added: that is how a test forges an unpinned grant.
+    *claimed_fingerprint* names a key other than the signer's (a forged claim).
     """
     from capauth.crypto import get_backend
 
@@ -135,7 +137,7 @@ def envelope(
         authorization_id="pending",
         issuer=issuer,
         issuer_role=role,
-        issuer_fingerprint=bundle.fingerprint,
+        issuer_fingerprint=claimed_fingerprint or bundle.fingerprint,
         action=f"itil.cab.vote.{decision}",
         target=target,
         change_id=change_id,

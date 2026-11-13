@@ -11,4 +11,7 @@ installed skcoord release. `skoperator decide --approve` needs `--authorization`
 `--target` and `--scope`; the target and scope must name the decision's option,
 and both are checked before the grant's nonce is consumed. `itil cab vote` and the
 `itil_cab_vote` MCP tool refuse any vote (approve, reject or abstain) when no
-CapAuth identity resolves, and refuse to replace a signed vote with an unsigned one.
+CapAuth identity resolves, and refuse to replace a signed vote with an unsigned one. Approval age is measured from the grant's signed `issued_at`, not the vote
+file's `decided_at`. `docs/ATLAS_EXECUTION_SAFETY.md` gains the arming runbook
+(Chef writes and reads back the pin, open changes are re-voted) and states the
+trust limit of the pin on a node where everything runs as one sudo-capable user.

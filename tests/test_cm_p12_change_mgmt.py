@@ -619,3 +619,33 @@ def test_cli_cab_vote_grant_must_match_the_pinned_identity_and_role(
     assert mgr.get_cab_votes(chg.id) == []
     nonces = itil_cli._cab_nonce_store()
     assert not nonces.exists() or not list(nonces.glob("*.used"))
+
+
+def test_cli_cab_vote_refuses_a_grant_signed_by_another_key(tmp_path):
+    """The grant claims Chef's pinned fingerprint but mallory signed it."""
+    from tests.cab_grants import envelope, key
+
+    mgr = ITILManager(tmp_path)
+    chg = mgr.propose_change(title="cli forged signature", managed_by="lumina")
+    envelope(chg.id)  # pins chef
+    env = envelope(chg.id, signer="mallory", claimed_fingerprint=key("chef").fingerprint)
+    path = tmp_path / "grant.json"
+    path.write_text(json.dumps(env), encoding="utf-8")
+    with patch("skcapstone.cli.itil.SHARED_ROOT", str(tmp_path)):
+        result = CliRunner().invoke(
+            _cli(),
+            [
+                "itil",
+                "cab",
+                "vote",
+                chg.id,
+                "--authorization",
+                str(path),
+                "--target",
+                env["target"],
+                "--scope",
+                env["scope"],
+            ],
+        )
+    assert result.exit_code != 0
+    assert mgr.get_cab_votes(chg.id) == []
