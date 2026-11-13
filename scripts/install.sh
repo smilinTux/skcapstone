@@ -73,6 +73,12 @@ else
 fi
 
 PIP="$SKENV/bin/pip"
+# Security floors for transitive dependencies (constraints are inert for packages
+# an install does not use). See constraints/security-floors.txt.
+SK_SECURITY_FLOORS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/constraints/security-floors.txt"
+if [[ -f "$SK_SECURITY_FLOORS" ]]; then
+    export PIP_CONSTRAINT="$SK_SECURITY_FLOORS"
+fi
 $PIP install --upgrade pip -q 2>/dev/null
 
 # ---------------------------------------------------------------------------

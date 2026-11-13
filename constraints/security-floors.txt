@@ -1,0 +1,58 @@
+# security-floors.txt: minimum versions that clear the known advisories reported
+# by the nightly `sksecurity sweep deps` (pip-audit) as of 2026-11-13.
+#
+# This is a CONSTRAINTS file, not a requirements file: a line here only bounds a
+# package when something else already pulls it in, so it is inert for packages a
+# given install does not use. Use it on every fleet install and upgrade so that
+# transitive dependencies (which no SK pyproject pins) cannot resolve to a
+# vulnerable release:
+#
+#   PIP_CONSTRAINT=<skcapstone>/constraints/security-floors.txt pip install -U ...
+#   uv pip install -c <skcapstone>/constraints/security-floors.txt ...
+#
+# scripts/install.sh exports PIP_CONSTRAINT to this file automatically.
+#
+# NOT listed on purpose (no fixed release, or the fix conflicts with a pinned
+# consumer), tracked as residuals in the CVE remediation report:
+#   chromadb      all releases through 1.5.9 are affected, no fixed version exists
+#   pillow        13.0.0 clears every advisory but gradio caps pillow<13; floor is
+#                 declared directly by skchat instead
+#   torch         2.13.0 clears the advisory but torchaudio (s3tokenizer) is built
+#                 against torch 2.11; bumped by hand in venvs that do not need it
+#   black         dev tool; bumping it reformats code, so it is left to each repo
+#
+# Keep the list sorted. Re-derive from `pip-audit --format json` fix_versions
+# (the smallest release that is >= every per-advisory fix) when the sweep reports
+# new findings.
+aiohttp>=3.14.4
+ansible-core>=2.20.7
+anyio>=4.14.2
+brotli>=1.2.1
+certifi>=2026.10.18
+cryptography>=50.0.0
+dnspython>=2.9.0
+filelock>=4.2.1
+fsspec>=2026.6.0
+h2>=4.4.1
+hpack>=4.2.0
+idna>=3.15
+mcp>=1.30.0
+msgpack>=1.2.3
+multidict>=6.9.1
+oauthlib>=4.0.1
+onnx>=1.22.0
+opentelemetry-api>=1.45.1
+pip>=26.2
+pyasn1>=0.6.5
+pydantic-settings>=2.14.2
+pyjwt>=2.15.0
+pypdf>=6.21.4
+python-multipart>=0.0.31
+sentence-transformers>=5.6.0
+setuptools>=84.1.0
+starlette>=1.3.1
+transformers>=5.10.1
+urllib3>=2.8.0
+virtualenv>=21.14.10
+werkzeug>=3.1.9
+zeroconf>=0.149.16

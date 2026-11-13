@@ -35,7 +35,7 @@ dependencies = [
     "croniter>=2.0",
     "click>=8.1,<9.0",
     "cloud9>=1.0.0",
-    "mcp>=1.0,<2.0",
+    "mcp>=1.30.0,<2.0",
     "packaging>=23.0",
     "pydantic>=2.0,<3.0",
     "pyyaml>=6.0,<7.0",
@@ -118,10 +118,10 @@ fleet-qualify = [
     "soft-webauthn>=0.1",
     "pywebpush>=1.14",
     "python-gnupg>=0.5",
-    "zeroconf>=0.38",
+    "zeroconf>=0.149.16",
 ]
 dashboard = [
-    "starlette>=0.40",
+    "starlette>=1.3.1",
     "uvicorn>=0.30",
     # The dashboard modules moved out in the CR-4.3 split and skcapstone's
     # dashboard_* modules are now transparent re-export shims over them, so this
