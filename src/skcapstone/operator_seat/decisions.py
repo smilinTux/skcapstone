@@ -1,15 +1,16 @@
 """Pending-decision store for the operator seat (Seat O5a).
 
-The record store behind escalate-with-2-3-options and the approval tier.
-Parks proposals as pending decisions, lists them, and resolves them (approve
-one option, or reject) by a human. This module performs no actuation, only
+The record store behind ATLAS escalations. Every ATLAS escalation is report-only
+(card f8dd9441): a record here is acknowledge-only and authorizes nothing. Parks
+proposals as pending decisions, one record per episode, lists them, and resolves
+them by a human. This module performs no actuation, only
 file-backed record I/O; it is not a guardrail.
 """
 
 from __future__ import annotations
 
 import json
-import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -29,26 +30,14 @@ def _dump(path: Path, record: dict[str, Any]) -> None:
     atomic_write_text(path, json.dumps(record, indent=2, sort_keys=True) + "\n")
 
 
-_LOG = logging.getLogger(__name__)
-
-#: The fields that make two options the SAME proposal.
-_IDENTITY_FIELDS = ("app", "condition", "object", "action")
-
-
-def _same_proposals(old: list[dict[str, Any]], new: list[dict[str, Any]]) -> bool:
-    """Whether ``new`` is the same proposal(s) as ``old``: same count and, pairwise, the same
-    app, condition, object and action. An upgrade may only ADD the binding to what a human was
-    already shown, never swap in a different proposal."""
-    return len(old) == len(new) and all(
-        all(o.get(k) == n.get(k) for k in _IDENTITY_FIELDS) for o, n in zip(old, new, strict=True)
-    )
-
-
-def _has_bound_option(options: list[dict[str, Any]]) -> bool:
-    """Whether any option names the ITIL change that would authorize it."""
-    return any(
-        isinstance(o, dict) and (o.get("itil_change_id") or o.get("change_id")) for o in options
-    )
+def _current_episode(store_dir: str | Path, base_id: str) -> tuple[str, int]:
+    """The newest episode record of ``base_id``: ``(id, n)``, with n == 1 for the base."""
+    best_id, best_n = base_id, 1
+    for path in Path(store_dir).glob(f"{base_id}-e*.json"):
+        suffix = path.stem[len(base_id) + 2 :]
+        if suffix.isdigit() and int(suffix) > best_n:
+            best_id, best_n = path.stem, int(suffix)
+    return best_id, best_n
 
 
 def park(
@@ -60,16 +49,19 @@ def park(
 ) -> dict[str, Any]:
     """Park a proposal as a pending decision. Records only, no actuation.
 
+    Create-or-skip per EPISODE: a persistent firing re-parks the same content-based id, so
+    one episode is ONE record a human acknowledges once. When that record is resolved AND its
+    episode has ended (``end_cleared_episodes`` saw the condition definitely cleared), the
+    next firing is a new episode, parked as ``<decision_id>-e<n>``. Nothing is rewritten.
+
     Args:
         store_dir: Directory the decision record is written into.
-        options: One option for a simple approve/reject, or two to three
-            options for an escalate-with-choices decision. Each option is a
-            dict like ``{action, change_class, dry_run, rationale}``.
-        decision_id: Unique id for this decision; also the record's filename.
+        options: One to three option dicts (``{app, condition, object, action, ...}``).
+        decision_id: Content-based id of the proposal; the first episode's filename.
         created_iso: ISO timestamp the decision was parked at.
 
     Returns:
-        The pending record: ``{id, created, status, options, chosen,
+        The current episode's record: ``{id, created, status, options, chosen,
         resolved_by, resolved_at}``.
 
     Raises:
@@ -77,36 +69,15 @@ def park(
     """
     if not 1 <= len(options) <= 3:
         raise ValueError("park requires 1 to 3 options")
-    path = _record_path(store_dir, decision_id)
+    current_id, episode = _current_episode(store_dir, decision_id)
+    path = _record_path(store_dir, current_id)
     if path.exists():
-        # Create-or-skip: a persistent firing re-parks the same (content-based) id,
-        # so a standing issue is ONE decision the human resolves once, not a fresh
-        # one every pass. The existing record and any resolution are preserved.
         existing = _load(path)
-        # ONE exception, in ONE direction: the decisions store is replicated, and a node
-        # that is not the designated actuator parks the decision WITHOUT an ITIL change
-        # (it drafts none). If that record lands first, the actuator's bound option must
-        # not be skipped, or ``resolve_decision(approve=True)`` raises for good (an
-        # unbound record authorizes nothing). So a PENDING record with no bound option is
-        # upgraded to the bound options; a bound record is never replaced or downgraded,
-        # and a resolved one is never touched. It keeps its id and its birth time.
-        if (
-            existing.get("status") == "pending"
-            and not _has_bound_option(existing.get("options", []))
-            and _has_bound_option(options)
-        ):
-            if _same_proposals(existing.get("options", []), options):
-                existing["options"] = list(options)
-                _dump(path, existing)
-            else:
-                _LOG.warning(
-                    "refusing to upgrade decision %s: the bound option is not for the same "
-                    "app, condition, object and action (or option count) as the pending one",
-                    decision_id,
-                )
-        return existing
+        if existing.get("status") == "pending" or not existing.get("episode_ended_at"):
+            return existing
+        current_id = f"{decision_id}-e{episode + 1}"
     record = {
-        "id": decision_id,
+        "id": current_id,
         "created": created_iso,
         "status": "pending",
         "options": list(options),
@@ -114,8 +85,35 @@ def park(
         "resolved_by": None,
         "resolved_at": None,
     }
-    _dump(path, record)
+    _dump(_record_path(store_dir, current_id), record)
     return record
+
+
+def end_cleared_episodes(
+    store_dir: str | Path, cleared: Callable[[dict[str, Any]], bool], *, ended_iso: str
+) -> list[str]:
+    """Mark resolved decisions whose condition now reads definitely cleared as ended.
+
+    ``cleared(option)`` answers from the current observation. Pending records are left
+    alone, so an unacknowledged episode is never replaced. Returns the ids marked.
+    """
+    directory = Path(store_dir)
+    if not directory.exists():
+        return []
+    marked: list[str] = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            record = _load(path)
+        except (OSError, ValueError):
+            continue
+        if record.get("status") == "pending" or record.get("episode_ended_at"):
+            continue
+        options = [o for o in record.get("options", []) if isinstance(o, dict)]
+        if options and all(cleared(o) for o in options):
+            record["episode_ended_at"] = ended_iso
+            _dump(path, record)
+            marked.append(record.get("id", path.stem))
+    return marked
 
 
 def list_pending(store_dir: str | Path) -> list[dict[str, Any]]:

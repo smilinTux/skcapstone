@@ -164,17 +164,3 @@ def cast_signed_vote(
 
     env = envelope(change_id, issuer=subject, role=role, decision=decision, signer=signer)
     return record_signed_vote(itil, env)
-
-
-def decision_grant(
-    decisions_dir: Any,
-    decision_id: str,
-    choice: int | None,
-    subject: str,
-    role: str = "approver",
-) -> dict:
-    """A signed approval grant for the change a parked decision's option links."""
-    from skcapstone.operator_seat.dispatch import decision_option
-
-    _, change_id = decision_option(decisions_dir, decision_id, choice)
-    return envelope(change_id, issuer=subject, role=role)

@@ -2,7 +2,7 @@
 
 One pass: check the freeze first, observe every adapter, triage into a brief,
 route to the cheap or the decision brain, let the agent propose, classify each
-proposal, then park escalations for a human and (ONLY when execution is
+proposal, then park escalations as report-only records and (ONLY when execution is
 explicitly enabled and an apply function is wired) apply the auto ones. It is
 safe by default: with execute=False and apply_fn=None it writes nothing, it
 reasons, plans, parks escalations, and reports what it would do.
@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from ..fleet import signing, store
-from ..fleet.paths import default_paths
+from ..fleet.paths import default_paths, self_node_name
 from . import (
     action_ledger,
     actuator,
@@ -174,12 +174,10 @@ def _close_cleared_escalations(
 ) -> list[str]:
     """Close every open escalate-lane intent whose condition now reads DEFINITELY cleared.
 
-    A human approves a change for an EPISODE. The dispatcher can only see a clear when a
-    dispatch pass happens to run while it is cleared; the loop sees every pass, so it closes
-    the intent (and retires its change) the moment the bound condition reads definitely
-    not-firing (a real True/False, never Unknown). A recurrence is then a new episode: a new
-    proposal, a new change, a new human vote. A clear-and-refire that falls entirely between
-    two passes is indistinguishable from one episode (the loop only knows what it observed).
+    The loop no longer writes escalate-lane intents (escalations are report-only, card
+    f8dd9441), and the dispatcher refuses the ones an older loop left behind. This closes
+    them (and retires their changes) once their condition reads definitely not-firing (a
+    real True/False, never Unknown), so they do not linger.
     """
     closed: list[str] = []
     for intent_id in ledger.list_intents(state=action_ledger.ActionState.PROPOSED):
@@ -208,42 +206,32 @@ def _close_cleared_escalations(
     return closed
 
 
-_OPEN_CHANGE_STATES = frozenset({"proposed", "reviewing", "approved", "scheduled"})
+def _option_cleared(observations: dict, ptypes: set[str]) -> Callable[[dict], bool]:
+    """Whether a decision option's condition reads DEFINITELY cleared in this pass: at least
+    one matching condition, every one a real True/False (never Unknown), and none firing."""
+
+    def cleared(option: dict) -> bool:
+        matches = [
+            c
+            for c in observations.get(option.get("app"), [])
+            if c.get("type") == option.get("condition")
+            and (option.get("object") is None or c.get("object") == option.get("object"))
+        ]
+        if not matches or any(c.get("status") not in ("True", "False") for c in matches):
+            return False
+        return not any(dispatch.condition_firing(c, ptypes) for c in matches)
+
+    return cleared
 
 
-def _open_escalated_intent(ledger, itil, prop: dict, catalog_generation: str) -> str | None:
-    """An OPEN escalate-lane intent for this same proposal, or None.
-
-    Open means PROPOSED in the escalate lane for the same app, action, target, condition
-    and catalog generation, with its ITIL change still open (not rejected, closed or
-    spent). Such an intent is a decision already waiting for a human, and drafting another
-    change and intent for it on every pass only piles up approvals to ride.
-    """
-    key = (
-        str(prop.get("app") or "unknown"),
-        str(prop.get("action") or "unknown"),
-        str(prop.get("object") or "unknown"),
-        prop.get("condition"),
-        catalog_generation,
-    )
-    open_changes: dict[str, str] | None = None
-    for intent_id in ledger.list_intents(state=action_ledger.ActionState.PROPOSED):
-        intent = ledger.read_intent(intent_id)
-        if (
-            intent.application,
-            intent.action,
-            intent.target_id,
-            intent.condition_type,
-            intent.catalog_generation,
-        ) != key:
-            continue
-        if dispatch.stored_lane(ledger, intent_id) != "escalate" or not intent.itil_change_id:
-            continue
-        if open_changes is None:
-            open_changes = {c.id: c.status.value for c in itil.list_changes()}
-        if open_changes.get(intent.itil_change_id) in _OPEN_CHANGE_STATES:
-            return intent_id
-    return None
+def _escalation_cause(planned_item: dict) -> str:
+    """Why the planner escalated this proposal, in words."""
+    if planned_item.get("binding_denied"):
+        return "the action is not ratified for this app (or its signed catalog did not verify)"
+    if planned_item.get("unresolved_target"):
+        return "the target did not resolve"
+    change_class = (planned_item.get("classification") or {}).get("change_class")
+    return f"a {change_class or 'non-standard'} change is not auto-approvable"
 
 
 #: Outcome words for an auto action that actually ran.
@@ -336,7 +324,6 @@ def _run_once(
     itil: Any | None = None,
     max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
     clock: Callable[[], datetime] | None = None,
-    max_approval_age_s: float = dispatch.DEFAULT_MAX_APPROVAL_AGE_SECONDS,
     allow_inline_actuation: bool = True,
 ) -> dict:
     """Run one operator pass.
@@ -354,13 +341,13 @@ def _run_once(
 
     ``itil`` (an ``ITILManager``-shaped object, optional) is what makes the
     dispatcher's contract (AUTONOMY_ARCHITECTURE.md section 3) live for this
-    pass: when given, every proposal that reaches the lifecycle ledger is
-    first bound to a drafted ITIL change (so the intent's frozen
-    ``itil_change_id`` field is set BEFORE the ledger intent exists, never
-    rewritten after), and the auto lane's own actuation is re-pointed through
+    pass: when given, every proposal that reaches the lifecycle ledger (an
+    auto-lane one: escalations are report-only) is first bound to a drafted
+    ITIL change (so the intent's frozen ``itil_change_id`` field is set
+    BEFORE the ledger intent exists, never rewritten after), and the auto
+    lane's own actuation is re-pointed through
     ``dispatch.dispatch_intent`` instead of authorizing itself inline -- the
-    same function ``skoperator honor-pending`` calls for the human lane, so
-    the two converge onto one code path with two speeds. When ``itil`` is
+    same function ``skoperator honor-pending`` calls. When ``itil`` is
     None (every caller before this change, and every caller that has not yet
     wired one), this pass is byte-identical to before: no change is drafted,
     and the auto lane keeps its pre-existing self-contained inline actuation.
@@ -406,12 +393,12 @@ def _run_once(
     that lane is refused outright and every physical action goes through the ITIL lane. The
     inline lane also never actuates in a pass whose ledger or ITIL wiring was dropped.
 
-    An escalate-lane proposal that already has an OPEN escalate-lane intent (same app,
-    action, target, condition and catalog generation, its change still open) reuses it:
-    the loop does not draft a new change and intent on every pass for a decision that is
-    already waiting. Intents a crash stranded in AUTHORIZED or EXECUTING are escalated with
-    an alert at the start of the pass (``dispatch.escalate_stranded``), never re-run, and
-    listed under ``stranded``.
+    Every escalation is REPORT-ONLY (card f8dd9441): no ITIL change and no ledger intent are
+    written, and the decision parked for it is acknowledge-only. One record per episode: a
+    resolved record whose condition then reads definitely cleared ends its episode, and the
+    next firing parks a new one. Intents a crash stranded in AUTHORIZED or EXECUTING are
+    escalated with an alert at the start of the pass (``dispatch.escalate_stranded``),
+    never re-run, and listed under ``stranded``.
 
     Returns {frozen, frozen_mid_pass, freeze_state, freeze_summary, stranded, brief, route,
     proposals, planned, outcomes, report}.
@@ -511,6 +498,16 @@ def _run_once(
             )
         except Exception as exc:  # noqa: BLE001 - bookkeeping must never stop the pass
             emit(f"operator: episode-close sweep failed: {exc}")
+    if decisions_dir is not None and not wiring_dropped:
+        # A resolved (acknowledged) decision whose condition now reads definitely cleared
+        # ends its episode, so the next firing parks a new record. Never on a node that
+        # dropped its wiring: its view of a condition is not the actuator's.
+        try:
+            decisions.end_cleared_episodes(
+                decisions_dir, _option_cleared(observations, ptypes), ended_iso=now_iso
+            )
+        except Exception as exc:  # noqa: BLE001 - bookkeeping must never stop the pass
+            emit(f"operator: decision episode sweep failed: {exc}")
     the_brief = brief.build_brief(observations, ptypes)
     route = brain.route_brain(the_brief)
     proposals = list(propose(the_brief, route))
@@ -565,7 +562,35 @@ def _run_once(
         decision_freeze = "active" if gate.allowed else (gate.reason or "unknown")
         if decision_freeze == store.REASON_FROZEN:
             froze_mid_pass = True
-        actuating = disp == "auto" and execute and apply_fn is not None
+        if disp != "auto":
+            # Card f8dd9441 (Chef: fewest gates). ATLAS has two gates, the freeze and one-time
+            # signed ratification (standard catalog actions) plus auto-normal. Anything that
+            # escalates is REPORT-ONLY: no ITIL change, no ledger intent, and an
+            # acknowledge-only decision record that no approval can turn into an actuation.
+            reason = (
+                f"{_escalation_cause(pl)}; "
+                f"{dispatch.report_only_reason(prop.get('app'), prop.get('action'))}"
+            )
+            if decisions_dir is not None:
+                decisions.park(
+                    decisions_dir,
+                    [
+                        {
+                            **prop,
+                            "report_only": True,
+                            "report_only_reason": reason,
+                            "observed_on": self_node_name(),
+                        }
+                    ],
+                    decision_id=_decision_id(prop, now_iso, i),
+                    created_iso=now_iso,
+                )
+                outcome = f"escalated (report-only: {reason})"
+            else:
+                outcome = f"escalate (report-only, no decision store: {reason})"
+            outcomes.append(_outcome(prop, disp, outcome, None, decision_freeze))
+            continue
+        actuating = execute and apply_fn is not None
         if actuating:
             if not gate.allowed:
                 # ANY closed gate refuses here, before anything is written: a blocked
@@ -601,7 +626,6 @@ def _run_once(
                 # apply_fn call, nothing against the retry budget.
                 outcomes.append(_outcome(prop, disp, f"refused: {refusal}", None, decision_freeze))
                 continue
-        reuse_id: str | None = None
         if itil is not None and lifecycle_ledger is not None:
             try:
                 dispatch.change_binding_tag(
@@ -620,20 +644,7 @@ def _run_once(
                     )
                 )
                 continue
-            if disp != "auto":
-                reuse_id = _open_escalated_intent(
-                    lifecycle_ledger,
-                    itil,
-                    prop,
-                    str(prop.get("catalog_generation") or catalog_generation),
-                )
-                if reuse_id is not None:
-                    # No new change is drafted, but the decision parked below must still
-                    # carry the REUSED intent's change: the decisions store is replicated,
-                    # and if a non-actuator's unbound copy won the race, this bound option
-                    # is what upgrades it (otherwise approving it raises forever).
-                    prop["itil_change_id"] = lifecycle_ledger.read_intent(reuse_id).itil_change_id
-        if itil is not None and lifecycle_ledger is not None and reuse_id is None:
+        if itil is not None and lifecycle_ledger is not None:
             # Draft the ITIL change BEFORE the ledger intent exists, so its
             # frozen itil_change_id field (action_ledger.py, ``identity()``)
             # is set at birth and never needs rewriting later -- the
@@ -642,27 +653,17 @@ def _run_once(
             # intent with none is invisible to it forever, by design. This
             # runs for BOTH lanes: the auto lane needs its own change to
             # independently re-read (standard/auto-normal auto-approves at
-            # the ITIL fold), and the escalate lane needs one for a human to
-            # vote on -- see ``dispatch.resolve_decision``.
+            # the ITIL fold). Escalations never reach here: they are report-only.
             record = itil_intent.build_change_record(
                 {"name": prop.get("action")},
                 pl["classification"],
                 dry_run="false",
                 rollback_plan=prop.get("rollback_plan") or "revert via controller reconcile",
             )
-            # The change type follows the DISPOSITION, not the class. A proposal the
-            # planner escalated (an unresolvable target, a denied binding, a major
-            # change) must get a CAB-gated change: a ``standard`` one auto-approves at
-            # the ITIL fold, which let ``run_dispatch_pass`` act on an escalated
-            # proposal with no human vote. The auto-normal tag is stripped for the
-            # same reason (the fold auto-approves a tagged operator-authored change).
-            auto_lane = disp == "auto"
             change_type = (
-                "standard"
-                if auto_lane and pl["classification"].get("change_class") == "standard"
-                else "normal"
+                "standard" if pl["classification"].get("change_class") == "standard" else "normal"
             )
-            tags = [t for t in record["tags"] if auto_lane or t != "auto-normal"]
+            tags = list(record["tags"])
             # Bind the change to the ONE intent it is for (app, action, target, the same
             # three the ledger identity uses): the dispatcher refuses any other.
             tags.append(
@@ -677,12 +678,17 @@ def _run_once(
                 change_type=change_type,
                 risk=record["risk"],
                 rollback_plan=record["rollback_plan"],
-                created_by=ledger_actor,
+                # The operator seat authors its changes: ``operator`` is the identity the
+                # fold's auto-normal derivation (and ``cab_approval.auto_approved``) require.
+                # Drafting them as the ledger actor meant an auto-normal change never
+                # auto-approved. The ledger actor is recorded as the manager.
+                created_by=record["author"],
+                managed_by=ledger_actor,
                 tags=tags,
             )
             prop["itil_change_id"] = chg.id
-        intent_id: str | None = reuse_id
-        if lifecycle_ledger is not None and reuse_id is None:
+        intent_id: str | None = None
+        if lifecycle_ledger is not None:
             created_at = _event_now(clock)
             base_identity = {
                 "condition_fingerprint": safety.action_fingerprint(prop),
@@ -747,17 +753,11 @@ def _run_once(
                         **({"evidence": dict(stamp)} if isinstance(stamp, dict) else {}),
                     },
                 )
-        if (
-            disp == "auto"
-            and execute
-            and apply_fn is not None
-            and itil is not None
-            and lifecycle_ledger is not None
-        ):
+        if execute and apply_fn is not None and itil is not None and lifecycle_ledger is not None:
             # The converged path (AUTONOMY_ARCHITECTURE.md section 3.2): the
             # auto lane's own actuation is re-pointed through
             # dispatch.dispatch_intent, the SAME function
-            # ``skoperator honor-pending`` calls for a human-approved change,
+            # ``skoperator honor-pending`` calls,
             # instead of authorizing itself inline on its own say-so. It
             # re-reads the ITIL fold it just drafted above (auto-normal /
             # standard changes auto-approve there) rather than trusting this
@@ -784,7 +784,6 @@ def _run_once(
                     emit=emit,
                     clock=clock,
                     max_evidence_age_s=max_evidence_age_s,
-                    max_approval_age_s=max_approval_age_s,
                     target_known=target_known,
                     deadline=deadline,
                     action_allowed=(
@@ -844,7 +843,7 @@ def _run_once(
                 actor=ledger_actor,
                 reason=f"not actuated in the pass that wrote it: {outcome}",
             )
-        elif disp == "auto" and execute and apply_fn is not None and not wiring_dropped:
+        elif execute and apply_fn is not None and not wiring_dropped:
             # Pre-itil, self-contained inline actuation. Kept byte-identical
             # for callers that have not wired an ITIL manager into this pass
             # (every caller before this change): AUTHORIZED/EXECUTING are
@@ -852,8 +851,8 @@ def _run_once(
             #
             # Per-proposal isolation, mirroring the fail-safe observe side: one bad
             # proposal must not abort the pass. Without this a single raise skipped
-            # every later proposal INCLUDING decisions.park, so escalations the human
-            # was supposed to rule on were silently never written, and no report was
+            # every later proposal INCLUDING decisions.park, so escalations were
+            # silently never written, and no report was
             # emitted at all. Broad by intent: any actuation failure is contained,
             # recorded on the outcome, and reported.
             attempt_started = False
@@ -1040,18 +1039,8 @@ def _run_once(
                     if rollback_result is not None and rollback_error is None
                     else f"failed: {exc}"
                 )
-        elif disp == "auto":
-            outcome = "auto-ready (execution off)"
-        elif decisions_dir is not None:
-            decisions.park(
-                decisions_dir,
-                [prop],
-                decision_id=_decision_id(prop, now_iso, i),
-                created_iso=now_iso,
-            )
-            outcome = "escalated (parked for approval)"
         else:
-            outcome = "escalate (no decision store)"
+            outcome = "auto-ready (execution off)"
         freeze_after = decision_freeze
         if actuating:
             # A freeze AFTER an attempt is flagged whether the attempt succeeded or

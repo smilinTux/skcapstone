@@ -14,7 +14,6 @@ import pytest
 from skcapstone.operator_seat import action_ledger, dispatch, loop, node_local, safety
 
 from .test_dispatch_e2e import (  # noqa: F401  (world is a fixture)
-    _escalated_intent,
     _loop_pass,
     _manual_intent,
     _normal_change,
@@ -74,16 +73,18 @@ def test_the_actuator_nodes_loop_does_all_three_sweeps(world):
 def test_a_non_actuator_node_does_not_draft_escalate_lane_changes_or_intents(world, monkeypatch):
     monkeypatch.setattr(node_local, "actuator_refusal", lambda: NOT_ACTUATOR)
     res = _loop_pass(world, target_known=lambda p: False)
-    assert res["outcomes"][0]["outcome"] == "escalated (parked for approval)"
+    assert res["outcomes"][0]["outcome"].startswith("escalated (report-only")
     assert res["outcomes"][0]["intent_id"] is None
     assert world.ledger.list_intents() == []
     assert world.itil.list_changes() == []
 
 
-def test_the_actuator_node_still_drafts_the_escalate_lane(world):
-    intent_id = _escalated_intent(world)
-    assert world.ledger.list_intents() == [intent_id]
-    assert len(world.itil.list_changes()) == 1
+def test_the_actuator_node_drafts_nothing_for_an_escalation_either(world):
+    """Every escalation is report-only (card f8dd9441), on the actuator too."""
+    res = _loop_pass(world, target_known=lambda p: False)
+    assert res["outcomes"][0]["outcome"].startswith("escalated (report-only")
+    assert world.ledger.list_intents() == []
+    assert world.itil.list_changes() == []
 
 
 # --------------------------------------------------------------------------

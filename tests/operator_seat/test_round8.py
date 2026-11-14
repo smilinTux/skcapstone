@@ -9,13 +9,11 @@ from click.testing import CliRunner
 
 from skcapstone.operator_seat import (
     act_dispatch,
-    action_ledger,
     decisions,
     dispatch,
     loop,
     node_local,
 )
-from tests.cab_grants import decision_grant
 
 from .test_dispatch_e2e import (  # noqa: F401  (world is a fixture)
     _iso,
@@ -150,64 +148,32 @@ def test_annotation_only_execute_without_honor_keeps_the_inline_lane(tmp_path, m
 
 
 # --------------------------------------------------------------------------
-# F2: a non-actuator's unbound decision cannot shadow the actuator's bound one
+# F2: a standing escalation is one acknowledge-only record, whichever node parks it
 # --------------------------------------------------------------------------
 
 
-def test_the_actuator_upgrades_a_decision_a_non_actuator_parked_unbound(world, monkeypatch):
+def test_a_standing_escalation_is_one_report_only_record_on_every_node(world, monkeypatch):
+    """A non-actuator and the actuator park the SAME acknowledge-only record (card f8dd9441):
+    no node binds it to a change, and it can never be approved."""
     with monkeypatch.context() as m:
         m.setattr(node_local, "actuator_refusal", lambda: NOT_ACTUATOR)
         first = _loop_pass(world, target_known=lambda p: False)
-    assert first["outcomes"][0]["outcome"] == "escalated (parked for approval)"
-    [unbound] = decisions.list_pending(str(world.decisions))
-    assert not any(o.get("itil_change_id") for o in unbound["options"])
-    # The actuator node runs the same pass against the same replicated decisions store.
+    assert first["outcomes"][0]["outcome"].startswith("escalated (report-only")
     second = _loop_pass(world, target_known=lambda p: False)
-    intent_id = second["outcomes"][0]["intent_id"]
-    change_id = world.ledger.read_intent(intent_id).itil_change_id
-    [bound] = decisions.list_pending(str(world.decisions))
-    assert bound["id"] == unbound["id"], "still ONE decision for the standing issue"
-    assert [o.get("itil_change_id") for o in bound["options"]] == [change_id]
-    # ... and it can be approved, which used to raise UnauthorizedDecisionError for good.
-    dispatch.resolve_decision(
-        str(world.decisions),
-        world.itil,
-        bound["id"],
-        approve=True,
-        choice=0,
-        subject="capauth:approver@scratch",
-        resolved_iso=_iso(world.time.now),
-        authorization=decision_grant(
-            str(world.decisions), bound["id"], 0, "capauth:approver@scratch", role="approver"
-        ),
-    )
-    assert _sweep(world)[0].outcome == "verified"
-
-
-def test_a_non_actuator_cannot_downgrade_a_bound_decision(world, monkeypatch):
-    _loop_pass(world, target_known=lambda p: False)  # the actuator parks the bound option
-    [bound] = decisions.list_pending(str(world.decisions))
-    with monkeypatch.context() as m:
-        m.setattr(node_local, "actuator_refusal", lambda: NOT_ACTUATOR)
-        _loop_pass(world, target_known=lambda p: False)
-    [after] = decisions.list_pending(str(world.decisions))
-    assert after["options"] == bound["options"]
-
-
-def test_park_upgrades_only_a_pending_unbound_record(tmp_path):
-    store = tmp_path / "d"
-    unbound = {"action": "restart", "object": "x"}
-    bound = {"action": "restart", "object": "x", "itil_change_id": "chg-1"}
-    decisions.park(store, [unbound], decision_id="d1", created_iso="2026-01-01T00:00:00Z")
-    upgraded = decisions.park(store, [bound], decision_id="d1", created_iso="2026-01-02T00:00:00Z")
-    assert upgraded["options"] == [bound]
-    assert upgraded["created"] == "2026-01-01T00:00:00Z", "the record keeps its birth time"
-    # never downgraded
-    again = decisions.park(store, [unbound], decision_id="d1", created_iso="2026-01-03T00:00:00Z")
-    assert again["options"] == [bound]
-    # a record that is already bound is not replaced by a different bound option
-    other = {**bound, "itil_change_id": "chg-2"}
-    assert decisions.park(store, [other], decision_id="d1", created_iso="x")["options"] == [bound]
+    assert second["outcomes"][0]["intent_id"] is None
+    [record] = decisions.list_pending(str(world.decisions))
+    assert all(o.get("report_only") and not o.get("itil_change_id") for o in record["options"])
+    with pytest.raises(dispatch.ReportOnlyDecisionError):
+        dispatch.resolve_decision(
+            str(world.decisions),
+            world.itil,
+            record["id"],
+            approve=True,
+            choice=0,
+            subject="capauth:approver@scratch",
+            resolved_iso=_iso(world.time.now),
+        )
+    assert world.itil.list_changes() == [] and _sweep(world) == []
 
 
 def test_park_never_rewrites_a_resolved_record(tmp_path):

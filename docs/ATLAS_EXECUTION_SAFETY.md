@@ -6,6 +6,43 @@ honor additionally requires every proposal to carry an exact `app`, `condition`,
 condition must belong to that app, and a human must have ratified the action on
 that same object. A model response cannot grant itself eligibility.
 
+## Two gates, and escalations are report-only (card f8dd9441)
+
+ATLAS acts on exactly two gates:
+
+1. **The freeze.** While the fleet is frozen nothing actuates.
+2. **One-time signed ratification, or auto-normal.** An action ATLAS may run on its own is
+   either a standard action ratified once for its app (`skoperator apps ratify <app>
+   <action>`, signed, in the ratified catalog) or a change with the auto-normal shape that the
+   ITIL fold approves with no human.
+
+Anything else that escalates is REPORT-ONLY, always, whatever its ratification or actuator
+status. There is no per-incident CAB vote for ATLAS, no approvable ATLAS decision, and no
+decision queue that can actuate:
+
+* the loop writes no ITIL change and no ledger intent for an escalation; it parks one
+  acknowledge-only decision record (`report_only: true`, with the reason and
+  `observed_on`, the node that saw it, for information);
+* `skoperator decide --approve` refuses before any write and before asking for a grant, and
+  names `skoperator apps ratify <app> <action>`; `decide --reject` acknowledges the record;
+* the dispatcher refuses, before the approval is spent, any intent whose approval would come
+  from a human CAB vote (an escalate-lane intent an older loop left behind, or any intent whose
+  change carries a human vote). Only standard and auto-normal approvals dispatch;
+* `skoperator honor-pending` prints what it verified and how many intents were report-only,
+  and exits 3 when an intent can never actuate.
+
+To let ATLAS fix something it escalated, ratify the action once. Otherwise a human fixes it.
+The signed human CAB vote still gates the governed CMDB apply (`cmdb_act` / `_apply_gate`) and
+the trustee rotate guard; those are not ATLAS actuation and are unchanged.
+
+One record per episode: while a decision is pending, or resolved but its condition has not yet
+read cleared, the same escalation reuses it. Once it was resolved and its condition read
+definitely cleared, the next escalation of the same condition is a new episode with its own
+record (`<id>-e<n>`). Loop-drafted changes are authored by `operator`, so auto-normal changes
+auto-approve at the fold as designed.
+
+## Execution path
+
 The execution path now follows this fail-closed sequence:
 
 1. Acquire the nonblocking single-flight lock.
@@ -77,11 +114,10 @@ dispatcher refused, a cooldown suppressed it) it is voided: the ledger gains a
 dispatcher enumerates PROPOSED intents and a leftover one used to be acted on later,
 unattended.
 
-The ITIL change type follows the proposal's DISPOSITION, not its class. A proposal the
-planner escalated (an unresolvable target, a denied action binding, a major change)
-gets a CAB-gated `normal` change without the `auto-normal` tag, so nothing auto-approves
-it at the fold; only a human CAB vote does. The loop records the lane (`auto` or
-`escalate`) and the evidence stamp on the intent's PROPOSED event.
+Only the auto lane gets an ITIL change and a ledger intent. A proposal the planner
+escalated (an unresolvable target, a denied action binding, a major change) is report-only
+(see "Two gates" above). The loop records the lane and the evidence stamp on the intent's
+PROPOSED event.
 
 The loop never trusts a change id on a proposal (a proposal is model output): it
 always drafts its own change, tagged `op-bind:<app>|<action>|<target>`, the one intent
@@ -92,40 +128,26 @@ order, and a refusal never writes AUTHORIZED because nothing was authorized:
   are percent-escaped and a raw `|` in any of them is rejected, so no part can forge the
   separator). A change approved for one action cannot run another, and a change with no
   binding authorizes nothing;
-* who approved it is derived from the VOTES, never from a missing marker: the fold
-  writes its `auto-approved` timeline entry only while a change is still PROPOSED, so a
-  standard change that goes approved, scheduled, unscheduled folds `approved` with no
-  marker. A change is human-approved only if a qualifying human vote exists (the drafter's
-  own excluded, as the fold does) and none rejects; `standard`, and the fold's
-  `auto-normal` derivation, are auto-approved whatever the timeline says;
-* **a human approval is per episode, and it expires.** It is read from the newest
-  qualifying vote's `decided_at` against the real clock. Older than
-  `honor-pending --max-approval-age` (default 24 hours, at most 7 days) it is refused and
-  the intent closed (ESCALATED, change retired to a terminal state). A vote dated more than
-  a minute after the clock is closed the same way, with its own reason: merely refusing it
-  would let it buy time (refused now, honored when its date arrives). A bad configuration
-  or an unreadable time is refused and closes nothing. When
-  re-observation sees the condition definitely cleared, the intent is closed with the reason
-  "condition cleared before dispatch" and its change retired too, so a recurrence needs a
-  new proposal and a new human vote. This is deliberately conservative (fail closed) and can
-  be relaxed later by raising the limit or changing the closing rule;
-* an escalate-lane intent with no qualifying human vote is left pending, never acted on
-  and never voided (a human decision is waiting on it); an intent with no recorded lane
-  and no human vote is refused and left alone;
+* **no human approval dispatches.** An escalate-lane intent, or an intent whose change
+  carries a qualifying human vote, is refused as `refused: report-only` and left PROPOSED,
+  before anything is spent (the loop closes it once its condition reads cleared);
+* the approval is derived positively: the change is `standard`, or has the auto-normal shape
+  (normal, tagged `auto-normal`, created by `operator`, not high risk, a rollback plan, no
+  rejection). Anything else is left pending. An intent with no recorded `auto` lane is
+  refused and left alone;
 * a stale catalog generation, or a classification hardened since the proposal, refuses
   and leaves the intent PROPOSED (a proposal under the new catalog is a new intent);
 * the target (`target_known`) and the ratified action binding (`action_allowed`) are
   re-checked when the caller supplies them (`skoperator honor-pending` does);
-* a change with no human behind it must carry fresh evidence stored on the intent,
-  against the real clock, and is voided if that fails (stored evidence only ages);
+* the intent must carry fresh evidence stored on it, against the real clock, and is voided
+  if that fails (stored evidence only ages);
 * cooldown and an open circuit are suppression, not failure: a refusal with nothing
   recorded against the retry budget and nothing rolled back;
 * the owning app is re-observed, and only a DEFINITE firing status counts. `Unknown` is
   not "still firing" (it is for alerting, not for permission to act), a missing
   condition or observer is not, and the re-observation must itself carry a fresh source
-  time. A definitely cleared condition voids an auto-lane intent and leaves a
-  human-approved one pending. A human-approved change skips the age limit, because
-  approval legitimately arrives long after the observation, but never the re-observation.
+  time. A definitely cleared condition closes the intent with the reason "condition cleared
+  before dispatch" and retires its change, so a recurrence needs a new proposal.
 
 An approval is spent by the run it authorizes, and taking it is a compare-and-swap. Under
 an exclusive per-change-id `flock` (shared by every dispatcher process on the host; it does
@@ -138,13 +160,11 @@ other outcome refuses before the actuator is called. The change then goes to `de
 after a verified run or `failed` after a failed one, so the ITIL record agrees with the
 ledger.
 
-An escalate-lane proposal that already has an open escalate-lane intent (same app, action,
-target, condition and catalog generation, its change still open) reuses it: the loop does not
-draft another change and intent on every pass. One bad intent never crashes a dispatch pass:
+One bad intent never crashes a dispatch pass:
 a ledger error while recording an authorization is returned as an `error:` outcome and the
 pass carries on. An intent a crash stranded in AUTHORIZED or EXECUTING (older than ten
 minutes on the real clock) is escalated at the start of the next loop or dispatch pass: FAILED
-then ESCALATED, its change marked `failed`, a decision parked for a human and an alert
+then ESCALATED, its change marked `failed`, a report-only decision parked and an alert
 emitted. It is never re-run, because the actuator may or may not have run.
 
 An injected clock must be timezone-aware; a naive one is refused, never read as local
@@ -231,8 +251,7 @@ TO NONE: until an operator designates a node, nothing actuates anywhere. Other n
 observe, propose and park decisions, and that is ALL they do: the loop on a node that is not the
 designated actuator does not sweep (stranded, stale auto-lane, cleared-episode closing) and does
 not draft changes or ledger intents, because the ledger and ITIL records are replicated and its
-clock or its local view of a condition could escalate the actuator's live intent or close a
-human-approved one the actuator is about to honor. The manual act verbs (`skcapstone cmdb operator act`,
+clock or its local view of a condition could escalate the actuator's live intent. The manual act verbs (`skcapstone cmdb operator act`,
 the per-adapter act functions) are separate entry points and are not covered by this rule.
 
 **Locks are node-local.** The per-change lock and the single-flight lock live in a node-local
@@ -256,10 +275,12 @@ whose change is still only `approved` has that change retired (rejected, then cl
 a bookkeeping error (the ledger, the ITIL record) is recorded as an `error:` outcome with an
 alert and the fix is left in place, in both the loop and the dispatcher.
 
-**Episodes close in the loop.** The loop closes every open escalate-lane intent (and retires
-its change) when its condition reads definitely cleared in this pass, so a human vote cast
-later cannot ride the next episode. A clear-and-refire that falls entirely between two
-passes is indistinguishable from one episode, because the loop only knows what it observed.
+**Episodes close in the loop.** The loop closes every leftover escalate-lane intent (and
+retires its change) when its condition reads definitely cleared in this pass, and marks a
+resolved decision's episode ended, so the next escalation gets a new record. This runs on
+every node that keeps its wiring, not only an armed actuator, so a report-only deployment
+raises later episodes too. A clear-and-refire that falls entirely between two passes is
+indistinguishable from one episode, because the loop only knows what it observed.
 The next loop or dispatch pass also voids auto-lane intents older than one pass (twice the
 runtime budget), the leftovers of a killed loop, before doing anything else.
 
@@ -275,34 +296,25 @@ every physical action goes through the ITIL lane. The inline lane remains availa
 annotation-only deployment (`--execute` without `--honor`, which actuates nothing), for tests
 and for the drill.
 
-**A non-actuator's decision cannot shadow the actuator's.** A node that is not the designated
-actuator still parks the decision so a human can see it, but without an ITIL change. Because the
-decisions store is replicated and ids are content-based, `decisions.park` upgrades a PENDING
-record that has no bound option to the actuator's bound option (it keeps its id and birth time);
-without that upgrade the actuator's bound park would be skipped and
-`resolve_decision(approve=True)` would raise for good. It never replaces a bound record,
-downgrades one, or touches a resolved one, and it only ever
-upgrades when the bound options are for the SAME proposals (same count and, pairwise, the same
-app, condition, object and action); anything else is refused and logged. When the actuator
-reuses an open escalated intent it re-attaches that intent's change to the proposal before
-parking, so a decision an unbound copy replaced is healed on the next pass. Approving
-(`resolve_decision`) also checks that the chosen option's ITIL change carries the `op-bind` tag
-for that option's app, action and target, and refuses before any write otherwise.
-
-Known limit (it fails closed): the decisions store is replicated by Syncthing. A human
-rejection and an actuator upgrade made at the same moment on two nodes can conflict, and the
-rejected decision can then reappear as pending. It still needs a new human approval to do
-anything, so the worst case is a decision the human sees again.
+**Decisions are the same on every node.** Every node parks the same report-only record for
+an escalation (ids are content-based and nothing in it is bound to a change), so a replicated
+copy from another node is the same record, not a rival. The decisions store is replicated by
+Syncthing, so a rejection made at the same moment as another node's park can conflict and the
+record can reappear as pending. Approving it still refuses, so the worst case is a record the
+human acknowledges again.
 
 ## Human CAB approvals: pinned approver keys and the arming runbook (card bada5c86)
 
+**Scope.** ATLAS never actuates on a human vote (see "Two gates"); the ATLAS dispatcher only
+uses this to REFUSE an intent whose change carries one. What follows gates the governed CMDB
+apply and the trustee rotate guard.
+
 **What counts as a human approval.** A CAB vote authorizes an actuation only when it stores
 the signed CapAuth grant it was cast under (`skcapstone itil cab authorize`, then
-`itil cab vote --authorization` or `skoperator decide --approve --authorization`) and that
-grant verifies against a key in the pinned approver file
-`~/.config/skcapstone/cab-approvers.json`. The check runs at every actuation gate (the ATLAS
-dispatcher, the governed CMDB apply gate and the trustee rotate guard, all through
-`skcapstone.cab_approval`) and again in the skcoord fold (`skcoord.cab_authorization`). It
+`itil cab vote --authorization`) and that grant verifies against a key in the pinned approver
+file `~/.config/skcapstone/cab-approvers.json`. The check runs at the governed CMDB apply gate
+and the trustee rotate guard (through `skcapstone.cab_approval`) and again in the skcoord fold
+(`skcoord.cab_authorization`). It
 never reads `CAPAUTH_HOME` or the caller's own CapAuth profile. Votes by the change's drafter,
 creator or managed-by owner, by the operator seat (`operator`, `atlas`, device seats) or by a
 placeholder (`human`, `unknown`, empty) never count. The approval age limit is measured from the
@@ -366,17 +378,10 @@ Nothing here lifts the freeze. Arming generic actuation is a separate decision.
    cab vote <change> --authorization <file> --target <target> --scope <scope>`. Confirm with
    `cab_approval.approval_basis` that the change now reads `human`.
 
-   For a change ATLAS parked as a decision, approve through `skoperator decide <decision>
-   --approve --authorization <file> --target <target> --scope <scope>` instead. There the grant
-   must name exactly the decision's mutation: `--target` (and the grant's target) is the
-   decision option's `object`, and `--scope` is the change's binding tag,
-   `op-bind:<app>|<action>|<object>` with each part percent-escaped (the `op-bind:` tag on the
-   change). `decide` refuses any other pair before it redeems the grant, so create the grant
-   with the same two values.
+   ATLAS decisions cannot be approved at all; ratify the action instead.
 
-   A human approval is usable for a day from the grant's signed `issued_at` at every gate (the
-   dispatcher's limit is configurable up to seven days; the CMDB gate and the trustee guard use
-   the default), so vote close to when the change should run.
+   A human approval is usable for a day from the grant's signed `issued_at` at both gates, so
+   vote close to when the change should run.
 
 4. **Rollback:** move the pin file away. Every gate then fails closed (no human approvals);
    auto approvals are unaffected.
@@ -385,7 +390,7 @@ Nothing here lifts the freeze. Arming generic actuation is a separate decision.
 
 Everything here runs as the `cbrd21` account, which has passwordless sudo. What the pin does
 stop is a vote that no pinned key signed: a vote cast through the sanctioned surfaces (the MCP
-tool, the CLI, `skoperator decide`) without a grant, a hand-written or edited vote file, and a
+tool, the CLI) without a grant, a hand-written or edited vote file, and a
 vote synced in from another node. A genuine signed vote is bound to the change and voter it was
 cast for, so a copy of its file under another change's or another voter's name counts for
 nothing, and at the gates it expires a day after its `issued_at`.
