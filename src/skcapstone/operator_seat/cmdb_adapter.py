@@ -17,7 +17,31 @@ from typing import Callable
 from ..fleet import actuation, store
 from . import adapter
 
+#: The conditions this adapter observes. ``loop.CONDITION_SCHEMAS`` is built from
+#: this module attribute: without it the schema is empty and the loop drops every
+#: cmdb observation. All three are health-type (they fire when False), so
+#: PROBLEM_WHEN_TRUE stays empty.
+CONDITIONS = [
+    "CmdbReconcileFresh",
+    "CmdbLastScanComplete",
+    "CmdbAuditClean",
+]
+
 PROBLEM_WHEN_TRUE = frozenset()
+
+#: Which conditions make each action eligible to be proposed. The shadow is the
+#: remedy for stale or incomplete reconcile evidence. Neither condition is
+#: remedied by a shadow when CmdbAuditClean is False (that is store corruption a
+#: human repairs). Apply is non-standard and irreversible: no condition makes it
+#: eligible for any autonomous lane, it runs only through ``cmdb_act`` and
+#: ``_apply_gate`` with a signed human vote. Enforcement of eligibility is the
+#: existing gate (loop._operatorapp_allows: condition in the app spec's
+#: conditions AND action ratified); this table is the declared intent it is
+#: tested against.
+ACTION_CONDITIONS: dict[str, tuple[str, ...]] = {
+    "run-cmdb-shadow": ("CmdbReconcileFresh", "CmdbLastScanComplete"),
+    "apply-cmdb-reconcile": (),
+}
 _MAX_ARTIFACT_AGE = timedelta(hours=4)
 _SHADOW_UNIT = "skcapstone-cmdb-reconcile-shadow.service"
 _APPLY_UNIT = "skcapstone-cmdb-reconcile-network.service"
@@ -49,7 +73,7 @@ def cmdb_explain() -> dict:
     """Return the CMDB operator contract."""
     return {
         "kinds": ["cmdb"],
-        "conditions": ["CmdbReconcileFresh", "CmdbLastScanComplete", "CmdbAuditClean"],
+        "conditions": list(CONDITIONS),
         "actions": list(_ACTIONS),
     }
 
@@ -274,4 +298,11 @@ def cmdb_act(
     return {"performed": bool(ok), "action": action, "unit": units[action]}
 
 
-__all__ = ["PROBLEM_WHEN_TRUE", "cmdb_act", "cmdb_explain", "observe"]
+__all__ = [
+    "ACTION_CONDITIONS",
+    "CONDITIONS",
+    "PROBLEM_WHEN_TRUE",
+    "cmdb_act",
+    "cmdb_explain",
+    "observe",
+]

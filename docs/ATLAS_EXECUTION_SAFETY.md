@@ -47,6 +47,32 @@ decisions store is replicated, and a healthy node's view must not end another no
 (which would re-park and re-notify on every flap). `Unknown` never ends an episode. Loop-drafted changes are authored by `operator`, so auto-normal changes
 auto-approve at the fold as designed.
 
+## CMDB conditions and which action each makes eligible (card ff97f567)
+
+`cmdb_adapter.CONDITIONS` is the cmdb condition table, like every other adapter's. The loop
+builds its condition schema from it (`loop.CONDITION_SCHEMAS`), and the schema decides which
+observed conditions reach the brief at all. Before this card the table did not exist, the cmdb
+schema was empty, and every cmdb observation was dropped, so `CmdbReconcileFresh` going False
+never fired anything. All three are health-type (they fire when False); `PROBLEM_WHEN_TRUE`
+is empty.
+
+| Condition | Makes eligible | Notes |
+|---|---|---|
+| `CmdbReconcileFresh` | `run-cmdb-shadow` | newest verified artifact older than 4 h, or none (Unknown) |
+| `CmdbLastScanComplete` | `run-cmdb-shadow` | newest verified artifact incomplete |
+| `CmdbAuditClean` | none | relationship audit findings are store damage a human repairs |
+| (any) | `apply-cmdb-reconcile`: none | non-standard and irreversible, never eligible for an autonomous lane |
+
+The declared mapping is `cmdb_adapter.ACTION_CONDITIONS`. Enforcement is the existing gate,
+unchanged: a proposal passes only if its condition is in the app's OperatorApp `conditions`
+(derived from `CONDITIONS`) and its action is in `ratifiedStandardActions`. A condition outside
+the table is refused (`binding_denied`, escalated and report-only). `run-cmdb-shadow` is a
+standard, reversible, low blast radius action, so once a human ratifies it a firing
+`CmdbReconcileFresh` plans as auto; whether it actually runs still depends on the freeze, the
+honor adapter and the evidence age, as for any app. `apply-cmdb-reconcile` stays
+non-standard: it always plans as an escalation (report-only), and the manual apply goes through
+`cmdb_act` and `_apply_gate` with a signed human vote, which this table does not touch.
+
 ## Execution path
 
 The execution path now follows this fail-closed sequence:
