@@ -19,6 +19,7 @@ from ..fleet import signing, store
 from ..fleet.paths import default_paths
 from . import (
     action_ledger,
+    actuator,
     adapter,
     brain,
     brief,
@@ -785,6 +786,7 @@ def _run_once(
                     max_evidence_age_s=max_evidence_age_s,
                     max_approval_age_s=max_approval_age_s,
                     target_known=target_known,
+                    deadline=deadline,
                     action_allowed=(
                         (
                             lambda proposal: _operatorapp_allows(
@@ -893,7 +895,7 @@ def _run_once(
                     raise RuntimeError("actuator omitted performed=True proof")
                 if verify_required:
                     verified, reason = _verify_postcondition(
-                        adapters, prop, paths, now_iso, ptypes
+                        adapters, prop, paths, now_iso, ptypes, result=result, deadline=deadline
                     )
                     if not verified:
                         raise RuntimeError(reason)
@@ -936,9 +938,13 @@ def _run_once(
                 # The kill switch REFUSING is not a fault of the action and stays away
                 # from the circuit breaker; a real failure that merely coincides
                 # with a freeze is still a failure and still counts.
+                # A refusal before anything physical ran (actuator.NotAttemptedError: an
+                # unresolvable fleet target) is not an attempt, exactly as in the dispatch
+                # lane: it never feeds the breaker and is never rolled back.
+                attempted = attempt_started and not isinstance(exc, actuator.NotAttemptedError)
                 if (
                     execution_state is not None
-                    and attempt_started
+                    and attempted
                     and not dispatch.is_freeze_refusal(exc)
                 ):
                     try:
@@ -962,7 +968,7 @@ def _run_once(
                     )
                 rollback_result: Any = None
                 rollback_error: Exception | None = None
-                if attempt_started and rollback_fn is not None and prop.get("rollback"):
+                if attempted and rollback_fn is not None and prop.get("rollback"):
                     try:
                         rollback_result = rollback_fn(prop, pl["classification"], result)
                         rollback_performed = (

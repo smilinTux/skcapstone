@@ -63,8 +63,10 @@ from ..itil import ITILManager
 from . import (
     act_dispatch,
     action_ledger,
+    actuator,
     decisions,
     dispatch,
+    fleet_adapter,
     loop,
     node_local,
     policy,
@@ -2988,6 +2990,152 @@ def scenario_actuator_rule_decided_once_and_decisions_not_shadowed(
     )
 
 
+def _drill_sign(data: bytes) -> str:
+    import hashlib
+
+    return "drill-sig-" + hashlib.sha256(data).hexdigest()
+
+
+def _drill_verify(data: bytes, signature: str) -> bool:
+    return signature == _drill_sign(data)
+
+
+def scenario_fleet_restart_target_is_bound(ctx: DrillContext) -> ScenarioResult:
+    """Card 21b01d01: the fleet honor path restarts only the approved, signed, local unit.
+
+    (a) A typed rollback the brain attached to object A that names object B (whose
+    ``spec.unit`` is ``default.target``), or names that unit directly, is refused before
+    systemctl. (b) An approved change for an object placed on ANOTHER node is refused in
+    the dispatcher's preflight (``fleet_target_known`` uses the resolver): nothing is
+    authorized, EXECUTING is never written, the change is not spent, systemctl never runs.
+    Spec and placement are signed with a drill-only key and verified with
+    ``converge.verify_desired``, exactly as the production path verifies them.
+    """
+    slug = "s30-fleet-target-bound"
+    here = self_node_name()
+    operator = _human_writer(here)
+    scheduler = store.Writer(role="scheduler", node=here, identity="capauth:drill@scratch")
+
+    def service(name: str, unit: str, node: str) -> None:
+        store.write_spec(
+            ctx.paths, "service", name, {"unit": unit}, writer=operator, signer=_drill_sign
+        )
+        store.write_placement(
+            ctx.paths,
+            "service",
+            name,
+            node=node,
+            reason="drill",
+            writer=scheduler,
+            signer=_drill_sign,
+        )
+
+    service("drill-fleet-a", "drill-fleet-a.service", here)
+    service("drill-fleet-b", "default.target", here)
+    service("drill-fleet-remote", "drill-fleet-remote.service", "drill-other-node")
+
+    calls: list[list[str]] = []
+
+    def runner(cmd: list[str]) -> subprocess.CompletedProcess:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    rollback_fn = act_dispatch.build_rollback_fn(ctx.paths, runner=runner, verifier=_drill_verify)
+    refusals: dict[str, str] = {}
+    for label, rollback in (
+        ("other_object", {"action": "restart_service", "object": "drill-fleet-b"}),
+        ("other_unit", {"action": "restart_service", "unit": "default.target"}),
+    ):
+        prop = {"action": "restart_service", "object": "drill-fleet-a", "rollback": rollback}
+        try:
+            rollback_fn(prop, {"change_class": "standard"}, None)
+            refusals[label] = "NOT REFUSED"
+        except actuator.NotAttemptedError as exc:
+            refusals[label] = str(exc)
+    rollback_ok = calls == [] and all(v != "NOT REFUSED" for v in refusals.values())
+
+    itil = ITILManager(ctx.itil_home)
+    ledger = ctx.scenario_ledger(slug)
+    chg = itil.propose_change(
+        title="restart drill-fleet-remote",
+        change_type="standard",
+        risk="low",
+        rollback_plan="restart again",
+        created_by="atlas",
+        tags=["operator", "op-bind:fleet|restart_service|drill-fleet-remote"],
+    )
+    created = datetime.now(timezone.utc) - timedelta(seconds=5)
+    intent = action_ledger.ActionIntent(
+        condition_fingerprint="fp-drill-fleet-remote",
+        application="fleet",
+        target_kind="CI",
+        target_id="drill-fleet-remote",
+        action="restart_service",
+        catalog_generation="gen-0",
+        created_at=created,
+        itil_change_id=chg.id,
+        rollback={},
+        condition_type="Ready",
+    )
+    ledger.create(intent, actor="atlas-p32-drill")
+    ledger.append(
+        intent.intent_id,
+        action_ledger.ActionState.DIAGNOSED,
+        occurred_at=created,
+        actor="atlas-p32-drill",
+    )
+    ledger.append(
+        intent.intent_id,
+        action_ledger.ActionState.PROPOSED,
+        occurred_at=created,
+        actor="atlas-p32-drill",
+        detail={
+            "disposition": "auto",
+            "evidence": {"source": "drill:fleet", "observed_at": _now_iso()},
+        },
+    )
+    outcome = dispatch.dispatch_intent(
+        ctx.paths,
+        ledger,
+        itil,
+        intent.intent_id,
+        adapters={"fleet": fleet_adapter.fleet_observe},
+        problem_types=set(fleet_adapter.PROBLEM_WHEN_TRUE),
+        apply_fn=act_dispatch.build_apply_fn(
+            ctx.paths, _now_iso(), runner=runner, itil=itil, verifier=_drill_verify
+        ),
+        execution_state=ctx.scenario_state(slug),
+        now_iso=_now_iso(),
+        actor="atlas-p32-drill",
+        target_known=lambda p: fleet_adapter.fleet_target_known(
+            ctx.paths, p, verifier=_drill_verify
+        ),
+        postcondition_sleep=lambda _s: None,
+    ).outcome
+    lineage = [e.state.value for e in ledger.events(intent.intent_id)]
+    change_status = next(c.status.value for c in itil.list_changes() if c.id == chg.id)
+    remote_ok = (
+        outcome.startswith("refused: ")
+        and "authorized" not in lineage
+        and "executing" not in lineage
+        and change_status == "approved"
+        and calls == []
+    )
+    return ScenarioResult(
+        name="30. fleet restart is bound to the approved, local object",
+        passed=rollback_ok and remote_ok,
+        evidence={
+            "rollback_refusals": refusals,
+            "remote_outcome": outcome,
+            "remote_lineage": lineage,
+            "remote_change_status": change_status,
+            "systemctl_calls": calls,
+        },
+        note="a rollback naming another object or unit is refused, and an object placed on "
+        "another node is refused in preflight without spending the change (card 21b01d01)",
+    )
+
+
 SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_baseline_self_heal,
     scenario_performed_false_actdispatch_gate,
@@ -3020,6 +3168,7 @@ SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_one_approval_one_actuation_per_episode,
     scenario_single_actuator_live_dispatch_and_future_votes,
     scenario_actuator_rule_decided_once_and_decisions_not_shadowed,
+    scenario_fleet_restart_target_is_bound,
 ]
 
 

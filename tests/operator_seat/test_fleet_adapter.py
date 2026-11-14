@@ -132,10 +132,19 @@ def test_fleet_target_known_true_for_existing_object(tmp_path, monkeypatch):
     from skcapstone.fleet import store
 
     paths, op = _enroll(tmp_path, monkeypatch)
+    store.write_spec(
+        paths, "cronjob", "nightly", {"schedule": "@daily", "command": "echo"}, writer=op
+    )
+    assert (
+        fleet_adapter.fleet_target_known(paths, {"action": "rerun_cronjob", "object": "nightly"})
+        is True
+    )
+    # restart_service is judged by resolve_restart_target (card 21b01d01): an unplaced,
+    # unsigned service is not a target this seat would restart.
     store.write_spec(paths, "service", "svc-x", {"unit": "svc-x.service"}, writer=op)
     assert (
         fleet_adapter.fleet_target_known(paths, {"action": "restart_service", "object": "svc-x"})
-        is True
+        is False
     )
 
 
