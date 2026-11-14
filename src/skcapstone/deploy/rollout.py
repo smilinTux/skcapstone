@@ -546,8 +546,10 @@ def apply_tools_only(
     log(f"restart: {', '.join(units) or 'nothing'}")
     problems = restart_units(units, runner)
     if not problems:
+        problems = smoke(manifest, units, paths.venv_link, runner, node)
+    if not problems:
         return Result(ok=True, release=None, restarted=units)
-    log("restart failed: restoring the previous tools")
+    log("restart or smoke failed: restoring the previous tools")
     tools.undo(paths.tools_root or default_root(), unit_dir)
     _run(["systemctl", "--user", "daemon-reload"], runner, timeout=60)
     restart_units(units, runner)
