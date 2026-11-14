@@ -81,6 +81,8 @@ _ADAPTER_MODULES = (
     skos_adapter,
 )
 
+_ADAPTER_MODULE_BY_APP = dict(zip(ADAPTERS, _ADAPTER_MODULES))
+
 #: Every condition type that indicates a PROBLEM when its status is "True"; the
 #: rest are health types that indicate a problem when "False" (brief.build_brief).
 #: The fleet's set is the reference, but polarity belongs to whichever adapter
@@ -136,6 +138,12 @@ def _operatorapp_allows(paths, proposal: dict, *, require_signature: bool = Fals
         if not supplied_generation or str(supplied_generation) != expected_generation:
             return False
     spec = (record or {}).get("spec") or {}
+    # An adapter that declares ACTION_CONDITIONS (card ff97f567) also says which
+    # conditions make each action eligible; an action with no row, or an empty
+    # one, is eligible for none. Adapters without the table behave as before.
+    table = getattr(_ADAPTER_MODULE_BY_APP.get(app), "ACTION_CONDITIONS", None)
+    if table is not None and condition not in table.get(action, ()):
+        return False
     return condition in spec.get("conditions", []) and action in spec.get(
         "ratifiedStandardActions", []
     )
