@@ -30,6 +30,12 @@ Example::
       some-host: {packages: [skcapstone, skmemory]}
     allow_exec_in_tree: []
     carry_bin: []           # hand-placed bin/ files copied from the live venv
+    tools:                  # scripts units run, exported from a commit on main
+      skchat-scripts:
+        package: skchat-sovereign      # repo (and default ref) from the package
+        ref: 4f588c8                   # optional: a commit on the default branch
+        checkout: ~/clawd/skcapstone-repos/skchat   # the tree units used to run
+        paths: [scripts]               # optional: export only these paths
 """
 
 from __future__ import annotations
@@ -101,6 +107,48 @@ class PackageSpec(BaseModel):
         return f"{name} @ {url}"
 
 
+class ToolSpec(BaseModel):
+    """Non-packaged files units execute (scripts, a small server), released.
+
+    The tool is exported with ``git archive`` from ``ref`` (a tag or commit
+    that must be on the default branch) into
+    ``~/.local/share/sk-tools/<name>/<sha>`` and published as ``current``.
+    Every user unit that names a path under ``checkout`` (restricted to
+    ``paths`` when given) gets a managed drop-in pointing it at the export
+    instead, so no unit runs from a working tree.
+
+    Attributes:
+        package: Take ``repo``, ``branch`` and the default ``ref`` from this
+            manifest package (its release tag).
+        repo: ``owner/name`` on GitHub, when there is no package.
+        url: Any git URL (a private forge); overrides ``repo``.
+        ref: Tag or commit to export. Defaults to the package release tag.
+        branch: The default branch the ref must be on.
+        checkout: Where the working tree sits on nodes (``~`` allowed).
+        paths: Repository paths to export and rewrite; empty means all.
+        reason: Why this is a tool export and not a package entry point.
+    """
+
+    package: Optional[str] = None
+    repo: Optional[str] = None
+    url: Optional[str] = None
+    ref: Optional[str] = None
+    branch: Optional[str] = None
+    checkout: str
+    paths: list[str] = Field(default_factory=list)
+    reason: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _has_source(self) -> "ToolSpec":
+        if not (self.package or self.repo or self.url):
+            raise ValueError("a tool needs a package, repo or url")
+        if not self.package and not self.ref:
+            raise ValueError("a tool without a package needs a ref")
+        if any(p.startswith("/") or ".." in Path(p).parts for p in self.paths):
+            raise ValueError("tool paths are relative to the repository root")
+        return self
+
+
 class ServiceSpec(BaseModel):
     """A user unit and the packages whose change means it must restart."""
 
@@ -119,6 +167,7 @@ class NodeProfile(BaseModel):
     services: Union[Literal["all"], list[str]] = "all"
     lock: Optional[list[str]] = None
     carry_bin: Optional[list[str]] = None
+    tools: Union[Literal["all"], list[str]] = "all"
 
 
 class Manifest(BaseModel):
@@ -135,6 +184,7 @@ class Manifest(BaseModel):
     nodes: dict[str, NodeProfile] = Field(default_factory=lambda: {"default": NodeProfile()})
     allow_exec_in_tree: list[str] = Field(default_factory=list)
     carry_bin: list[str] = Field(default_factory=list)
+    tools: dict[str, ToolSpec] = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
 
@@ -157,6 +207,13 @@ class Manifest(BaseModel):
                 missing = [p for p in prof.packages if p not in known]
                 if missing:
                     raise ValueError(f"node {node} names unknown package(s): {missing}")
+            if prof.tools != "all":
+                missing = [t for t in prof.tools if t not in self.tools]
+                if missing:
+                    raise ValueError(f"node {node} names unknown tool(s): {missing}")
+        for name, tool in self.tools.items():
+            if tool.package and tool.package not in known:
+                raise ValueError(f"tool {name} names unknown package {tool.package}")
         return self
 
     def profile(self, node: Optional[str] = None) -> NodeProfile:
@@ -196,6 +253,23 @@ class Manifest(BaseModel):
         """The hand-placed bin/ files to carry on *node*."""
         prof = self.profile(node)
         return list(prof.carry_bin if prof.carry_bin is not None else self.carry_bin)
+
+    def tools_for(self, node: Optional[str] = None) -> dict[str, ToolSpec]:
+        """The tool exports this node gets."""
+        prof = self.profile(node)
+        if prof.tools == "all":
+            return dict(self.tools)
+        return {n: self.tools[n] for n in prof.tools}
+
+    def tool_source(self, name: str) -> tuple[str, str, str]:
+        """``(git url, ref, default branch)`` for tool *name*."""
+        tool = self.tools[name]
+        pkg = self.packages.get(tool.package) if tool.package else None
+        repo = tool.repo or (pkg.repo if pkg else None)
+        url = tool.url or f"https://github.com/{repo}.git"
+        ref = tool.ref or (pkg.release_tag() if pkg else "")
+        branch = tool.branch or (pkg.branch if pkg else "main")
+        return url, ref, branch
 
 
 def load_manifest(path: Path) -> Manifest:

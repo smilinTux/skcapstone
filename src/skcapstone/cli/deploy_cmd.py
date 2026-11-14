@@ -142,6 +142,33 @@ def register_deploy_commands(main: click.Group) -> None:
             )
             sys.exit(1)
 
+    @deploy.command("tools")
+    @manifest_opt
+    @ref_opt
+    @node_opt
+    @click.option("--no-restart", is_flag=True, help="Export and rewrite only.")
+    def tools_cmd(manifest_path, ref, node, no_restart) -> None:
+        """Roll only the manifest's tool exports (no venv rebuild)."""
+        from ..deploy.rollout import apply_tools_only
+
+        manifest, _mid = _manifest(manifest_path, ref)
+        res = apply_tools_only(
+            manifest,
+            _paths(),
+            node=node,
+            restart=not no_restart,
+            log=lambda m: console.print(f"[dim]{m}[/]"),
+        )
+        for p in res.problems:
+            console.print(f"  [red]x[/] {p}")
+        if res.ok:
+            console.print(
+                f"[green]tools deployed[/]; restarted: {', '.join(res.restarted) or '-'}"
+            )
+            return
+        console.print("[red]tools not deployed[/]" + (" (restored)" if res.rolled_back else ""))
+        sys.exit(1)
+
     @deploy.command("rollback")
     @manifest_opt
     @node_opt
@@ -199,6 +226,7 @@ def register_deploy_commands(main: click.Group) -> None:
                     {
                         "findings": report.lines(),
                         "unknown": report.unknown,
+                        "dormant": report.dormant,
                         "digest": report.digest(),
                     },
                     indent=2,
@@ -209,6 +237,11 @@ def register_deploy_commands(main: click.Group) -> None:
                 console.print(f"  {line}")
             for line in report.unknown:
                 console.print(f"  [yellow]unknown:[/] {line}")
+            if report.dormant:
+                console.print(
+                    f"  [dim]{len(report.dormant)} line(s) from units nothing can start "
+                    "(not findings; --json lists them)[/]"
+                )
             console.print(f"{len(report.lines())} finding(s)")
         if alert:
             outcome = alert_on_change(report, paths.state_dir / "drift-alert.json")

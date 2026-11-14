@@ -8,6 +8,8 @@ changes:
 2. build a NEW venv next to the live one, non-editable, from the manifest;
 3. verify that venv in place (imports, console-script targets, ``pip check``,
    no executable lost from ``bin/`` compared with the live venv);
+3b. export the manifest's tools from main and point units at them (see
+   :mod:`skcapstone.deploy.tools`);
 4. switch the deploy path (``~/.skenv``) to it with one atomic rename;
 5. restart only the units whose packages changed;
 6. smoke-test; on any failure switch back and restart the same units.
@@ -28,8 +30,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from .inspect import list_dists, normalize
+from .inspect import default_unit_dir, list_dists, normalize
 from .manifest import Manifest
+from .tools import ToolError, ToolsChange, apply_tools, default_root, restart_targets
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
@@ -71,6 +74,7 @@ class Paths:
     venv_link: Path
     releases: Path
     state_dir: Path
+    tools_root: Optional[Path] = None
 
     @classmethod
     def default(cls, home: Optional[Path] = None) -> "Paths":
@@ -80,6 +84,7 @@ class Paths:
             venv_link=home / ".skenv",
             releases=home / ".skenv-releases",
             state_dir=home / ".local" / "state" / "sk-deploy",
+            tools_root=home / ".local" / "share" / "sk-tools",
         )
 
     @property
@@ -463,6 +468,16 @@ def apply(
     problems = verify_venv(manifest, dest, live, runner, node, allow_missing_bin)
     if problems:
         return Result(ok=False, release=dest, problems=problems)
+    tools = ToolsChange()
+    unit_dir = default_unit_dir(Path.home())
+    if manifest.tools_for(node):
+        log("tools: export from main, publish, rewrite units")
+        try:
+            tools = apply_tools(
+                manifest, node, paths.state_dir, paths.tools_root, unit_dir, runner=runner, log=log
+            )
+        except ToolError as exc:
+            return Result(ok=False, release=dest, problems=[str(exc)])
     log(f"switch: {paths.venv_link} -> {dest}")
     previous = switch(paths, dest)
     state = load_state(paths)
@@ -478,6 +493,7 @@ def apply(
     )
     save_state(paths, state)
     units = plan.restarts if live else list(manifest.services_for(node))
+    units += [u for u in restart_targets(tools.units, runner) if u not in units]
     if not restart:
         return Result(ok=True, release=dest, previous=previous)
     log(f"restart: {', '.join(units) or 'nothing'}")
@@ -486,6 +502,9 @@ def apply(
     if not problems:
         return Result(ok=True, release=dest, previous=previous, restarted=units)
     log("smoke failed: switching back")
+    if not tools.empty:
+        tools.undo(paths.tools_root or default_root(), unit_dir)
+        _run(["systemctl", "--user", "daemon-reload"], runner, timeout=60)
     if previous is not None:
         switch(paths, previous)
         restart_units(units, runner)
@@ -503,6 +522,36 @@ def apply(
         problems=problems,
         rolled_back=True,
     )
+
+
+def apply_tools_only(
+    manifest: Manifest,
+    paths: Paths,
+    runner: Runner = subprocess.run,
+    node: Optional[str] = None,
+    restart: bool = True,
+    log: Callable[[str], None] = lambda _m: None,
+) -> Result:
+    """Roll only the tool exports (no venv rebuild), undoing them on failure."""
+    unit_dir = default_unit_dir(Path.home())
+    try:
+        tools = apply_tools(
+            manifest, node, paths.state_dir, paths.tools_root, unit_dir, runner=runner, log=log
+        )
+    except ToolError as exc:
+        return Result(ok=False, release=None, problems=[str(exc)])
+    if tools.empty or not restart:
+        return Result(ok=True, release=None)
+    units = restart_targets(tools.units, runner)
+    log(f"restart: {', '.join(units) or 'nothing'}")
+    problems = restart_units(units, runner)
+    if not problems:
+        return Result(ok=True, release=None, restarted=units)
+    log("restart failed: restoring the previous tools")
+    tools.undo(paths.tools_root or default_root(), unit_dir)
+    _run(["systemctl", "--user", "daemon-reload"], runner, timeout=60)
+    restart_units(units, runner)
+    return Result(ok=False, release=None, restarted=units, problems=problems, rolled_back=True)
 
 
 def rollback(paths: Paths, units: list[str], runner: Runner = subprocess.run) -> Result:
