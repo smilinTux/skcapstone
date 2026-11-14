@@ -84,7 +84,7 @@ rebuild) then, for each tool:
 2. writes `git archive` of it to `~/.local/share/sk-tools/<name>/<sha12>` and
    switches `<name>/current` to it atomically;
 3. gives every user unit that names a path under `checkout` one managed drop-in,
-   `<unit>.d/zz-sk-deploy-tools.conf`, re-stating its `ExecStart*`,
+   `<unit>.d/zzzz-sk-deploy-tools.conf` (named to sort after every hand-written drop-in, `zz-*` included), re-stating its `ExecStart*`,
    `WorkingDirectory` and `Environment` lines with `current` in place of the
    checkout. Unit files are never edited. Deleting the drop-in reverts a unit;
    removing the tool from the manifest removes its drop-ins on the next apply;

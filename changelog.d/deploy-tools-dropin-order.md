@@ -1,0 +1,1 @@
+- `skcapstone deploy` names its managed unit drop-in `zzzz-sk-deploy-tools.conf` so it sorts after hand-written `zz-*` drop-ins (one of those silently put a unit back on its checkout); the old name is migrated on the next apply.

@@ -273,3 +273,28 @@ def test_checkout_list_rewrites_every_location(tmp_path, origin):
     want = tools.desired_dropins(units, pairs)
     assert set(want) == {"relay.service", "alt.service"}
     assert "%h/.local/share/sk-tools/thing/current/scripts/relay.py" in want["alt.service"]
+
+
+def test_managed_dropin_wins_over_a_late_hand_dropin(tmp_path, origin):
+    from skcapstone.deploy.inspect import _unit_settings
+
+    home, units, manifest = _setup(tmp_path, origin)
+    (units / "relay.service.d").mkdir()
+    (units / "relay.service.d/zz-skenv-call.conf").write_text(
+        f"[Service]\nExecStart=\nExecStart=/opt/py {home}/src/thing/scripts/relay.py\n"
+    )
+    _apply(tmp_path, home, units, manifest)
+    effective = _unit_settings(units / "relay.service")["ExecStart"]
+    assert effective == ["/opt/py %h/.local/share/sk-tools/thing/current/scripts/relay.py"]
+
+
+def test_legacy_dropin_name_is_migrated_and_restored_on_undo(tmp_path, origin):
+    home, units, manifest = _setup(tmp_path, origin)
+    legacy = units / "relay.service.d" / "zz-sk-deploy-tools.conf"
+    legacy.parent.mkdir()
+    legacy.write_text("[Service]\nWorkingDirectory=/old\n")
+    change = _apply(tmp_path, home, units, manifest)
+    assert not legacy.exists() and (units / "relay.service.d" / tools.DROPIN).is_file()
+    change.undo(home / ".local/share/sk-tools", units)
+    assert legacy.read_text() == "[Service]\nWorkingDirectory=/old\n"
+    assert not (units / "relay.service.d" / tools.DROPIN).exists()
