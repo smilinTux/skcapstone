@@ -28,6 +28,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import tarfile
 import time
@@ -128,8 +129,16 @@ def export(
     root: Path,
     src_dir: Path,
     runner: Runner = subprocess.run,
+    setup: Optional[list[str]] = None,
+    setup_env: Optional[dict[str, str]] = None,
+    setup_timeout: int = 1800,
 ) -> Path:
     """Export *ref* of *url* to ``root/name/<sha12>`` and return that directory.
+
+    With *setup*, that argv runs inside the export at its final path (tools
+    that generate a launcher or a dependency environment keyed to their own
+    location), after extraction and before the export is marked complete. A
+    failed setup removes the export, so the next apply starts clean.
 
     Raises:
         ToolError: The mirror could not be fetched, the ref does not resolve,
@@ -167,8 +176,27 @@ def export(
     with tarfile.open(fileobj=io.BytesIO(data)) as tar:
         tar.extractall(staging, filter="data")
     meta = {"name": name, "url": url, "ref": ref, "sha": sha, "paths": paths, "at": time.time()}
-    (staging / _META).write_text(json.dumps(meta, indent=1), encoding="utf-8")
+    if not setup:
+        (staging / _META).write_text(json.dumps(meta, indent=1), encoding="utf-8")
+        os.rename(staging, dest)
+        return dest
+    if dest.exists():  # an earlier setup that never finished: no metadata, start over
+        shutil.rmtree(dest)
     os.rename(staging, dest)
+    argv = [os.path.expanduser(a) for a in setup]
+    env = {**os.environ, **{k: os.path.expanduser(v) for k, v in (setup_env or {}).items()}}
+    try:
+        proc = runner(
+            argv, cwd=str(dest), env=env, capture_output=True, timeout=setup_timeout, check=False
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise ToolError(f"{name}: setup could not run: {exc}") from exc
+    if proc.returncode != 0:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise ToolError(f"{name}: setup failed ({proc.returncode}): {_err(proc)}")
+    meta["setup"] = setup
+    (dest / _META).write_text(json.dumps(meta, indent=1), encoding="utf-8")
     return dest
 
 
@@ -295,7 +323,17 @@ def apply_tools(
     for name, tool in manifest.tools_for(node).items():
         url, ref, branch = manifest.tool_source(name)
         exports[name] = export(
-            name, url, ref, branch, tool.paths, root, state_dir / "tool-src", runner
+            name,
+            url,
+            ref,
+            branch,
+            tool.paths,
+            root,
+            state_dir / "tool-src",
+            runner,
+            setup=tool.setup,
+            setup_env=tool.setup_env,
+            setup_timeout=tool.setup_timeout,
         )
         change.exported[name] = exports[name].name
     pairs = rewrite_pairs(manifest, node, root, home)

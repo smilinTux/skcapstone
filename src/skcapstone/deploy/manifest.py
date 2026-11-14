@@ -128,6 +128,12 @@ class ToolSpec(BaseModel):
             when nodes keep it in different places.
         paths: Repository paths to export and rewrite; empty means all.
         reason: Why this is a tool export and not a package entry point.
+        setup: Optional argv run once inside the finished export, at its final
+            path, before it is published (``~`` expanded). For a tool that
+            provisions itself (dependencies, a generated launcher) from its
+            own tree. A failure removes the export and publishes nothing.
+        setup_env: Extra environment for ``setup`` (``~`` expanded).
+        setup_timeout: Seconds ``setup`` may run.
     """
 
     package: Optional[str] = None
@@ -138,6 +144,9 @@ class ToolSpec(BaseModel):
     checkout: Union[str, list[str]]
     paths: list[str] = Field(default_factory=list)
     reason: Optional[str] = None
+    setup: list[str] = Field(default_factory=list)
+    setup_env: dict[str, str] = Field(default_factory=dict)
+    setup_timeout: int = 1800
 
     @model_validator(mode="after")
     def _has_source(self) -> "ToolSpec":

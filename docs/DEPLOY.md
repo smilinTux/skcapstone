@@ -91,6 +91,27 @@ rebuild) then, for each tool:
 4. restarts the running units whose command changed, and on failure restores
    the previous `current` links and drop-ins.
 
+A tool that provisions itself (a generated launcher, a dependency environment
+keyed to its own location) declares `setup`: an argv run once inside the
+export at its final path `<name>/<sha12>`, after extraction and before the
+export is marked complete or published. A failed setup removes the export, so
+nothing is published and the next apply starts clean. Hermes is the example:
+
+```yaml
+tools:
+  hermes-agent:
+    repo: chefboyrdave21/hermes-agent   # the fork, patches carried on sk/<version>
+    ref: v0.23.1-sk.1
+    branch: sk/v0.23.1                  # the fork's default branch
+    checkout: ~/clawd/tools/hermes-agent
+    setup: ["/bin/sh", "setup-hermes.sh", "--runtime-only"]
+    setup_env: {HERMES_HOME: ~/.hermes}
+```
+
+`setup_timeout` (seconds, default 1800) bounds it. Each export gets its own
+setup output, so a rollback (`current` back to the previous export) needs no
+rebuild.
+
 ## Drift
 
 `skcapstone doctor` reports the `deploy:*` checks, and the
