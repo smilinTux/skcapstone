@@ -283,7 +283,7 @@ def verify_venv(
             for p in (live / "bin").iterdir()
             if p.name not in have
             and p.name not in allow_missing_bin
-            and not p.name.startswith(("activate", "python", "pip"))
+            and not p.name.startswith(("activate", "Activate", "python", "pip", "__pycache__"))
         )
         if lost:
             problems.append(f"bin/ would lose {len(lost)} executable(s): {', '.join(lost)}")
