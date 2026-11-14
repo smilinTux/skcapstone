@@ -100,8 +100,13 @@ def _apply_gate(
     *,
     itil_factory=None,
     manager_factory=None,
+    now_iso: str | None = None,
 ) -> str | None:
-    """Return a refusal reason unless the governed network-apply gate passes."""
+    """Return a refusal reason unless the governed network-apply gate passes.
+
+    A human approval is usable for ``DEFAULT_MAX_APPROVAL_AGE_SECONDS`` from its
+    signed grant's ``issued_at``, as in the dispatcher (card bada5c86).
+    """
     if not change_id.startswith("chg-"):
         return "a valid --change-id is required"
     if itil_factory is None:
@@ -114,21 +119,25 @@ def _apply_gate(
         return f"unknown ITIL change: {change_id}"
     if change.status.value not in {"approved", "scheduled"}:
         return f"ITIL change is {change.status.value}, not approved or scheduled"
-    approvals = [
-        vote
-        for vote in itil.get_cab_votes(change_id)
-        if vote.decision.value == "approved"
-        and (
-            vote.agent == "human"
-            or (
-                getattr(vote, "subject_role", "") in {"owner", "approver"}
-                and bool(getattr(vote, "subject_fingerprint", ""))
-                and bool(getattr(vote, "authorization_id", ""))
-            )
-        )
-    ]
+    # Card bada5c86: the same rule as the dispatcher. A bare `human` vote, or
+    # provenance fields without a verifying signed grant from a pinned approver,
+    # never counted as authenticated; nor does a vote by the change's own drafter,
+    # creator, managed-by owner or the operator seat.
+    from ..cab_approval import human_approval_times
+
+    approvals = human_approval_times(itil, change)
     if not approvals:
         return "independent authenticated human CAB approval is required"
+    from ..cab_approval import DEFAULT_MAX_APPROVAL_AGE_SECONDS
+    from .dispatch import approval_refusal
+
+    stale = approval_refusal(
+        approvals,
+        now_iso or datetime.now(timezone.utc).isoformat(),
+        DEFAULT_MAX_APPROVAL_AGE_SECONDS,
+    )
+    if stale is not None:
+        return stale[1]
 
     artifacts = _verified_artifacts(home)
     complete = [

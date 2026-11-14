@@ -17,10 +17,11 @@ import pytest
 
 from skcapstone import change_deploy as cd
 from skcapstone.itil import ITILManager
+from tests.cab_grants import cast_signed_vote
 
 
 def _approve_via_human_vote(mgr: ITILManager, change_id: str) -> None:
-    mgr.submit_cab_vote(change_id, agent="human", decision="approved")
+    cast_signed_vote(mgr, change_id, subject="chef", role="owner")
 
 
 def _scheduled_change(mgr: ITILManager, window_start: str, window_end: str, **kw):

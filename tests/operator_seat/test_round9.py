@@ -8,6 +8,7 @@ import logging
 import pytest
 
 from skcapstone.operator_seat import decisions, dispatch
+from tests.cab_grants import decision_grant
 
 from .test_dispatch_e2e import (  # noqa: F401  (world is a fixture)
     BIND,
@@ -30,6 +31,9 @@ def _resolve(world, decision_id):
         choice=0,
         subject=SUBJECT,
         resolved_iso=_iso(world.time.now),
+        authorization=decision_grant(
+            str(world.decisions), decision_id, 0, SUBJECT, role="approver"
+        ),
     )
 
 

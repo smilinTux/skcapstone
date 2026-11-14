@@ -19,6 +19,7 @@ from __future__ import annotations
 import functools
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 import click
 
@@ -299,7 +300,22 @@ def pending_cmd() -> None:
 @click.argument("decision_id")
 @click.option("--approve/--reject", required=True)
 @click.option("--choice", type=int, default=None, help="Option index when several are offered.")
-def decide_cmd(decision_id: str, approve: bool, choice: int | None) -> None:
+@click.option(
+    "--authorization",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Signed human CAB grant (`skcapstone itil cab authorize`). Required to approve.",
+)
+@click.option("--target", default="", help="Exact governed mutation target of the grant.")
+@click.option("--scope", default="", help="Exact governed mutation scope of the grant.")
+def decide_cmd(
+    decision_id: str,
+    approve: bool,
+    choice: int | None,
+    authorization: Path | None,
+    target: str,
+    scope: str,
+) -> None:
     """Approve or reject a parked decision (human only).
 
     Resolution is write-through (AUTONOMY_ARCHITECTURE.md section 3.1): the
@@ -310,25 +326,68 @@ def decide_cmd(decision_id: str, approve: bool, choice: int | None) -> None:
     bans exactly that). A decision parked with no linked change authorizes
     nothing: this command refuses and names the reason instead of printing
     success.
+
+    Approving needs a signed human CapAuth authorization for the linked change
+    (card bada5c86). The vote is recorded as the authorization's verified
+    issuer, role and fingerprint, never as the running agent's own identity:
+    that identity is an agent's (or the operator seat's), so it is no human
+    approval. Rejecting needs no grant and is attributed to the resolved
+    identity.
     """
     from .. import SHARED_ROOT
+    from ..cli.itil import _verified_cab_authorization
     from ..itil import ITILManager
 
-    subject = store.resolved_writer_identity()
-    if subject in ("", "unattributed"):
-        raise click.ClickException(
-            "cannot resolve an authenticated CapAuth identity for this approval; "
-            "failing closed rather than recording an unattributed decision"
+    decisions_dir = _decisions_dir(default_paths())
+    provenance: dict = {}
+    if approve:
+        if authorization is None or not target or not scope:
+            raise click.ClickException(
+                "approving needs a signed human grant: create one with `skcapstone itil cab "
+                "authorize <change> --decision approved --target ... --scope ...`, then pass "
+                "--authorization, --target and --scope; the running agent's own identity "
+                "cannot approve"
+            )
+        itil = ITILManager(SHARED_ROOT)
+        try:
+            option, change_id = dispatch.bound_decision_option(
+                decisions_dir, itil, decision_id, choice
+            )
+        except (ValueError, dispatch.UnauthorizedDecisionError) as exc:
+            raise click.ClickException(str(exc))
+        # The grant must name exactly this decision's mutation: its target is the option's
+        # object and its scope the change binding tag. Checked before the grant is redeemed,
+        # so a grant for something else is refused without burning its nonce.
+        expected_scope = dispatch.change_binding_tag(
+            str(option.get("app") or "unknown"),
+            str(option.get("action") or "unknown"),
+            str(option.get("object") or "unknown"),
         )
+        if target != str(option.get("object") or "") or scope != expected_scope:
+            raise click.ClickException(
+                f"--target and --scope must match decision {decision_id}: target "
+                f"{option.get('object')!r}, scope {expected_scope!r}"
+            )
+        envelope = _verified_cab_authorization(authorization, change_id, "approved", target, scope)
+        subject = envelope.issuer
+        provenance = {"authorization": envelope.model_dump()}
+    else:
+        subject = store.resolved_writer_identity()
+        if subject in ("", "unattributed"):
+            raise click.ClickException(
+                "cannot resolve an authenticated CapAuth identity for this rejection; "
+                "failing closed rather than recording an unattributed decision"
+            )
     try:
         out = dispatch.resolve_decision(
-            _decisions_dir(default_paths()),
+            decisions_dir,
             ITILManager(SHARED_ROOT),
             decision_id,
             approve=approve,
             choice=choice,
             subject=subject,
             resolved_iso=_now_iso(),
+            **provenance,
         )
     except dispatch.UnauthorizedDecisionError as exc:
         raise click.ClickException(str(exc))
@@ -342,10 +401,10 @@ def decide_cmd(decision_id: str, approve: bool, choice: int | None) -> None:
     type=click.FloatRange(min=0, min_open=True, max=dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS),
     default=dispatch.DEFAULT_MAX_APPROVAL_AGE_SECONDS,
     show_default=True,
-    help="Oldest human CAB approval (seconds, from the vote's decided_at) that may still be "
-    f"honored, at most {dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS:g}. A human approves a change "
-    "for one episode: past this, or once the condition has cleared, the intent is closed and "
-    "a new proposal needs a new vote.",
+    help="Oldest human CAB approval (seconds, from its signed grant's issued_at) that may "
+    f"still be honored, at most {dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS:g}. A human "
+    "approves a change for one episode: past this, or once the condition has cleared, the "
+    "intent is closed and a new proposal needs a new vote.",
 )
 def honor_pending_cmd(max_approval_age: float) -> None:
     """Dispatch every PROPOSED ledger intent whose linked ITIL change now folds

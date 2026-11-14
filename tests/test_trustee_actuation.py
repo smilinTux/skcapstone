@@ -13,9 +13,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from skcapstone import trustee_actuation as ta
 from skcapstone.fleet import store
 from skcapstone.fleet.paths import FleetPaths
+from tests.cab_grants import cast_signed_vote
 
 
 def _writer() -> store.Writer:
@@ -114,7 +117,42 @@ def test_change_is_approved_true_only_after_cab_approval(tmp_path):
 
     assert ta.change_is_approved(change.id, shared_root=tmp_path) is False
 
-    mgr.submit_cab_vote(change.id, agent="human", decision="approved")
+    cast_signed_vote(mgr, change.id, subject="chef", role="owner")
+    assert ta.change_is_approved(change.id, shared_root=tmp_path) is True
+
+
+@pytest.mark.parametrize(
+    "vote",
+    [
+        {"agent": "human", "decision": "approved"},
+        {
+            "agent": "chef",
+            "decision": "approved",
+            "subject": "chef",
+            "subject_role": "owner",
+            "subject_fingerprint": "A" * 40,
+            "authorization_id": "authz-forged",
+        },
+    ],
+    ids=["bare-human", "provenance-without-grant"],
+)
+def test_change_is_approved_refuses_an_unverified_approval_on_any_skcoord(tmp_path, vote):
+    """Review item 3: the guard trusted the fold alone, and skcoord 0.1.96 and
+    earlier fold a normal change approved on these votes. It must not, whatever
+    the installed fold says."""
+    from skcapstone.itil import ITILManager
+
+    mgr = ITILManager(tmp_path)
+    change = mgr.propose_change(title="rotate atlas", managed_by="atlas")
+    mgr.submit_cab_vote(change.id, **vote)
+    assert ta.change_is_approved(change.id, shared_root=tmp_path) is False
+
+
+def test_change_is_approved_accepts_a_standard_change(tmp_path):
+    from skcapstone.itil import ITILManager
+
+    mgr = ITILManager(tmp_path)
+    change = mgr.propose_change(title="routine", change_type="standard", managed_by="atlas")
     assert ta.change_is_approved(change.id, shared_root=tmp_path) is True
 
 
@@ -240,7 +278,7 @@ def test_guard_rotate_allows_with_an_approved_change(tmp_path):
 
     mgr = ITILManager(tmp_path)
     change = mgr.propose_change(title="rotate lumina", managed_by="atlas")
-    mgr.submit_cab_vote(change.id, agent="human", decision="approved")
+    cast_signed_vote(mgr, change.id, subject="chef", role="owner")
     paths = _provisioned_open(tmp_path)
     result = ta.guard(
         ta.CAP_ROTATE,

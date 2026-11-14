@@ -848,15 +848,36 @@ async def _handle_itil_cab_vote(args: dict) -> list[TextContent]:
     # the voter of record when no authenticated subject is resolvable
     # (submit_cab_vote's own back-compat contract for `subject=None`).
     subject = _resolve_authenticated_subject()
+    decision = args.get("decision", "abstain")
+    # Card bada5c86: when CapAuth resolution fails, this tool used to record the
+    # free-text label (typically "human") as the voter, and the skcoord fold
+    # counted that as a human approval. Refuse any vote (approve, reject or
+    # abstain) with no authenticated subject, as the CLI does. Even with a
+    # subject, an MCP vote carries no signed human grant, so an approval cast
+    # here is advisory and never qualifies: a qualifying approval goes through
+    # `skcapstone itil cab vote --authorization`.
+    if subject is None:
+        return _error_response(
+            "no authenticated CapAuth identity could be resolved; a CAB vote is not "
+            "recorded without one (a qualifying human approval needs a signed grant: "
+            "skcapstone itil cab authorize, then itil cab vote --authorization)"
+        )
+
+    from ..cab_approval import refuse_unsigned_overwrite
 
     mgr = ITILManager(_shared_root())
-    vote = mgr.submit_cab_vote(
-        change_id=change_id,
-        agent=agent,
-        decision=args.get("decision", "abstain"),
-        conditions=args.get("conditions", ""),
-        subject=subject,
-    )
+    try:
+        refuse_unsigned_overwrite(mgr, change_id, subject)
+        vote = mgr.submit_cab_vote(
+            change_id=change_id,
+            agent=agent,
+            decision=decision,
+            conditions=args.get("conditions", ""),
+            subject=subject,
+        )
+    except ValueError as exc:
+        # e.g. an unsigned vote may not replace the voter's signed one.
+        return _error_response(str(exc))
 
     # Return current vote tally
     all_votes = mgr.get_cab_votes(change_id)

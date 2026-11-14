@@ -55,9 +55,9 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterator
 from urllib.parse import quote
 
+from .. import cab_approval
 from ..fleet import store
 from ..fleet.paths import FleetPaths
-from ..itil import CABDecisionValue, _is_human_approval
 from . import action_ledger, actuator, decisions, evidence, node_local, policy, safety
 
 #: Prefix of the tag the loop puts on every change it drafts, naming the ONE intent
@@ -65,12 +65,13 @@ from . import action_ledger, actuator, decisions, evidence, node_local, policy, 
 BINDING_TAG_PREFIX = "op-bind:"
 
 
-#: How long a human CAB approval stays usable, measured from the vote's ``decided_at``
-#: against the real clock. A human approves a CHANGE for an EPISODE; a day is generous for
+#: How long a human CAB approval stays usable, measured from its signed grant's
+#: ``issued_at`` (card bada5c86; not the unsigned ``decided_at``) against the real
+#: clock. A human approves a CHANGE for an EPISODE; a day is generous for
 #: the slow lane and short enough that a recurrence next week cannot ride an old vote.
 #: Configurable (``honor-pending --max-approval-age``) up to the cap below; Chef can relax it.
-DEFAULT_MAX_APPROVAL_AGE_SECONDS = 86400.0
-MAX_ALLOWED_APPROVAL_AGE_SECONDS = 604800.0  # seven days
+DEFAULT_MAX_APPROVAL_AGE_SECONDS = cab_approval.DEFAULT_MAX_APPROVAL_AGE_SECONDS
+MAX_ALLOWED_APPROVAL_AGE_SECONDS = cab_approval.MAX_ALLOWED_APPROVAL_AGE_SECONDS
 
 #: How long an intent may sit in AUTHORIZED/EXECUTING before it is treated as stranded by a
 #: crash. A pass has a five minute runtime budget, so twice that is not a live dispatch.
@@ -185,43 +186,12 @@ def stored_lane(ledger: action_ledger.ActionLedger, intent_id: str) -> str | Non
     return lane if lane in ("auto", "escalate") else None
 
 
-def human_approval_times(itil: Any, change: Any) -> list[str]:
-    """``decided_at`` of every qualifying human approval; ``[]`` means NOT human-approved.
-
-    Derived from the CAB votes, never inferred from a missing ``auto-approved`` marker: the
-    fold only writes that marker while a change is still PROPOSED, so a standard change that
-    goes approved, scheduled, unscheduled folds ``approved`` with no marker and used to read
-    as human. A change is human-approved only when there is a qualifying human approval vote
-    (``_is_human_approval``, the drafter's own excluded, exactly as the fold does) and no
-    rejection. A ``standard`` change, or one that meets the fold's auto-normal derivation, is
-    auto-approved whatever its timeline says, and a human vote on it does not change that.
-    Fails closed: a vote store that cannot be read means no human approval.
-    """
-    if change.change_type.value == "standard":
-        return []
-    try:
-        votes = list(itil.get_cab_votes(change.id))
-    except Exception:  # noqa: BLE001 - unreadable votes are no approval
-        return []
-    rejected = any(v.decision == CABDecisionValue.REJECTED for v in votes)
-    if (
-        change.change_type.value == "normal"
-        and "auto-normal" in (change.tags or [])
-        and change.created_by == "operator"
-        and change.risk.value != "high"
-        and (change.rollback_plan or "").strip()
-        and not rejected
-    ):
-        return []
-    if rejected:
-        return []
-    return [
-        str(v.decided_at)
-        for v in votes
-        if v.decision == CABDecisionValue.APPROVED
-        and v.agent != change.prepared_by
-        and _is_human_approval(v)
-    ]
+# Card bada5c86: which votes and changes may authorize an actuation lives in
+# ``skcapstone.cab_approval``, shared with the CMDB apply gate and the trustee guard.
+# It verifies the stored signed grant against the pinned approver keys and derives
+# auto approval positively, whatever skcoord release is installed.
+qualifying_human_approval = cab_approval.qualifying_human_approval
+human_approval_times = cab_approval.human_approval_times
 
 
 def change_human_approved(itil: Any, change: Any) -> bool:
@@ -532,62 +502,13 @@ def reobserve(
 # ---------------------------------------------------------------------------
 
 
-def resolve_decision(
-    decisions_dir: str,
-    itil: Any,
-    decision_id: str,
-    *,
-    approve: bool,
-    choice: int | None,
-    subject: str,
-    resolved_iso: str,
-    subject_role: str = "approver",
-) -> dict:
-    """Resolve a parked decision, write-through to a CAB vote when approving.
-
-    Rejection needs no ITIL involvement (there is nothing to authorize) and
-    resolves the projection directly. Approval REQUIRES the chosen option to
-    carry an ``itil_change_id`` (or ``change_id``): that is the only thing
-    this dispatcher, or any future one, will ever look at to decide whether
-    the corresponding ledger intent may be dispatched. A decision parked
-    without one cannot be write-through approved -- raises
-    ``UnauthorizedDecisionError`` BEFORE any write, so a caller that fails to
-    catch it never silently prints success either.
-
-    Args:
-        decisions_dir: The pending-decision store directory.
-        itil: An ``ITILManager``-shaped object (``submit_cab_vote``).
-        decision_id: The decision to resolve.
-        approve: True to approve, False to reject.
-        choice: Option index for a multi-option decision.
-        subject: The caller's authenticated identity (never a magic string
-            like ``"human"``): recorded as the CAB vote's authenticated
-            voter and as the decision record's ``resolved_by``.
-        resolved_iso: ISO timestamp of resolution.
-        subject_role: The CAB subject role bound to the vote. Must be one
-            ITIL's fold treats as a qualifying human role ("owner" or
-            "approver"); the default matches what a human resolving a
-            decision through this seat is doing.
-
-    Returns:
-        The updated decision record.
+def decision_option(decisions_dir: str, decision_id: str, choice: int | None) -> tuple[dict, str]:
+    """The chosen option of a pending decision and the ITIL change it links.
 
     Raises:
-        UnauthorizedDecisionError: approving a decision whose chosen option
-            has no linked ITIL change.
-        ValueError: unknown decision, already resolved, or an out-of-range
-            choice (same failures ``decisions.resolve`` itself raises).
+        ValueError: unknown or already-resolved decision, or an out-of-range choice.
+        UnauthorizedDecisionError: the chosen option links no ITIL change.
     """
-    if not approve:
-        return decisions.resolve(
-            decisions_dir,
-            decision_id,
-            approve=False,
-            choice=choice,
-            by=subject,
-            resolved_iso=resolved_iso,
-        )
-
     pending = {record["id"]: record for record in decisions.list_pending(decisions_dir)}
     record = pending.get(decision_id)
     if record is None:
@@ -605,10 +526,24 @@ def resolve_decision(
             "the proposal must be re-parked with a bound change before it can "
             "be approved"
         )
-    # The change must be bound to THIS decision's proposal (app, action, target): a decision
-    # whose option points at a change drafted for something else would put a human vote on
-    # the wrong change. Checked before any write.
-    option = options[index]
+    return options[index], change_id
+
+
+def bound_decision_option(
+    decisions_dir: Any, itil: Any, decision_id: str, choice: int | None
+) -> tuple[dict, str]:
+    """The chosen option and its linked change, once the change is proven bound to it.
+
+    The change must carry exactly the binding tag of THIS decision's proposal (app,
+    action, target): a decision whose option points at a change drafted for something
+    else would put a human vote on the wrong change. Callers run this before they
+    redeem a signed grant, so a mismatch never burns the grant's nonce.
+
+    Raises:
+        UnauthorizedDecisionError: no linked change, or one not bound to the option.
+        ValueError: unknown decision, already resolved, or an out-of-range choice.
+    """
+    option, change_id = decision_option(decisions_dir, decision_id, choice)
     try:
         expected = change_binding_tag(
             str(option.get("app") or "unknown"),
@@ -631,13 +566,85 @@ def resolve_decision(
             f"decision {decision_id!r}: change {change_id!r} is not bound to this decision's "
             "app, action and target; approving it would put a vote on the wrong change"
         )
-    itil.submit_cab_vote(
-        change_id,
-        agent=subject,
-        decision="approved",
-        subject=subject,
-        subject_role=subject_role,
-    )
+    return option, change_id
+
+
+def resolve_decision(
+    decisions_dir: str,
+    itil: Any,
+    decision_id: str,
+    *,
+    approve: bool,
+    choice: int | None,
+    subject: str,
+    resolved_iso: str,
+    authorization: dict | None = None,
+) -> dict:
+    """Resolve a parked decision, write-through to a CAB vote when approving.
+
+    Rejection needs no ITIL involvement (there is nothing to authorize) and
+    resolves the projection directly. Approval REQUIRES the chosen option to
+    carry an ``itil_change_id`` (or ``change_id``): that is the only thing
+    this dispatcher, or any future one, will ever look at to decide whether
+    the corresponding ledger intent may be dispatched. A decision parked
+    without one cannot be write-through approved -- raises
+    ``UnauthorizedDecisionError`` BEFORE any write, so a caller that fails to
+    catch it never silently prints success either.
+
+    Args:
+        decisions_dir: The pending-decision store directory.
+        itil: An ``ITILManager``-shaped object (``submit_cab_vote``).
+        decision_id: The decision to resolve.
+        approve: True to approve, False to reject.
+        choice: Option index for a multi-option decision.
+        subject: The caller's authenticated identity (never a magic string
+            like ``"human"``): recorded as the CAB vote's authenticated
+            voter and as the decision record's ``resolved_by``.
+        resolved_iso: ISO timestamp of resolution.
+        authorization: The signed human CapAuth grant behind an approval (card
+            bada5c86), as a dict. It must verify against a pinned approver key
+            (``cab_approval.verify_grant_for``) for this decision's linked change
+            and the ``approved`` decision, and name *subject* as its issuer. The
+            vote's voter, role, fingerprint and authorization id all come from
+            it, and it is stored with the vote. Approving without one, with one
+            that does not verify, or as the operator seat raises before any
+            write: the running agent's identity is not a human approval.
+
+    Returns:
+        The updated decision record.
+
+    Raises:
+        UnauthorizedDecisionError: approving a decision whose chosen option
+            has no linked ITIL change.
+        ValueError: unknown decision, already resolved, or an out-of-range
+            choice (same failures ``decisions.resolve`` itself raises).
+    """
+    if not approve:
+        return decisions.resolve(
+            decisions_dir,
+            decision_id,
+            approve=False,
+            choice=choice,
+            by=subject,
+            resolved_iso=resolved_iso,
+        )
+
+    option, change_id = bound_decision_option(decisions_dir, itil, decision_id, choice)
+    if (
+        not isinstance(authorization, dict)
+        or cab_approval.identity_key(authorization.get("issuer"))
+        != cab_approval.identity_key(subject)
+        or not cab_approval.verify_grant_for(
+            authorization, change_id=change_id, decision="approved"
+        )
+    ):
+        raise UnauthorizedDecisionError(
+            f"decision {decision_id!r}: approving needs a verified human CapAuth grant "
+            f"from a pinned approver for change {change_id!r}, issued by the approving "
+            "subject; the running agent's or operator seat's own identity is not a human "
+            "approval"
+        )
+    cab_approval.record_signed_vote(itil, authorization)
     return decisions.resolve(
         decisions_dir,
         decision_id,
@@ -1056,13 +1063,28 @@ def _preaction_refusal(
         )
     approval_times = human_approval_times(itil, change)
     human_approved = bool(approval_times)
-    auto_approved = not human_approved
     lane = stored_lane(ledger, intent_id)
-    if auto_approved and lane == "escalate":
+    if not human_approved and lane == "escalate":
         return DispatchOutcome(
             intent_id,
             "pending: no human approval (the proposal was escalated for a human and the "
             "change carries no qualifying human vote); left PROPOSED for its pending decision",
+        )
+    # Card bada5c86: auto approval is derived positively (standard, or the auto-normal
+    # shape), never as "no human vote" on top of the fold's approved status, which an
+    # older skcoord grants a normal change on a bare `human` vote.
+    try:
+        votes = cab_approval.current_votes(itil, change.id)
+    except Exception:  # noqa: BLE001 - unreadable votes are no approval
+        votes = None
+    auto_approved = (
+        not human_approved and votes is not None and cab_approval.auto_approved(change, votes)
+    )
+    if not human_approved and not auto_approved:
+        return DispatchOutcome(
+            intent_id,
+            "pending: no qualifying approval (not a standard or auto-normal change, and no "
+            "verified human grant); left PROPOSED",
         )
     if auto_approved and lane != "auto":
         return DispatchOutcome(
@@ -1622,6 +1644,8 @@ __all__ = [
     "DispatchOutcome",
     "condition_firing",
     "verify_postcondition",
+    "decision_option",
+    "qualifying_human_approval",
     "MAX_POSTCONDITION_SETTLE_S",
     "resolve_decision",
     "dispatch_intent",

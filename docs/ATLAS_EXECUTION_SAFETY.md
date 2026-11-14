@@ -293,3 +293,115 @@ Known limit (it fails closed): the decisions store is replicated by Syncthing. A
 rejection and an actuator upgrade made at the same moment on two nodes can conflict, and the
 rejected decision can then reappear as pending. It still needs a new human approval to do
 anything, so the worst case is a decision the human sees again.
+
+## Human CAB approvals: pinned approver keys and the arming runbook (card bada5c86)
+
+**What counts as a human approval.** A CAB vote authorizes an actuation only when it stores
+the signed CapAuth grant it was cast under (`skcapstone itil cab authorize`, then
+`itil cab vote --authorization` or `skoperator decide --approve --authorization`) and that
+grant verifies against a key in the pinned approver file
+`~/.config/skcapstone/cab-approvers.json`. The check runs at every actuation gate (the ATLAS
+dispatcher, the governed CMDB apply gate and the trustee rotate guard, all through
+`skcapstone.cab_approval`) and again in the skcoord fold (`skcoord.cab_authorization`). It
+never reads `CAPAUTH_HOME` or the caller's own CapAuth profile. Votes by the change's drafter,
+creator or managed-by owner, by the operator seat (`operator`, `atlas`, device seats) or by a
+placeholder (`human`, `unknown`, empty) never count. The approval age limit is measured from the
+grant's signed `issued_at`. Auto approval is derived from the change itself (standard, or the
+auto-normal shape), never from the fold's status. **No pin file means no human approval
+anywhere**, which is the state until Chef runs the steps below.
+
+Historical votes from before signed grants were stored keep their meaning in the skcoord fold
+through a pinned list (skcoord ADR 0002). They are history only: no actuation gate counts them.
+
+### Arming runbook
+
+Nothing here lifts the freeze. Arming generic actuation is a separate decision.
+
+1. **Chef writes the pin file himself**, as `~/.config/skcapstone/cab-approvers.json`, mode
+   0644, owned by the operator account. Put the key inline as `public_key` (the ASCII armor of
+   his CapAuth human identity's public key, normally `<capauth home>/identity/public.asc`, as one
+   JSON string with `\n` line breaks). Inline is recommended: the file is then self-contained
+   and the same bytes work on every node, while a `public_key_file` path differs between
+   noroc2027 and the chi nodes and silently pins nobody where it does not resolve.
+   `public_key_file` is still accepted.
+
+   ```json
+   {
+     "approvers": [
+       {
+         "identity": "chef",
+         "fingerprint": "ADAD14CCAC8D6D0BF5A4209DB994E78200BF6422",
+         "roles": ["owner", "approver"],
+         "backend": "pgpy",
+         "public_key": "<ASCII ARMOR OF CHEF'S CAPAUTH identity/public.asc>"
+       }
+     ]
+   }
+   ```
+
+2. **Read it back** before trusting it. The fingerprint must come from the key file, not from
+   the JSON:
+
+   ```bash
+   ~/.skenv/bin/python - <<'PY'
+   from capauth.crypto import get_backend
+   from capauth.models import CryptoBackendType
+   from skcapstone import cab_approval
+   pins = cab_approval.load_approvers()
+   assert pins, "pin file missing or unreadable"
+   for fpr, entry in pins.items():
+       derived = get_backend(CryptoBackendType(entry["backend"])).fingerprint_from_armor(entry["public_key"])
+       print(entry["identity"], fpr, sorted(entry["roles"]), "key matches:", derived.replace(" ", "").upper() == fpr)
+   PY
+   ```
+
+   Expect one line: `chef ADAD14CCAC8D6D0BF5A4209DB994E78200BF6422 ['approver', 'owner'] key matches: True`.
+   Copy the same file to every node whose skcoord fold or ATLAS gate should accept Chef's
+   approvals, and read it back there too.
+
+3. **Re-vote open changes.** No existing vote carries a stored grant (the envelope behind
+   Chef's chg-a543c87b vote was not retained), so every open change that needs a human
+   approval must be re-approved through the signed path: `skcapstone itil cab authorize <change>
+   --decision approved --target <target> --scope <scope> --output <file>`, then `skcapstone itil
+   cab vote <change> --authorization <file> --target <target> --scope <scope>`. Confirm with
+   `cab_approval.approval_basis` that the change now reads `human`.
+
+   For a change ATLAS parked as a decision, approve through `skoperator decide <decision>
+   --approve --authorization <file> --target <target> --scope <scope>` instead. There the grant
+   must name exactly the decision's mutation: `--target` (and the grant's target) is the
+   decision option's `object`, and `--scope` is the change's binding tag,
+   `op-bind:<app>|<action>|<object>` with each part percent-escaped (the `op-bind:` tag on the
+   change). `decide` refuses any other pair before it redeems the grant, so create the grant
+   with the same two values.
+
+   A human approval is usable for a day from the grant's signed `issued_at` at every gate (the
+   dispatcher's limit is configurable up to seven days; the CMDB gate and the trustee guard use
+   the default), so vote close to when the change should run.
+
+4. **Rollback:** move the pin file away. Every gate then fails closed (no human approvals);
+   auto approvals are unaffected.
+
+### Trust limit (stated plainly)
+
+Everything here runs as the `cbrd21` account, which has passwordless sudo. What the pin does
+stop is a vote that no pinned key signed: a vote cast through the sanctioned surfaces (the MCP
+tool, the CLI, `skoperator decide`) without a grant, a hand-written or edited vote file, and a
+vote synced in from another node. A genuine signed vote is bound to the change and voter it was
+cast for, so a copy of its file under another change's or another voter's name counts for
+nothing, and at the gates it expires a day after its `issued_at`.
+
+What the pin does not stop is anything running as `cbrd21` (or as root through sudo). Such a
+process can rewrite the pin file to add its own key, change the code that reads the pin, or
+sign with any key this account can read. Nothing records the pin file's hash or checks it today,
+so such a change would go unnoticed. The pin raises the bar from "write one JSON file" to
+"rewrite operator config or code on this node". It is not a boundary against the operator
+account.
+
+Recommended follow-ups to anchor the pin (not done; Chef decides):
+
+- Run ATLAS and the agents as a separate unprivileged user that cannot write the pin file or
+  the installed code, with no passwordless sudo.
+- Ship the pin inside a manifest signed by Chef (as the module manifests are), and verify that
+  signature against Chef's fingerprint before trusting the pin's contents.
+- Record the pin file's sha256 in the CMDB as a configuration item, so reconcile drift reports a
+  changed pin.

@@ -13,6 +13,7 @@ from click.testing import CliRunner
 
 from skcapstone.cli.itil import register_itil_commands
 from skcapstone.itil import ITILManager
+from tests.cab_grants import cast_signed_vote
 
 
 def _cli() -> click.Group:
@@ -81,7 +82,7 @@ def test_change_cab_gate_names_the_real_reason_not_an_illegal_transition(tmp_pat
 def test_change_note_gated_transition_says_a_note_is_required(tmp_path):
     mgr = ITILManager(tmp_path)
     chg = mgr.propose_change(title="note gate", managed_by="lumina")
-    mgr.submit_cab_vote(chg.id, agent="human", decision="approved")
+    cast_signed_vote(mgr, chg.id, subject="chef", role="owner")
     _run(tmp_path, "itil", "change", "update", chg.id, "--status", "implementing", "--note", "n")
     _run(tmp_path, "itil", "change", "update", chg.id, "--status", "deployed", "--note", "n")
     out = _flat(_run(tmp_path, "itil", "change", "update", chg.id, "--status", "verified"))
@@ -94,7 +95,7 @@ def test_change_legal_transition_still_reports_success(tmp_path):
     """The guard must not swallow a transition that genuinely happened."""
     mgr = ITILManager(tmp_path)
     chg = mgr.propose_change(title="legal move", managed_by="lumina")
-    mgr.submit_cab_vote(chg.id, agent="human", decision="approved")
+    cast_signed_vote(mgr, chg.id, subject="chef", role="owner")
     out = _flat(
         _run(
             tmp_path, "itil", "change", "update", chg.id, "--status", "implementing", "--note", "n"

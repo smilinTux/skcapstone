@@ -34,6 +34,7 @@ from skcapstone.operator_seat import (
     proposer,
     skchat_adapter,
 )
+from tests.cab_grants import cast_signed_vote
 
 from .test_loop import _enroll
 
@@ -166,13 +167,7 @@ def _change(w, intent_id):
 
 
 def _vote(w, change_id):
-    w.itil.submit_cab_vote(
-        change_id,
-        agent="capauth:approver@scratch",
-        decision="approved",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
-    )
+    cast_signed_vote(w.itil, change_id, subject="capauth:approver@scratch", role="approver")
 
 
 def _escalated_intent(w, *, standard=True):
@@ -532,12 +527,12 @@ def test_a_rescheduled_change_that_a_human_really_approved_still_acts(world):
 def test_a_human_rejection_beats_an_approval(world):
     change = _normal_change(world)
     _vote(world, change.id)
-    world.itil.submit_cab_vote(
+    cast_signed_vote(
+        world.itil,
         change.id,
-        agent="capauth:other@scratch",
-        decision="rejected",
         subject="capauth:other@scratch",
-        subject_role="approver",
+        role="approver",
+        decision="rejected",
     )
     intent_id = _manual_intent(world, change.id, lane="escalate")
     _sweep(world)

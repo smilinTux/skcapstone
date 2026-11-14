@@ -149,7 +149,7 @@ class TestITILAtomicWrites:
 
         monkeypatch.setattr(atomic_io.os, "fsync", boom)
         with pytest.raises(OSError):
-            store.submit_cab_vote("chg-1234", "lumina", decision="rejected")
+            store.submit_cab_vote("chg-1234", "lumina", decision="rejected", subject="lumina")
 
         assert path.read_text(encoding="utf-8") == good
         assert not list(store.cab_dir.glob("*.tmp"))

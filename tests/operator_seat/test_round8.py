@@ -8,13 +8,14 @@ import pytest
 from click.testing import CliRunner
 
 from skcapstone.operator_seat import (
-    action_ledger,
     act_dispatch,
+    action_ledger,
     decisions,
     dispatch,
     loop,
     node_local,
 )
+from tests.cab_grants import decision_grant
 
 from .test_dispatch_e2e import (  # noqa: F401  (world is a fixture)
     _iso,
@@ -176,6 +177,9 @@ def test_the_actuator_upgrades_a_decision_a_non_actuator_parked_unbound(world, m
         choice=0,
         subject="capauth:approver@scratch",
         resolved_iso=_iso(world.time.now),
+        authorization=decision_grant(
+            str(world.decisions), bound["id"], 0, "capauth:approver@scratch", role="approver"
+        ),
     )
     assert _sweep(world)[0].outcome == "verified"
 

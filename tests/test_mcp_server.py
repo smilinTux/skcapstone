@@ -15,6 +15,7 @@ from skcapstone.mcp_server import (
     call_tool,
     list_tools,
 )
+from tests.cab_grants import cast_signed_vote
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -632,7 +633,7 @@ class TestTrusteeTools:
 
         manager = ITILManager(home)
         change = manager.propose_change(title="rotate for MCP test", managed_by="atlas")
-        manager.submit_cab_vote(change.id, agent="human", decision="approved")
+        cast_signed_vote(manager, change.id, subject="chef", role="owner")
         return change.id
 
     def _setup_deployment(self, home: Path) -> str:
