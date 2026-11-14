@@ -29,6 +29,7 @@ Example::
       default: {packages: all}
       some-host: {packages: [skcapstone, skmemory]}
     allow_exec_in_tree: []
+    carry_bin: []           # hand-placed bin/ files copied from the live venv
 """
 
 from __future__ import annotations
@@ -127,6 +128,7 @@ class Manifest(BaseModel):
     smoke: list[str] = Field(default_factory=list)
     nodes: dict[str, NodeProfile] = Field(default_factory=lambda: {"default": NodeProfile()})
     allow_exec_in_tree: list[str] = Field(default_factory=list)
+    carry_bin: list[str] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
 

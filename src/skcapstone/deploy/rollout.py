@@ -300,7 +300,34 @@ def _pip_check(python: Path, runner: Runner) -> set[str]:
     if proc.returncode == 0:
         return set()
     lines = {ln.strip() for ln in (proc.stdout + proc.stderr).splitlines()}
-    return {ln for ln in lines if ln and not ln.startswith(("Checked", "Found", "Resolved"))}
+    noise = ("Checked", "Found", "Resolved", "Using Python")
+    return {ln for ln in lines if ln and not ln.startswith(noise)}
+
+
+def carry_bin(manifest: Manifest, live: Optional[Path], dest: Path) -> list[str]:
+    """Copy the manifest's hand-placed ``bin/`` files from the live venv.
+
+    Some nodes keep shell shims and symlinks in the deploy venv's ``bin/``
+    that no package installs. They are carried verbatim (a symlink stays a
+    symlink) so a rollout does not silently remove a command. A packaged
+    entry point of the same name always wins.
+
+    Returns:
+        The names copied.
+    """
+    copied: list[str] = []
+    if live is None:
+        return copied
+    for name in manifest.carry_bin:
+        src, dst = live / "bin" / name, dest / "bin" / name
+        if dst.exists() or dst.is_symlink() or not (src.exists() or src.is_symlink()):
+            continue
+        if src.is_symlink():
+            os.symlink(os.readlink(src), dst)
+        else:
+            shutil.copy2(src, dst)
+        copied.append(name)
+    return copied
 
 
 # ------------------------------------------------------------------------- switch
@@ -427,6 +454,9 @@ def apply(
     dest = paths.releases / f"{time.strftime('%Y%m%d-%H%M%S')}-{manifest_id[:12]}"
     log(f"build: {dest}")
     build_venv(manifest, dest, python, runner, node)
+    carried = carry_bin(manifest, live, dest)
+    if carried:
+        log(f"carried bin/: {', '.join(carried)}")
     log("verify: imports, entry points, pip check, bin/")
     problems = verify_venv(manifest, dest, live, runner, node, allow_missing_bin)
     if problems:

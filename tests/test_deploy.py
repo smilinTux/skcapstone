@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -428,3 +429,19 @@ def test_verify_flags_only_new_pip_check_problems(tmp_path, monkeypatch):
 
     problems = rollout.verify_venv(_m(), new, live, runner)
     assert len(problems) == 1 and "skfoo 1.2.0" in problems[0] and "b<2" not in problems[0]
+
+
+def test_carry_bin_copies_files_and_symlinks_but_not_over_packaged(tmp_path):
+    live, dest = tmp_path / "live", tmp_path / "dest"
+    (live / "bin").mkdir(parents=True)
+    (dest / "bin").mkdir(parents=True)
+    (live / "bin" / "shim").write_text("#!/bin/sh\necho hi\n")
+    (live / "bin" / "shim").chmod(0o755)
+    os.symlink("/somewhere/tool.py", live / "bin" / "tool")
+    (live / "bin" / "pkg").write_text("old")
+    (dest / "bin" / "pkg").write_text("packaged")
+    m = _m(carry_bin=["shim", "tool", "pkg", "missing"])
+    assert rollout.carry_bin(m, live, dest) == ["shim", "tool"]
+    assert os.access(dest / "bin" / "shim", os.X_OK)
+    assert os.readlink(dest / "bin" / "tool") == "/somewhere/tool.py"
+    assert (dest / "bin" / "pkg").read_text() == "packaged"
