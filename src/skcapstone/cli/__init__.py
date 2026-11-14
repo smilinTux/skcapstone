@@ -63,6 +63,7 @@ from .context_cmd import register_context_commands  # noqa: E402
 from .coord import register_coord_commands  # noqa: E402
 from .crush_cmd import register_crush_commands  # noqa: E402
 from .daemon import register_daemon_commands  # noqa: E402
+from .deploy_cmd import register_deploy_commands  # noqa: E402
 from .errors_cmd import register_errors_commands  # noqa: E402
 from .export_cmd import register_export_commands  # noqa: E402
 from .gtd import register_gtd_commands  # noqa: E402
@@ -149,6 +150,7 @@ register_logs_commands(main)
 register_benchmark_commands(main)
 register_export_commands(main)
 register_config_commands(main)
+register_deploy_commands(main)
 register_upgrade_commands(main)
 register_test_connection_commands(main)
 register_version_commands(main)
