@@ -68,14 +68,6 @@ from . import action_ledger, actuator, decisions, evidence, node_local, policy, 
 BINDING_TAG_PREFIX = "op-bind:"
 
 
-#: How long a human CAB approval stays usable, measured from its signed grant's
-#: ``issued_at`` (card bada5c86; not the unsigned ``decided_at``) against the real
-#: clock. A human approves a CHANGE for an EPISODE; a day is generous for
-#: the slow lane and short enough that a recurrence next week cannot ride an old vote.
-#: Configurable (``honor-pending --max-approval-age``) up to the cap below; Chef can relax it.
-DEFAULT_MAX_APPROVAL_AGE_SECONDS = cab_approval.DEFAULT_MAX_APPROVAL_AGE_SECONDS
-MAX_ALLOWED_APPROVAL_AGE_SECONDS = cab_approval.MAX_ALLOWED_APPROVAL_AGE_SECONDS
-
 #: How long an intent may sit in AUTHORIZED/EXECUTING before it is treated as stranded by a
 #: crash. A pass has a five minute runtime budget, so twice that is not a live dispatch.
 DEFAULT_EXECUTING_TIMEOUT_SECONDS = 600.0
@@ -84,12 +76,31 @@ DEFAULT_EXECUTING_TIMEOUT_SECONDS = 600.0
 REPORT_ONLY_REFUSAL = "refused: report-only"
 
 
-def report_only_reason(app: Any, action: Any) -> str:
-    """Why an ATLAS escalation is report-only, and what the path to automation is."""
+def report_only_reason(app: Any, action: Any, change_class: str | None = None) -> str:
+    """Why an ATLAS escalation is report-only, and what (if anything) would automate it.
+
+    The hint follows the proposal's class: a major or emergency change (irreversible, or
+    high risk) can never be automated, so ratifying cannot help and a human handles it by
+    hand; a reversible non-standard change becomes auto-normal once ratified; with no class
+    known the generic hint is given.
+    """
+    head = (
+        f"ATLAS escalations are report-only: no approval can make ATLAS run {action!r} for {app!r}"
+    )
+    ratify = f"`skoperator apps ratify {app} {action}`"
+    if change_class in ("major", "emergency"):
+        return (
+            f"{head}. It is a {change_class} change (irreversible or high risk), so ratifying "
+            "cannot help: a human must handle it by hand"
+        )
+    if change_class == "normal":
+        return (
+            f"{head}. It is reversible but not standard: ratifying it once ({ratify}) lets "
+            "ATLAS run it as auto-normal; otherwise a human handles it"
+        )
     return (
-        "ATLAS escalations are report-only: no approval can make ATLAS run "
-        f"{action!r} for {app!r}. To let ATLAS act on it, ratify it once as a standard "
-        f"action (`skoperator apps ratify {app} {action}`); otherwise a human handles it"
+        f"{head}. To let ATLAS act on it, ratify it once as a standard action ({ratify}); "
+        "otherwise a human handles it"
     )
 
 
@@ -210,16 +221,11 @@ qualifying_human_approval = cab_approval.qualifying_human_approval
 human_approval_times = cab_approval.human_approval_times
 
 
-def change_human_approved(itil: Any, change: Any) -> bool:
-    """Whether a qualifying human approved this change (see ``human_approval_times``)."""
-    return bool(human_approval_times(itil, change))
-
-
 def _valid_approval_age(value: Any) -> bool:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False
     try:
-        return math.isfinite(value) and 0 < value <= MAX_ALLOWED_APPROVAL_AGE_SECONDS
+        return math.isfinite(value) and 0 < value <= cab_approval.MAX_ALLOWED_APPROVAL_AGE_SECONDS
     except OverflowError:
         return False
 
@@ -543,9 +549,11 @@ def resolve_decision(
     if approve:
         pending = {r["id"]: r for r in decisions.list_pending(decisions_dir)}
         option = ((pending.get(decision_id) or {}).get("options") or [{}])[0]
+        reason = option.get("report_only_reason") or report_only_reason(
+            option.get("app"), option.get("action"), option.get("change_class")
+        )
         raise ReportOnlyDecisionError(
-            f"decision {decision_id!r} can never be approved: "
-            f"{report_only_reason(option.get('app'), option.get('action'))}; reject it to "
+            f"decision {decision_id!r} can never be approved: {reason}; reject it to "
             "acknowledge it"
         )
     return decisions.resolve(
@@ -729,7 +737,7 @@ def _spend_change(itil: Any, change_id: str, intent_id: str, actor: str) -> str 
 
 def _retire_change(itil: Any, change_id: str, actor: str, note: str) -> None:
     """Move an approval that will not be used to a terminal state (rejected, then closed),
-    so a later recurrence needs a new proposal and a new human vote. Best effort."""
+    so a later recurrence needs a new proposal (and a new auto approval). Best effort."""
     for status in ("rejected", "closed"):
         try:
             itil.update_change(change_id, actor, new_status=status, note=note[:200])
@@ -1524,7 +1532,6 @@ __all__ = [
     "human_approval_times",
     "reobserve",
     "stored_lane",
-    "change_human_approved",
     "change_bound_to",
     "change_binding_tag",
     "stored_evidence",

@@ -500,11 +500,16 @@ def _run_once(
             emit(f"operator: episode-close sweep failed: {exc}")
     if decisions_dir is not None and not wiring_dropped:
         # A resolved (acknowledged) decision whose condition now reads definitely cleared
-        # ends its episode, so the next firing parks a new record. Never on a node that
-        # dropped its wiring: its view of a condition is not the actuator's.
+        # ends its episode, so the next firing parks a new record. Only the node that
+        # observed the escalation may end it: the decisions store is replicated, and a
+        # healthy node's view must not end another node's episode (which would re-park and
+        # re-notify on every flap). Never on a node that dropped its wiring either.
         try:
             decisions.end_cleared_episodes(
-                decisions_dir, _option_cleared(observations, ptypes), ended_iso=now_iso
+                decisions_dir,
+                _option_cleared(observations, ptypes),
+                ended_iso=now_iso,
+                node=self_node_name(),
             )
         except Exception as exc:  # noqa: BLE001 - bookkeeping must never stop the pass
             emit(f"operator: decision episode sweep failed: {exc}")
@@ -567,9 +572,10 @@ def _run_once(
             # signed ratification (standard catalog actions) plus auto-normal. Anything that
             # escalates is REPORT-ONLY: no ITIL change, no ledger intent, and an
             # acknowledge-only decision record that no approval can turn into an actuation.
+            change_class = (pl.get("classification") or {}).get("change_class")
             reason = (
                 f"{_escalation_cause(pl)}; "
-                f"{dispatch.report_only_reason(prop.get('app'), prop.get('action'))}"
+                f"{dispatch.report_only_reason(prop.get('app'), prop.get('action'), change_class)}"
             )
             if decisions_dir is not None:
                 decisions.park(
@@ -579,6 +585,7 @@ def _run_once(
                             **prop,
                             "report_only": True,
                             "report_only_reason": reason,
+                            "change_class": change_class,
                             "observed_on": self_node_name(),
                         }
                     ],

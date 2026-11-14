@@ -23,8 +23,12 @@ decision queue that can actuate:
 * the loop writes no ITIL change and no ledger intent for an escalation; it parks one
   acknowledge-only decision record (`report_only: true`, with the reason and
   `observed_on`, the node that saw it, for information);
-* `skoperator decide --approve` refuses before any write and before asking for a grant, and
-  names `skoperator apps ratify <app> <action>`; `decide --reject` acknowledges the record;
+* `skoperator decide --approve` refuses before any write and before asking for a grant;
+  `decide --reject` acknowledges the record. The refusal, the record and the Telegram card
+  carry a hint that follows the proposal's class: a major or emergency change (irreversible
+  or high risk) can never be automated, so a human handles it by hand; a reversible
+  non-standard one becomes auto-normal once ratified (`skoperator apps ratify <app>
+  <action>`);
 * the dispatcher refuses, before the approval is spent, any intent whose approval would come
   from a human CAB vote (an escalate-lane intent an older loop left behind, or any intent whose
   change carries a human vote). Only standard and auto-normal approvals dispatch;
@@ -38,7 +42,9 @@ the trustee rotate guard; those are not ATLAS actuation and are unchanged.
 One record per episode: while a decision is pending, or resolved but its condition has not yet
 read cleared, the same escalation reuses it. Once it was resolved and its condition read
 definitely cleared, the next escalation of the same condition is a new episode with its own
-record (`<id>-e<n>`). Loop-drafted changes are authored by `operator`, so auto-normal changes
+record (`<id>-e<n>`). Only the node named in the record's `observed_on` ends its episode: the
+decisions store is replicated, and a healthy node's view must not end another node's episode
+(which would re-park and re-notify on every flap). `Unknown` never ends an episode. Loop-drafted changes are authored by `operator`, so auto-normal changes
 auto-approve at the fold as designed.
 
 ## Execution path
@@ -279,7 +285,7 @@ alert and the fix is left in place, in both the loop and the dispatcher.
 retires its change) when its condition reads definitely cleared in this pass, and marks a
 resolved decision's episode ended, so the next escalation gets a new record. This runs on
 every node that keeps its wiring, not only an armed actuator, so a report-only deployment
-raises later episodes too. A clear-and-refire that falls entirely between two passes is
+raises later episodes too, but each node ends only the episodes it observed itself. A clear-and-refire that falls entirely between two passes is
 indistinguishable from one episode, because the loop only knows what it observed.
 The next loop or dispatch pass also voids auto-lane intents older than one pass (twice the
 runtime budget), the leftovers of a killed loop, before doing anything else.

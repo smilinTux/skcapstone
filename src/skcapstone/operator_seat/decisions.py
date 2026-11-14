@@ -90,12 +90,19 @@ def park(
 
 
 def end_cleared_episodes(
-    store_dir: str | Path, cleared: Callable[[dict[str, Any]], bool], *, ended_iso: str
+    store_dir: str | Path,
+    cleared: Callable[[dict[str, Any]], bool],
+    *,
+    ended_iso: str,
+    node: str | None = None,
 ) -> list[str]:
     """Mark resolved decisions whose condition now reads definitely cleared as ended.
 
     ``cleared(option)`` answers from the current observation. Pending records are left
-    alone, so an unacknowledged episode is never replaced. Returns the ids marked.
+    alone, so an unacknowledged episode is never replaced. With ``node``, only records
+    whose every option was observed on that node (``observed_on``) are judged: the store
+    is replicated, and one node's view must not end another node's episode. Returns the
+    ids marked.
     """
     directory = Path(store_dir)
     if not directory.exists():
@@ -109,6 +116,8 @@ def end_cleared_episodes(
         if record.get("status") == "pending" or record.get("episode_ended_at"):
             continue
         options = [o for o in record.get("options", []) if isinstance(o, dict)]
+        if node is not None and any(o.get("observed_on") != node for o in options):
+            continue
         if options and all(cleared(o) for o in options):
             record["episode_ended_at"] = ended_iso
             _dump(path, record)

@@ -5,19 +5,27 @@ from __future__ import annotations
 from skcapstone.operator_seat import notify
 
 
-def test_format_escalation_lists_options_and_decide_commands():
+def test_format_escalation_is_a_report_only_card_with_only_an_acknowledge_command():
     d = {
         "id": "abc123",
         "options": [
-            {"action": "restart_service", "object": "web", "rationale": "Ready False"},
+            {
+                "action": "restart_service",
+                "object": "web",
+                "rationale": "Ready False",
+                "report_only_reason": "ratify it once (`skoperator apps ratify web restart`)",
+            },
             {"action": "replace_workload", "object": "web", "rationale": "move it"},
         ],
     }
     text = notify.format_escalation(d)
     assert "abc123" in text
+    assert "report-only" in text
+    assert "needs your call" not in text
     assert "[0] restart_service on web" in text
+    assert "why: ratify it once (`skoperator apps ratify web restart`)" in text
     assert "[1] replace_workload on web" in text
-    assert "skoperator decide abc123 --approve" in text
+    assert "--approve" not in text
     assert "skoperator decide abc123 --reject" in text
     assert "—" not in text and "–" not in text  # no em/en dashes
 

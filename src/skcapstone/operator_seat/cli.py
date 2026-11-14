@@ -265,7 +265,10 @@ def run_cmd(
     if honor:
         click.echo("honor: ON (CR-9.1 step-1 physical actuation: fleet + skchat)")
     if res.get("outcomes"):
-        click.echo(f"({len(res['outcomes'])} proposal(s); parked escalations await approval)")
+        click.echo(
+            f"({len(res['outcomes'])} proposal(s); escalations are report-only, "
+            "acknowledge with: skoperator decide <id> --reject)"
+        )
 
     # Publish the static brief artifact per tick (the atlas host serves it).
     if not no_publish:

@@ -1,7 +1,8 @@
 """Send Atlas's report and parked escalations to the human (Telegram).
 
-Closes the human-in-the-loop: when Atlas parks a decision that needs a call, it
-reaches the human's phone with the options and the exact approve/reject command.
+When Atlas escalates, the human's phone gets a report-only card: what was seen, why
+ATLAS will not act on it, what (if anything) would let it, and how to acknowledge it.
+There is nothing to approve (card f8dd9441).
 The sender is injectable so tests never send a real message; the default shells
 to sk-alert (the Telegram alert path).
 """
@@ -24,14 +25,16 @@ def default_sender(text: str) -> bool:
 
 
 def format_escalation(decision: dict) -> str:
-    """Human-readable escalation card: the options and how to decide."""
+    """Human-readable report-only escalation card: what, why, the hint, and how to acknowledge."""
     did = decision.get("id", "?")
-    lines = [f"Atlas needs your call [{did}]:"]
+    lines = [f"Atlas escalation, report-only (ATLAS will not act) [{did}]:"]
     for i, opt in enumerate(decision.get("options", [])):
         obj = opt.get("object", "?")
         lines.append(f"  [{i}] {opt.get('action')} on {obj}: {opt.get('rationale', '')}")
-    lines.append(f"approve: skoperator decide {did} --approve --choice <i>")
-    lines.append(f"reject:  skoperator decide {did} --reject")
+        reason = opt.get("report_only_reason")
+        if reason:
+            lines.append(f"      why: {reason}")
+    lines.append(f"acknowledge: skoperator decide {did} --reject")
     return "\n".join(lines)
 
 
