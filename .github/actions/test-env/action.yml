@@ -34,8 +34,11 @@ runs:
         # uv resolves and installs the same requirement set with parallel
         # downloads; the ~3 GB torch/CUDA wheel set made pip the slowest step
         # of every job. `pip check` below still validates the result.
+        # `-r` installs every pin, as the fleet rollout does, so the parity
+        # gate sees packages no extra pulls in (skharness).
         uv pip install --python "$(command -v python)" \
-          -c deploy/fleet-constraints.txt -e ".[all,dev]"
+          -c deploy/fleet-constraints.txt -r deploy/fleet-constraints.txt \
+          -e ".[all,dev]"
         python -m skcapstone.fleet.dependency_parity
     - name: Verify resolved package dependencies
       shell: bash --noprofile --norc -p -e -o pipefail {0}

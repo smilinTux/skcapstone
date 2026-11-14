@@ -9,10 +9,21 @@
 #      and halts with DEPENDENCY_DRIFT if an installed version differs.
 #
 # Scope: only packages CI can install from the same index production used.
-# skskills is deliberately NOT pinned: hosts run 0.2.0 built from git commit
-# 14266f0 (direct_url.json), but the index CI uses only has 0.1.0/0.1.1, so a
-# pin makes resolution impossible. Pin skskills here once 0.2.0 is published to
-# the index.
+# skskills IS pinned as of 2026-11-14: it now has one version source and 1.2.0
+# is on PyPI, replacing the 0.2.0 git build the hosts ran.
+#
+# 2026-11-14, released builds for the rest of the SK set (Chef: "just add the
+# packages to it"). Each pin below was dry-run (`pip install --dry-run`) in the
+# live venv of every auto-rollout host and moves only the SK package itself,
+# replacing the git and editable builds the hosts ran. Held back, because the
+# dry run showed them moving third-party packages under running services:
+#   skchat-sovereign 0.14.266: Pillow 12 -> 13 and PyJWT everywhere; on
+#     chiap08 also fastapi 0.141 -> 0.135 and cryptography 43 -> 50.
+#   sksecurity 1.2.8: mcp 1.29 -> 1.30; cryptography on chiap08 and ziowk01.
+#   skbrain 1.0.1: downgrades click 8.4 -> 8.1 and typer 0.27 -> 0.12.
+#   skvault 0.1.0: would install it plus ten dependencies on hosts that do
+#     not use it (only chiap03 and chiap04 have it).
+# Pin those in their own PR once the third-party moves are planned.
 #
 # skwhisper IS pinned as of 2026-10-20. It could not be until then: the index
 # carried only 0.1.0 while every chi host ran 0.6.2 from git, because that repo
@@ -28,3 +39,9 @@ skcoord==0.1.97
 skmemory==0.11.162
 cloud9==1.2.4
 skwhisper==0.6.6
+capauth==0.3.14
+skseed==0.1.9
+skdashboard==0.1.109
+skharness==0.3.45
+skskills==1.2.0
+skcomms==0.2.22
