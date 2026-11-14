@@ -44,6 +44,14 @@ tests/operator_seat/test_manifest_adapter.py::test_operatorapp_from_shipped_mani
 tests/test_integration_backbone.py::TestStandaloneMode::*[skvoice]
 tests/test_integration_backbone.py::TestIntegratedMode::*[skvoice]
 
+# `watchdog` is in no extra; it reached runners only transitively through a
+# sibling package, and stopped (2026-11-14). The module is marked integration
+# but its importorskip fires at collection, before -m deselection, so it skips
+# instead of being deselected. Fix by adding watchdog to the dev extra or
+# moving the import inside the tests.
+tests/integration/test_consciousness_e2e.py
+tests/test_config_reload.py::TestRunConfigWatcher::test_config_watcher_calls_reload_on_modified_event
+
 # setuptools-scm is a PEP 517 build-system requirement only; it is never in the
 # runtime env of an editable install. One `pip install setuptools-scm` in
 # pytest.yml closes this.

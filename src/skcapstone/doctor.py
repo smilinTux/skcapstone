@@ -177,6 +177,7 @@ def run_diagnostics(
     report.checks.extend(_check_codex())
     report.checks.extend(_check_harness_env(home))
     report.checks.extend(_check_versions())
+    report.checks.extend(_check_deploy(deep=deep))
 
     return report
 
@@ -4179,3 +4180,99 @@ def _get_tool_version(tool: str) -> Optional[str]:
     except (subprocess.TimeoutExpired, OSError):
         pass
     return None
+
+
+# ---------------------------------------------------------------------------
+# Deploy checks (category "deploy").
+#
+# Production must be a released build of main. Three ways it silently stops
+# being one, each its own check because each has its own fix:
+#   deploy:editable      a dist in the deploy venv is an editable install, so
+#                        production is whatever branch that tree is on
+#   deploy:exec-in-tree  a unit, Claude Code or Hermes MCP command runs a file
+#                        inside a git working tree that agents branch in
+#   deploy:manifest      an installed SK version differs from the manifest
+# The manifest is read from the local clone without fetching unless --deep,
+# so a session-start doctor stays fast and works offline.
+# ---------------------------------------------------------------------------
+
+
+def _check_deploy(deep: bool = False) -> list[Check]:
+    """Report deploy drift as doctor checks. See :mod:`skcapstone.deploy`."""
+    from .deploy import ManifestUnavailableError, resolve_manifest
+    from .deploy.drift import compute
+    from .deploy.rollout import Paths
+
+    paths = Paths.default()
+    venv_python = paths.venv_link / "bin" / "python"
+    if not venv_python.exists():
+        venv_python = Path(sys.executable)
+    try:
+        manifest, _mid = resolve_manifest(paths.state_dir, fetch=deep)
+    except (ManifestUnavailableError, OSError, ValueError):
+        manifest = None
+    try:
+        report = compute(Path.home(), venv_python, manifest)
+    except Exception as exc:  # noqa: BLE001 - a broken probe is unknown, not a pass
+        return [
+            Check(
+                name="deploy:drift",
+                description="Production runs released main",
+                passed=False,
+                unknown=True,
+                detail=f"UNKNOWN: drift probe failed: {exc}",
+                category="deploy",
+            )
+        ]
+
+    def _one(name: str, desc: str, items: list[str], fix: str) -> Check:
+        shown = "; ".join(items[:6]) + (f"; and {len(items) - 6} more" if len(items) > 6 else "")
+        return Check(
+            name=name,
+            description=desc,
+            passed=not items,
+            detail=f"{len(items)}: {shown}" if items else "none",
+            fix=fix if items else "",
+            category="deploy",
+        )
+
+    checks = [
+        _one(
+            "deploy:editable",
+            f"No editable installs in {paths.venv_link}",
+            report.editable,
+            "skcapstone deploy apply  # rebuilds the venv from released versions; "
+            "do dev work in ~/.skenv-dev or a per-worktree venv",
+        ),
+        _one(
+            "deploy:exec-in-tree",
+            "No unit or MCP command runs a file inside a git working tree",
+            report.exec_in_tree,
+            "Run the packaged entry point from ~/.skenv/bin, or a release tree of a tag; "
+            "list a deliberate exception under allow_exec_in_tree in the manifest",
+        ),
+    ]
+    if manifest is None:
+        checks.append(
+            Check(
+                name="deploy:manifest",
+                description="Installed SK versions match the release manifest",
+                passed=False,
+                unknown=True,
+                detail=(
+                    "UNKNOWN: no release manifest on this node "
+                    "(SK_DEPLOY_MANIFEST_REPO in ~/.config/sk-deploy/env)"
+                ),
+                category="deploy",
+            )
+        )
+    else:
+        checks.append(
+            _one(
+                "deploy:manifest",
+                "Installed SK versions match the release manifest",
+                report.behind,
+                "skcapstone deploy plan && skcapstone deploy apply",
+            )
+        )
+    return checks

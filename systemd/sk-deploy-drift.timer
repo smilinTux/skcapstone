@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily deploy drift check (alerts only when the findings change)
+
+[Timer]
+OnCalendar=*-*-* 07:20:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

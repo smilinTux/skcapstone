@@ -67,6 +67,10 @@ class AdapterSpec(NamedTuple):
     job_name: str
     #: A representative non-critical alert level to exercise the routing.
     alert_level: str = "warn"
+    #: The adapter implements only the alert half of the contract (no
+    #: ``ensure_schedule``/``register_self``). Its schedule and registry
+    #: tests then assert the functions are really gone instead of calling them.
+    alert_only: bool = False
 
 
 #: All adapters that implement the integration contract.
@@ -84,6 +88,9 @@ ADAPTERS: list[AdapterSpec] = [
         service="sksecurity",
         module_path="sksecurity.integration",
         job_name="sksecurity_intel_refresh",
+        # sksecurity was narrowed (its PR #12, released as 1.2.8): it keeps
+        # alert() and no longer schedules jobs or registers itself.
+        alert_only=True,
     ),
     AdapterSpec(
         service="skcomms",
@@ -166,6 +173,20 @@ def _load_adapter(spec: AdapterSpec) -> Optional[ModuleType]:
         return None
 
 
+def _schedule_contract_absent(spec: AdapterSpec, mod: ModuleType) -> bool:
+    """True when an alert-only adapter has, as declared, no schedule API.
+
+    Releases before the narrowing still ship the functions; those keep being
+    held to the full contract.
+    """
+    if not spec.alert_only:
+        return False
+    if hasattr(mod, "ensure_schedule") or hasattr(mod, "register_self"):
+        return False
+    assert not hasattr(mod, "unregister_schedule"), f"{spec.service}: partial schedule API"
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Mode A - STANDALONE tests
 # ---------------------------------------------------------------------------
@@ -224,6 +245,8 @@ class TestStandaloneMode:
         mod = _load_adapter(spec)
         if mod is None:
             pytest.skip(f"{spec.module_path} not installed")
+        if _schedule_contract_absent(spec, mod):
+            return
         importlib.reload(mod)
         result = mod.ensure_schedule()
         assert result is False
@@ -235,6 +258,8 @@ class TestStandaloneMode:
         mod = _load_adapter(spec)
         if mod is None:
             pytest.skip(f"{spec.module_path} not installed")
+        if _schedule_contract_absent(spec, mod):
+            return
         monkeypatch.setattr(mod, "_sdk", None)
         result = mod.ensure_schedule()
         assert result is False
@@ -247,6 +272,8 @@ class TestStandaloneMode:
         mod = _load_adapter(spec)
         if mod is None:
             pytest.skip(f"{spec.module_path} not installed")
+        if _schedule_contract_absent(spec, mod):
+            return
         importlib.reload(mod)
         result = mod.register_self()
         assert result is False
@@ -281,6 +308,8 @@ class TestStandaloneMode:
         mod = _load_adapter(spec)
         if mod is None:
             pytest.skip(f"{spec.module_path} not installed")
+        if _schedule_contract_absent(spec, mod):
+            return
         importlib.reload(mod)
         mod.ensure_schedule()
         jobs_d = tmp_path / "config" / "jobs.d"
@@ -398,6 +427,8 @@ class TestIntegratedMode:
         mod = _load_adapter(spec)
         if mod is None:
             pytest.skip(f"{spec.module_path} not installed")
+        if _schedule_contract_absent(spec, mod):
+            return
         importlib.reload(mod)
 
         result = mod.ensure_schedule()
@@ -443,6 +474,8 @@ class TestIntegratedMode:
         mod = _load_adapter(spec)
         if mod is None:
             pytest.skip(f"{spec.module_path} not installed")
+        if _schedule_contract_absent(spec, mod):
+            return
         importlib.reload(mod)
 
         mod.ensure_schedule()
@@ -462,6 +495,8 @@ class TestIntegratedMode:
         mod = _load_adapter(spec)
         if mod is None:
             pytest.skip(f"{spec.module_path} not installed")
+        if _schedule_contract_absent(spec, mod):
+            return
         importlib.reload(mod)
 
         result = mod.register_self()
@@ -486,6 +521,8 @@ class TestIntegratedMode:
         mod = _load_adapter(spec)
         if mod is None:
             pytest.skip(f"{spec.module_path} not installed")
+        if _schedule_contract_absent(spec, mod):
+            return
         importlib.reload(mod)
 
         mod.ensure_schedule()
@@ -523,6 +560,8 @@ class TestIntegratedMode:
         mod = _load_adapter(spec)
         if mod is None:
             pytest.skip(f"{spec.module_path} not installed")
+        if _schedule_contract_absent(spec, mod):
+            return
         importlib.reload(mod)
 
         mod.alert("leak_check", {"harness": True}, "warn")

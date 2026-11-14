@@ -1,0 +1,14 @@
+[Unit]
+Description=Deploy drift check: production must be a released build of main
+Documentation=https://github.com/smilinTux/skcapstone
+
+[Service]
+Type=oneshot
+# Host-local: names the private manifest repo (SK_DEPLOY_MANIFEST_REPO).
+EnvironmentFile=-%h/.config/sk-deploy/env
+# Findings exit 1 by design (that is what --alert reports); only a crash
+# (exit 2 and up) is a failed unit, so a known drift never alerts twice.
+SuccessExitStatus=1
+ExecStart=%h/.skenv/bin/skcapstone deploy drift --alert
+Nice=10
+IOSchedulingClass=idle
