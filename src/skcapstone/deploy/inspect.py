@@ -99,14 +99,16 @@ def list_dists(python: Path) -> list[Dist]:
 def git_tree_of(path: str) -> Optional[Path]:
     """The git working tree containing *path*, or None.
 
-    A ``.git`` entry (directory or worktree file) in the path or any parent
-    marks a working tree.
+    A ``.git`` repository directory (one with a ``HEAD``) or a worktree
+    ``.git`` file in the path or any parent marks a working tree. An empty or
+    stray ``.git`` directory does not: it would make all of home a "tree".
     """
     p = Path(path).expanduser()
     for parent in [p, *p.parents]:
         if parent == Path("/"):
             break
-        if (parent / ".git").exists():
+        dotgit = parent / ".git"
+        if dotgit.is_file() or (dotgit / "HEAD").is_file():
             return parent
     return None
 

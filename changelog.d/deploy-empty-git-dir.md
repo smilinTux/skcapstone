@@ -1,0 +1,1 @@
+- deploy drift: a stray empty `.git` directory no longer makes everything under it count as a git working tree. A tree needs a `.git` file or a `.git` directory with a `HEAD`.

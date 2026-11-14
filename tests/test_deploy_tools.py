@@ -298,3 +298,19 @@ def test_legacy_dropin_name_is_migrated_and_restored_on_undo(tmp_path, origin):
     change.undo(home / ".local/share/sk-tools", units)
     assert legacy.read_text() == "[Service]\nWorkingDirectory=/old\n"
     assert not (units / "relay.service.d" / tools.DROPIN).exists()
+
+
+def test_empty_dot_git_directory_is_not_a_tree(tmp_path):
+    from skcapstone.deploy.inspect import exec_paths_in_trees, git_tree_of
+
+    home = tmp_path / "home"
+    units = home / ".config/systemd/user"
+    units.mkdir(parents=True)
+    (home / ".git").mkdir()
+    (home / "bin").mkdir()
+    (home / "bin/run.sh").write_text("#!/bin/sh\n")
+    (units / "a.service").write_text("[Service]\nExecStart=/bin/sh %h/bin/run.sh\n")
+    assert git_tree_of(str(home / "bin/run.sh")) is None
+    assert exec_paths_in_trees(home, units) == []
+    _git(home, "init", "-q", "-b", "main")
+    assert git_tree_of(str(home / "bin/run.sh")) == home

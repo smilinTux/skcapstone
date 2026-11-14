@@ -221,6 +221,7 @@ def _home_with_tree(tmp_path: Path) -> tuple[Path, Path]:
     home = tmp_path / "home"
     tree = home / "repo"
     (tree / ".git").mkdir(parents=True)
+    (tree / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
     (tree / "scripts").mkdir()
     units = home / ".config" / "systemd" / "user"
     units.mkdir(parents=True)
