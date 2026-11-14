@@ -18,8 +18,21 @@ from skcapstone.fleet.staged_rollout import _DEPLOY_STEPS, _ROLLBACK_STEPS
 
 ROOT = Path(__file__).resolve().parents[1]
 CONSTRAINTS = ROOT / "deploy" / "fleet-constraints.txt"
-# skskills is intentionally unpinned: production runs a git build the CI index lacks.
-SK_RUNTIME = ("skcoord", "skmemory", "cloud9", "skwhisper")
+# Every SK runtime package the fleet installs from a release (2026-11-14 adds the
+# rest of the set; skchat-sovereign, sksecurity, skbrain and skvault are held
+# back, see the comment in deploy/fleet-constraints.txt).
+SK_RUNTIME = (
+    "skcoord",
+    "skmemory",
+    "cloud9",
+    "skwhisper",
+    "capauth",
+    "skseed",
+    "skdashboard",
+    "skharness",
+    "skskills",
+    "skcomms",
+)
 
 
 def _pins():
