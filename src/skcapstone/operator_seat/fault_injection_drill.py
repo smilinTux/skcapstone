@@ -1263,7 +1263,9 @@ def scenario_dispatcher_full_arc(ctx: DrillContext) -> ScenarioResult:
         and ledger.list_intents() == []
         and len(itil.list_changes()) == changes_before
         and refused is not None
-        and "skoperator apps ratify" in refused
+        # A major change can never be automated: the hint says so, not "ratify it".
+        and "cannot help" in refused
+        and "apps ratify" not in refused
         and still_pending
         and acknowledged
         and swept == []
