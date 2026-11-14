@@ -12,7 +12,7 @@ import pytest
 
 from skcapstone.deploy import drift as drift_mod
 from skcapstone.deploy import resolve_manifest, rollout
-from skcapstone.deploy.inspect import Dist, exec_paths_in_trees, git_tree_of
+from skcapstone.deploy.inspect import Dist, exec_paths_in_trees, git_tree_of, unit_exec_paths
 from skcapstone.deploy.manifest import Manifest, load_manifest
 
 MANIFEST = {
@@ -456,3 +456,38 @@ def test_node_lock_and_carry_bin_override_the_manifest():
     assert m.lock_for("laptop") == ["b==2"] and m.lock_for("other") == ["a==1"]
     assert m.carry_bin_for("laptop") == [] and m.carry_bin_for("other") == ["x"]
     assert "b==2" in m.requirement_lines("laptop") and "a==1" not in m.requirement_lines("laptop")
+
+
+def _unit_with_dropin(tmp_path: Path, dropin: str) -> tuple[Path, Path]:
+    home = tmp_path / "home"
+    units = home / ".config/systemd/user"
+    units.mkdir(parents=True)
+    (units / "p.service").write_text(
+        "[Service]\nWorkingDirectory=%h/repo/tool\nExecStart=/usr/bin/python3 %h/repo/tool/s.py\n"
+    )
+    if dropin:
+        (units / "p.service.d").mkdir()
+        (units / "p.service.d/override.conf").write_text(dropin)
+    return home, units
+
+
+def test_unit_dropin_replaces_exec_and_workdir(tmp_path):
+    home, units = _unit_with_dropin(
+        tmp_path,
+        "[Service]\nWorkingDirectory=%h/copy\nExecStart=\n"
+        "ExecStart=/usr/bin/python3 %h/copy/s.py\n",
+    )
+    paths = sorted(ep.path for ep in unit_exec_paths(units, home))
+    assert paths == [str(home / "copy"), str(home / "copy/s.py")]
+
+
+def test_unit_dropin_without_reset_appends_exec(tmp_path):
+    home, units = _unit_with_dropin(tmp_path, "[Service]\nExecStartPre=/opt/pre.sh\n")
+    paths = sorted(ep.path for ep in unit_exec_paths(units, home))
+    assert "/opt/pre.sh" in paths and str(home / "repo/tool/s.py") in paths
+
+
+def test_unit_without_dropin_unchanged(tmp_path):
+    home, units = _unit_with_dropin(tmp_path, "")
+    paths = sorted(ep.path for ep in unit_exec_paths(units, home))
+    assert paths == [str(home / "repo/tool"), str(home / "repo/tool/s.py")]
