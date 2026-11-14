@@ -337,9 +337,28 @@ def exec_paths_in_trees(
         tree = git_tree_of(ep.path)
         if tree is None or (ep.origin, ep.path) in seen:
             continue
+        if tree == home and (Path(ep.path) == home or not _tracked(home, ep.path)):
+            # A dotfiles repository at ~ contains everything under home; only a
+            # path it actually tracks is "running from a working tree".
+            continue
         seen.add((ep.origin, ep.path))
         hits.append((ep, tree))
     return hits
+
+
+def _tracked(tree: Path, path: str) -> bool:
+    """True when *tree* tracks *path* (a file, or any file under a directory)."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(tree), "ls-files", "--", path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return proc.returncode != 0 or bool(proc.stdout.strip())
 
 
 def default_unit_dir(home: Path) -> Path:

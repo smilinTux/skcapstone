@@ -230,3 +230,23 @@ def test_continuation_lines_are_joined(tmp_path):
         "[Service]\nExecStart=/usr/bin/python3 \\\n    %h/src/thing/a.py \\\n    --flag\n"
     )
     assert [ep.path for ep in unit_exec_paths(tmp_path, home)] == [str(home / "src/thing/a.py")]
+
+
+def test_dotfiles_repo_at_home_counts_only_tracked_paths(tmp_path):
+    from skcapstone.deploy.inspect import exec_paths_in_trees
+
+    home = tmp_path / "home"
+    units = home / ".config/systemd/user"
+    units.mkdir(parents=True)
+    (home / "bin").mkdir()
+    (home / "bin/tracked.sh").write_text("#!/bin/sh\n")
+    (home / "bin/untracked.sh").write_text("#!/bin/sh\n")
+    _git(home, "init", "-q", "-b", "main")
+    _git(home, "add", "bin/tracked.sh")
+    _git(home, "commit", "-qm", "dotfiles")
+    (units / "a.service").write_text(
+        "[Service]\nWorkingDirectory=%h\nExecStart=/bin/sh %h/bin/tracked.sh\n"
+    )
+    (units / "b.service").write_text("[Service]\nExecStart=/bin/sh %h/bin/untracked.sh\n")
+    hits = sorted((ep.origin, ep.path) for ep, _t in exec_paths_in_trees(home, units))
+    assert hits == [("unit a.service", str(home / "bin/tracked.sh"))]
