@@ -702,11 +702,12 @@ def register_status_commands(main: click.Group) -> None:
             "sync": "Sync (Singularity)",
             "codex": "Codex Integration",
             "harness": "AI Harness (Claude Code)",
+            "deploy": "Deploy (released main)",
         }
-
-        for cat_key in [
+        order = [
             "packages",
             "source",
+            "deploy",
             "system",
             "agent",
             "identity",
@@ -715,7 +716,12 @@ def register_status_commands(main: click.Group) -> None:
             "sync",
             "codex",
             "harness",
-        ]:
+        ]
+        # A category missing from ``order`` used to be counted in the totals
+        # but never printed. Show any such category after the known ones.
+        order += sorted(k for k in categories if k not in order)
+
+        for cat_key in order:
             checks = categories.get(cat_key, [])
             if not checks:
                 continue

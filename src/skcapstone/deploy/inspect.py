@@ -122,24 +122,52 @@ def _abs_paths(words: Iterable[str], home: Path) -> list[str]:
     return out
 
 
+_EXEC_KEYS = ("ExecStart", "ExecStartPre", "ExecStartPost", "WorkingDirectory")
+
+
+def _unit_settings(unit: Path) -> dict[str, list[str]]:
+    """The effective exec settings of *unit*, with its drop-ins applied.
+
+    Drop-ins in ``<unit>.d/*.conf`` are read after the unit in name order, as
+    systemd does: an empty ``ExecStart=`` clears the list so far, and a later
+    ``WorkingDirectory=`` replaces an earlier one.
+    """
+    files = [unit]
+    dropin = unit.with_name(unit.name + ".d")
+    if dropin.is_dir():
+        files += sorted(dropin.glob("*.conf"))
+    settings: dict[str, list[str]] = {k: [] for k in _EXEC_KEYS}
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for match in re.finditer(r"^(ExecStart(?:Pre|Post)?|WorkingDirectory)=(.*)$", text, re.M):
+            key, value = match.group(1), match.group(2).strip()
+            if not value:
+                settings[key] = []
+            elif key == "WorkingDirectory":
+                settings[key] = [value]
+            else:
+                settings[key].append(value)
+    return settings
+
+
 def unit_exec_paths(unit_dir: Path, home: Path) -> list[ExecPath]:
-    """Absolute paths named by the ``ExecStart*`` lines of user units."""
+    """Absolute paths named by the effective ``ExecStart*`` lines of user units."""
     found: list[ExecPath] = []
     if not unit_dir.is_dir():
         return found
     for unit in sorted(unit_dir.glob("*.service")):
-        try:
-            text = unit.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for match in re.finditer(r"^(ExecStart(?:Pre|Post)?|WorkingDirectory)=(.*)$", text, re.M):
-            value = match.group(2).lstrip("-@+!:")
-            try:
-                words = shlex.split(value)
-            except ValueError:
-                words = value.split()
-            for path in _abs_paths(words, home):
-                found.append(ExecPath(f"unit {unit.name}", path))
+        for values in _unit_settings(unit).values():
+            for raw in values:
+                value = raw.lstrip("-@+!:")
+                try:
+                    words = shlex.split(value)
+                except ValueError:
+                    words = value.split()
+                for path in _abs_paths(words, home):
+                    found.append(ExecPath(f"unit {unit.name}", path))
     return found
 
 
