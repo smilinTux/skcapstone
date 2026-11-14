@@ -16,6 +16,8 @@ Example::
       skcore:     {source: git, repo: smilinTux/skcore, ref: v0.1.0, branch: master}
     requirements:
       - "uvicorn==0.30.6"
+    constraints:            # pins that only apply if something pulls them in
+      - "numpy==2.3.4"
     services:
       skchat-daemon.service:
         packages: [skchat-sovereign, skcomms]
@@ -118,6 +120,7 @@ class Manifest(BaseModel):
     python: str = "3.12"
     packages: dict[str, PackageSpec]
     requirements: list[str] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
     services: dict[str, ServiceSpec] = Field(default_factory=dict)
     smoke: list[str] = Field(default_factory=list)
     nodes: dict[str, NodeProfile] = Field(default_factory=lambda: {"default": NodeProfile()})

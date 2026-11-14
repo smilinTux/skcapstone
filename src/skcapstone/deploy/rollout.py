@@ -207,12 +207,24 @@ def build_venv(
     dest.parent.mkdir(parents=True, exist_ok=True)
     reqs = dest.parent / f".{dest.name}.requirements.txt"
     reqs.write_text("\n".join(manifest.requirement_lines(node)) + "\n", encoding="utf-8")
+    cons = dest.parent / f".{dest.name}.constraints.txt"
+    cons.write_text("\n".join(manifest.constraints) + "\n", encoding="utf-8")
     try:
         proc = _run(["uv", "venv", "--seed", "--python", python, str(dest)], runner)
         if proc.returncode != 0:
             raise DeployError(f"uv venv failed: {proc.stderr.strip()[-500:]}")
         proc = _run(
-            ["uv", "pip", "install", "--python", str(dest / "bin" / "python"), "-r", str(reqs)],
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                str(dest / "bin" / "python"),
+                "-r",
+                str(reqs),
+                "-c",
+                str(cons),
+            ],
             runner,
             timeout=3600,
         )
@@ -221,6 +233,7 @@ def build_venv(
             raise DeployError(f"uv pip install failed: {proc.stderr.strip()[-1500:]}")
     finally:
         reqs.unlink(missing_ok=True)
+        cons.unlink(missing_ok=True)
 
 
 def verify_venv(

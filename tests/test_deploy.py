@@ -373,3 +373,25 @@ def test_editable_exception_needs_reason():
         Manifest.model_validate(
             {"packages": {"a": {"source": "editable", "repo": "o/a", "path": "/x"}}}
         )
+
+
+def test_build_venv_passes_requirements_and_constraints(tmp_path):
+    seen: dict[str, str] = {}
+
+    def runner(cmd, **kw):
+        if cmd[:3] == ["uv", "pip", "install"]:
+            seen["r"] = Path(cmd[cmd.index("-r") + 1]).read_text()
+            seen["c"] = Path(cmd[cmd.index("-c") + 1]).read_text()
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    m = _m(constraints=["numpy==2.3.4"])
+    rollout.build_venv(m, tmp_path / "rel" / "new", "3.12", runner)
+    assert "skfoo==1.2.0" in seen["r"] and "uvicorn==0.30.6" in seen["r"]
+    assert seen["c"].strip() == "numpy==2.3.4"
+    assert not list((tmp_path / "rel").glob(".*.txt"))
+
+
+def test_build_venv_refuses_existing_dest(tmp_path):
+    (tmp_path / "d").mkdir()
+    with pytest.raises(rollout.DeployError, match="already exists"):
+        rollout.build_venv(_m(), tmp_path / "d", "3.12", FakeRunner())
