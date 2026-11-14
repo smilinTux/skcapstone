@@ -72,6 +72,21 @@ def test_only_the_observing_node_ends_an_episode(tmp_path):
     ]
 
 
+def test_a_record_with_no_observing_node_can_be_ended_by_any_node(tmp_path):
+    d = tmp_path / "dec"
+    decisions.park(d, [_OPT], decision_id="legacy", created_iso="t1")
+    decisions.resolve(d, "legacy", approve=False, choice=None, by="chef", resolved_iso="t2")
+    assert decisions.end_cleared_episodes(d, lambda o: True, ended_iso="t3", node="node-b") == [
+        "legacy"
+    ]
+    assert decisions.park(d, [_OPT], decision_id="legacy", created_iso="t4")["id"] == "legacy-e2"
+
+
+def test_an_unresolved_target_gets_no_ratify_hint():
+    reason = dispatch.report_only_reason("skchat", "restart-x", "standard", unresolved_target=True)
+    assert "did not resolve" in reason and "by hand" in reason and "apps ratify" not in reason
+
+
 def _escalate_then_acknowledge(w):
     res = _loop_pass(w, target_known=lambda p: False)
     assert res["outcomes"][0]["outcome"].startswith("escalated (report-only")
@@ -108,6 +123,8 @@ def test_option_cleared_needs_a_definite_reading_and_unknown_never_ends_an_episo
     assert loop._option_cleared(obs("False"), ptypes)(_OPT) is True
     assert loop._option_cleared(obs("True"), ptypes)(_OPT) is False
     assert loop._option_cleared(obs("Unknown"), ptypes)(_OPT) is False
+    assert loop._option_cleared(obs(None), ptypes)(_OPT) is False
+    assert loop._option_cleared(obs("garbage"), ptypes)(_OPT) is False
     assert loop._option_cleared({}, ptypes)(_OPT) is False
     assert (
         loop._option_cleared({"a": [{"type": "Other", "status": "False"}]}, ptypes)(_OPT) is False
