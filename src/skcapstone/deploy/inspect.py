@@ -149,6 +149,8 @@ def _unit_settings(unit: Path, skip: Iterable[str] = ()) -> dict[str, list[str]]
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        # systemd joins a line ending in a backslash with the next one
+        text = re.sub(r"\\\n[ \t]*", " ", text)
         for match in _KEY_RE.finditer(text):
             key, value = match.group(1), match.group(2).strip()
             if key == "Environment":

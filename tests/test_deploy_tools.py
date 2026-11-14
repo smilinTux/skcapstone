@@ -220,3 +220,13 @@ def test_missing_paths_checks_program_script_and_workdir(tmp_path):
     (tmp_path / "m.service").write_text("[Service]\nExecStart=/usr/bin/python3 -m pkg.mod\n")
     found = sorted(ep.path for ep in unit_missing_paths(tmp_path, home))
     assert found == [str(home / "gone"), str(home / "ok/missing.py")]
+
+
+def test_continuation_lines_are_joined(tmp_path):
+    from skcapstone.deploy.inspect import unit_exec_paths
+
+    home = tmp_path / "h"
+    (tmp_path / "c.service").write_text(
+        "[Service]\nExecStart=/usr/bin/python3 \\\n    %h/src/thing/a.py \\\n    --flag\n"
+    )
+    assert [ep.path for ep in unit_exec_paths(tmp_path, home)] == [str(home / "src/thing/a.py")]
