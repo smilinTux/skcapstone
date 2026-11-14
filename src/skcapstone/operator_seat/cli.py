@@ -2,9 +2,9 @@
 
 Available as `skoperator`. Commands:
   run       one operator pass (report-only by default; reasons via the hybrid brain)
-  pending   list parked decisions awaiting a human
-  decide    approve or reject a parked decision (human only), write-through to a CAB vote
-  honor-pending   dispatch every PROPOSED ledger intent whose linked ITIL change now approves
+  pending   list parked decisions (every ATLAS escalation is report-only)
+  decide    acknowledge a parked decision with --reject (human only); --approve always refuses
+  honor-pending   dispatch PROPOSED auto-lane intents whose standard or auto-normal change approves
   status    freeze state (frozen / active / unprovisioned)
   freeze / unfreeze   toggle the kill switch (human only)
   provision   write the freeze store in its off position for the first time (human only)
@@ -19,7 +19,6 @@ from __future__ import annotations
 import functools
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 import click
 
@@ -266,7 +265,10 @@ def run_cmd(
     if honor:
         click.echo("honor: ON (CR-9.1 step-1 physical actuation: fleet + skchat)")
     if res.get("outcomes"):
-        click.echo(f"({len(res['outcomes'])} proposal(s); parked escalations await approval)")
+        click.echo(
+            f"({len(res['outcomes'])} proposal(s); escalations are report-only, "
+            "acknowledge with: skoperator decide <id> --reject)"
+        )
 
     # Publish the static brief artifact per tick (the atlas host serves it).
     if not no_publish:
@@ -286,133 +288,95 @@ def run_cmd(
 
 @operator.command("pending")
 def pending_cmd() -> None:
-    """List decisions parked for a human."""
+    """List parked decisions. Every ATLAS escalation is report-only: acknowledge with --reject."""
     rows = decisions.list_pending(_decisions_dir(default_paths()))
     if not rows:
         click.echo("no pending decisions")
         return
     for d in rows:
-        opts = "; ".join(f"[{i}] {o.get('action')}" for i, o in enumerate(d.get("options", [])))
-        click.echo(f"{d['id']}  {opts}")
+        options = d.get("options", [])
+        opts = "; ".join(f"[{i}] {o.get('action')}" for i, o in enumerate(options))
+        node = next((o.get("observed_on") for o in options if o.get("observed_on")), None)
+        marks = "  [report-only]" if any(o.get("report_only") for o in options) else ""
+        marks += f"  (observed on {node})" if node else ""
+        click.echo(f"{d['id']}  {opts}{marks}")
 
 
 @operator.command("decide")
 @click.argument("decision_id")
 @click.option("--approve/--reject", required=True)
 @click.option("--choice", type=int, default=None, help="Option index when several are offered.")
-@click.option(
-    "--authorization",
-    type=click.Path(path_type=Path),
-    default=None,
-    help="Signed human CAB grant (`skcapstone itil cab authorize`). Required to approve.",
-)
-@click.option("--target", default="", help="Exact governed mutation target of the grant.")
-@click.option("--scope", default="", help="Exact governed mutation scope of the grant.")
-def decide_cmd(
-    decision_id: str,
-    approve: bool,
-    choice: int | None,
-    authorization: Path | None,
-    target: str,
-    scope: str,
-) -> None:
-    """Approve or reject a parked decision (human only).
+def decide_cmd(decision_id: str, approve: bool, choice: int | None) -> None:
+    """Acknowledge a parked decision with --reject (human only).
 
-    Resolution is write-through (AUTONOMY_ARCHITECTURE.md section 3.1): the
-    decisions store is a projection, so approving here submits a
-    provenance-bound CAB vote on the option's linked ITIL change, and it is
-    THAT vote, folded by ITIL, that authorizes -- never the free-text literal
-    ``by="human"`` this command used to write (PROVENANCE_AND_MUTATION_STANDARD
-    bans exactly that). A decision parked with no linked change authorizes
-    nothing: this command refuses and names the reason instead of printing
-    success.
-
-    Approving needs a signed human CapAuth authorization for the linked change
-    (card bada5c86). The vote is recorded as the authorization's verified
-    issuer, role and fingerprint, never as the running agent's own identity:
-    that identity is an agent's (or the operator seat's), so it is no human
-    approval. Rejecting needs no grant and is attributed to the resolved
-    identity.
+    Every ATLAS escalation is report-only (card f8dd9441): ``--approve`` is refused before
+    any write and before any grant is asked for, because no approval can make ATLAS act.
+    Ratification (``skoperator apps ratify <app> <action>``) is the path. A rejection is
+    attributed to the resolved CapAuth identity.
     """
     from .. import SHARED_ROOT
-    from ..cli.itil import _verified_cab_authorization
     from ..itil import ITILManager
 
     decisions_dir = _decisions_dir(default_paths())
-    provenance: dict = {}
     if approve:
-        if authorization is None or not target or not scope:
-            raise click.ClickException(
-                "approving needs a signed human grant: create one with `skcapstone itil cab "
-                "authorize <change> --decision approved --target ... --scope ...`, then pass "
-                "--authorization, --target and --scope; the running agent's own identity "
-                "cannot approve"
-            )
-        itil = ITILManager(SHARED_ROOT)
         try:
-            option, change_id = dispatch.bound_decision_option(
-                decisions_dir, itil, decision_id, choice
+            dispatch.resolve_decision(
+                decisions_dir,
+                None,
+                decision_id,
+                approve=True,
+                choice=choice,
+                subject="",
+                resolved_iso=_now_iso(),
             )
-        except (ValueError, dispatch.UnauthorizedDecisionError) as exc:
+        except dispatch.UnauthorizedDecisionError as exc:
             raise click.ClickException(str(exc))
-        # The grant must name exactly this decision's mutation: its target is the option's
-        # object and its scope the change binding tag. Checked before the grant is redeemed,
-        # so a grant for something else is refused without burning its nonce.
-        expected_scope = dispatch.change_binding_tag(
-            str(option.get("app") or "unknown"),
-            str(option.get("action") or "unknown"),
-            str(option.get("object") or "unknown"),
+    subject = store.resolved_writer_identity()
+    if subject in ("", "unattributed"):
+        raise click.ClickException(
+            "cannot resolve an authenticated CapAuth identity for this rejection; "
+            "failing closed rather than recording an unattributed decision"
         )
-        if target != str(option.get("object") or "") or scope != expected_scope:
-            raise click.ClickException(
-                f"--target and --scope must match decision {decision_id}: target "
-                f"{option.get('object')!r}, scope {expected_scope!r}"
-            )
-        envelope = _verified_cab_authorization(authorization, change_id, "approved", target, scope)
-        subject = envelope.issuer
-        provenance = {"authorization": envelope.model_dump()}
-    else:
-        subject = store.resolved_writer_identity()
-        if subject in ("", "unattributed"):
-            raise click.ClickException(
-                "cannot resolve an authenticated CapAuth identity for this rejection; "
-                "failing closed rather than recording an unattributed decision"
-            )
     try:
         out = dispatch.resolve_decision(
             decisions_dir,
             ITILManager(SHARED_ROOT),
             decision_id,
-            approve=approve,
+            approve=False,
             choice=choice,
             subject=subject,
             resolved_iso=_now_iso(),
-            **provenance,
         )
-    except dispatch.UnauthorizedDecisionError as exc:
+    except (ValueError, dispatch.UnauthorizedDecisionError) as exc:
         raise click.ClickException(str(exc))
     click.echo(f"{decision_id} -> {out['status']}")
 
 
+#: ``honor-pending`` exits with this when an intent it saw can never actuate (report-only).
+EXIT_NEVER_ACTUATES = 3
+
+
+def honor_pending_summary(outcomes: list) -> tuple[str, int]:
+    """The closing line of ``honor-pending`` and its exit code: 3 when any intent can never
+    actuate (report-only), else 0. What did run is counted either way."""
+    verified = sum(1 for o in outcomes if o.outcome == "verified")
+    report_only = sum(1 for o in outcomes if o.outcome.startswith(dispatch.REPORT_ONLY_REFUSAL))
+    line = (
+        f"honor-pending: {len(outcomes)} intent(s): {verified} verified, "
+        f"{report_only} report-only (can never actuate)"
+    )
+    return line, EXIT_NEVER_ACTUATES if report_only else 0
+
+
 @operator.command("honor-pending")
-@click.option(
-    "--max-approval-age",
-    "max_approval_age",
-    type=click.FloatRange(min=0, min_open=True, max=dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS),
-    default=dispatch.DEFAULT_MAX_APPROVAL_AGE_SECONDS,
-    show_default=True,
-    help="Oldest human CAB approval (seconds, from its signed grant's issued_at) that may "
-    f"still be honored, at most {dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS:g}. A human "
-    "approves a change for one episode: past this, or once the condition has cleared, the "
-    "intent is closed and a new proposal needs a new vote.",
-)
-def honor_pending_cmd(max_approval_age: float) -> None:
+def honor_pending_cmd() -> None:
     """Dispatch every PROPOSED ledger intent whose linked ITIL change now folds
-    approved: the slow half of the dispatcher's "one code path, two speeds"
-    (AUTONOMY_ARCHITECTURE.md section 3.2). Run this after `skoperator decide
-    --approve` so a human's CAB vote actually causes the actuation it
-    authorized -- before this command existed, nothing downstream ever
-    re-read a resolved decision, and every escalated proposal was a dead end.
+    approved, through the same dispatcher the loop's auto lane uses.
+
+    Only standard and auto-normal approvals dispatch (card f8dd9441): an intent an older
+    loop escalated, or one whose change carries a human CAB vote, is refused as
+    report-only. A closing summary counts what was verified and what can never actuate;
+    the exit code is 3 when anything was report-only, else 0.
 
     Refuses outright (same as any actuation surface) unless the estate is
     actuation-ready and not frozen. An intent whose change has not yet folded
@@ -457,10 +421,9 @@ def honor_pending_cmd(max_approval_age: float) -> None:
             emit=click.echo,
             # The planner's verdicts at proposal time are not permissions that last: the
             # target must still resolve and the action must still be ratified for the app
-            # (against the signed catalog) when the human approval is finally honored.
+            # (against the signed catalog) at dispatch.
             target_known=lambda p: fleet_adapter.fleet_target_known(paths, p),
             action_allowed=lambda p: loop._operatorapp_allows(paths, p, require_signature=True),
-            max_approval_age_s=max_approval_age,
         )
     except RuntimeError as exc:
         if "another Atlas operator pass is active" not in str(exc):
@@ -474,6 +437,10 @@ def honor_pending_cmd(max_approval_age: float) -> None:
         return
     for o in outcomes:
         click.echo(f"{o.intent_id}: {o.outcome}")
+    line, code = honor_pending_summary(outcomes)
+    click.echo(line)
+    if code:
+        raise SystemExit(code)
 
 
 @operator.command("status")

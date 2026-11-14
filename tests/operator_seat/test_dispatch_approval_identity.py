@@ -1,4 +1,5 @@
-"""The dispatcher acts only on an authenticated human approval (card bada5c86).
+"""Which votes count as an authenticated human approval (card bada5c86), and that the
+ATLAS dispatcher never actuates on one (card f8dd9441).
 
 Before this card the dispatcher inherited three holes from the ITIL fold through
 ``_is_human_approval``: a bare ``agent="human"`` vote (what the MCP tool writes when
@@ -6,6 +7,10 @@ CapAuth resolution fails) counted; a vote by the change's creator or managed-by
 owner counted; and ``skoperator decide`` recorded the running agent's own identity
 with a self-asserted ``approver`` role. Each case below must leave the intent
 PROPOSED with ``apply_fn`` never called, whatever skcoord release is installed.
+
+Since card f8dd9441 (fewest gates) the ATLAS dispatcher never actuates on a human vote at
+all; ``human_approval_times`` still decides what counts for the CMDB apply gate and the
+trustee guard, which share it, so the qualification tests below stay.
 
 A qualifying approval stores the signed grant it was cast under, and the grant must
 verify against a pinned approver key (``skcapstone.cab_approval``). The tests pin a
@@ -86,15 +91,20 @@ def _assert_never_actuates(paths, ledger, itil, chg, lane="escalate"):
     outcome, calls, state = _dispatch(paths, ledger, itil, chg, lane)
     assert calls == []
     assert state is action_ledger.ActionState.PROPOSED
-    assert outcome.outcome.startswith("pending:")
+    assert outcome.outcome.startswith(("pending:", dispatch.REPORT_ONLY_REFUSAL))
 
 
-def test_authenticated_human_approval_actuates(tmp_path):
+@pytest.mark.parametrize("lane", ["escalate", "auto"])
+def test_an_authenticated_human_approval_qualifies_but_never_actuates_atlas(tmp_path, lane):
+    """The vote is a qualifying human approval (it would gate the CMDB apply), yet the
+    ATLAS dispatcher refuses it as report-only, before anything is spent."""
     paths, itil, ledger, chg = _world(tmp_path)
     cast_signed_vote(itil, chg.id, subject="chef", role="owner")
-    outcome, calls, _ = _dispatch(paths, ledger, itil, chg)
-    assert outcome.outcome == "verified"
-    assert len(calls) == 1
+    assert dispatch.human_approval_times(itil, chg)
+    outcome, calls, state = _dispatch(paths, ledger, itil, chg, lane=lane)
+    assert calls == []
+    assert outcome.outcome.startswith(dispatch.REPORT_ONLY_REFUSAL)
+    assert state is action_ledger.ActionState.PROPOSED
 
 
 def test_subject_less_human_vote_never_actuates(tmp_path):
@@ -193,81 +203,26 @@ def _grant(chg, issuer="capauth:lumina@skworld.io", **kw):
     return envelope(chg.id, issuer=issuer, role=kw.pop("role", "approver"), **kw)
 
 
-@pytest.mark.parametrize(
-    "make",
-    [
-        lambda chg: None,  # the running agent's own identity, no grant
-        lambda chg: {**FORGED},  # provenance fields, not an envelope
-        lambda chg: _grant(chg, signer="mallory"),  # unpinned signer
-        lambda chg: _grant(chg, decision="rejected"),  # grant for another decision
-        lambda chg: {**_grant(chg), "change_id": "chg-other"},  # tampered
-        lambda chg: envelope("chg-other", issuer="capauth:lumina@skworld.io"),
-        lambda chg: _grant(chg, issuer="chef"),  # issuer is not the subject
-    ],
-    ids=[
-        "no-grant",
-        "fields-only",
-        "unpinned",
-        "wrong-decision",
-        "tampered",
-        "other-change",
-        "issuer-mismatch",
-    ],
-)
-def test_resolve_decision_refuses_an_approval_without_a_verified_grant(tmp_path, make):
+@pytest.mark.parametrize("issuer", ["chef", "capauth:lumina@skworld.io"])
+def test_resolve_decision_refuses_an_approval_even_with_a_verified_grant(tmp_path, issuer):
+    """No ATLAS decision can be approved (card f8dd9441): refused before any write, so no
+    vote is recorded, whatever grant the caller holds."""
     _, itil, _, chg = _world(tmp_path)
     ddir = tmp_path / "decisions"
     _park(ddir, chg)
-    with pytest.raises(dispatch.UnauthorizedDecisionError, match="verified human"):
+    assert _grant(chg, issuer=issuer)  # a grant exists; resolve_decision takes none
+    with pytest.raises(dispatch.ReportOnlyDecisionError, match="skoperator apps ratify"):
         dispatch.resolve_decision(
             str(ddir),
             itil,
             "d1",
             approve=True,
             choice=0,
-            subject="capauth:lumina@skworld.io",
+            subject=issuer,
             resolved_iso=_NOW,
-            authorization=make(chg),
         )
     assert itil.get_cab_votes(chg.id) == []
     assert len(decisions.list_pending(str(ddir))) == 1
-
-
-def test_resolve_decision_refuses_the_operator_identity_even_with_a_grant(tmp_path):
-    _, itil, _, chg = _world(tmp_path, created_by="lumina", managed_by="lumina")
-    ddir = tmp_path / "decisions"
-    _park(ddir, chg)
-    with pytest.raises(dispatch.UnauthorizedDecisionError):
-        dispatch.resolve_decision(
-            str(ddir),
-            itil,
-            "d1",
-            approve=True,
-            choice=0,
-            subject="capauth:operator@skworld.io",
-            resolved_iso=_NOW,
-            authorization=_grant(chg, issuer="capauth:operator@skworld.io"),
-        )
-    assert itil.get_cab_votes(chg.id) == []
-
-
-def test_resolve_decision_with_a_verified_grant_authorizes_dispatch(tmp_path):
-    paths, itil, ledger, chg = _world(tmp_path)
-    ddir = tmp_path / "decisions"
-    _park(ddir, chg)
-    dispatch.resolve_decision(
-        str(ddir),
-        itil,
-        "d1",
-        approve=True,
-        choice=0,
-        subject="chef",
-        resolved_iso=_NOW,
-        authorization=_grant(chg, issuer="chef", role="owner"),
-    )
-    outcome, calls, _ = _dispatch(paths, ledger, itil, chg)
-    assert outcome.outcome == "verified"
-    assert len(calls) == 1
 
 
 @pytest.mark.parametrize(

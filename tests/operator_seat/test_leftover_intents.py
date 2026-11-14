@@ -360,33 +360,32 @@ def test_a_standard_intent_with_fresh_stored_evidence_and_a_firing_condition_act
 def test_the_dispatcher_re_observes_and_will_not_act_on_a_condition_that_cleared(
     tmp_path, monkeypatch
 ):
-    """Human-approved honor-pending skips the age limit but must re-observe."""
     paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
-    observer.healed = True  # it fixed itself while the approval was pending
-    iid = _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id, lane="escalate")
+    observer.healed = True  # it fixed itself before the dispatch
+    iid = _proposed_intent(ledger, _standard_change(itil).id, evidence=FRESH)
     apply_fn = _Apply(observer)
-    outcomes = _dispatch_pass(paths, observer, ledger, itil, apply_fn)  # a day later
+    outcomes = _dispatch_pass(paths, observer, ledger, itil, apply_fn, clock=lambda: CLOCK)
     assert apply_fn.calls == []
     assert "condition cleared before dispatch" in outcomes[0].outcome
-    # A human approval covers ONE episode: when it clears, the intent is closed and the
-    # change retired, so a recurrence needs a new proposal and a new human vote.
+    # An approval covers ONE episode: when it clears, the intent is closed and the change
+    # retired, so a recurrence needs a new proposal.
     assert ledger.current_state(iid) is action_ledger.ActionState.ESCALATED
 
 
-def test_human_approved_intent_with_a_firing_condition_actuates_a_day_later_without_evidence(
-    tmp_path, monkeypatch
-):
+def test_a_human_approved_escalated_intent_is_report_only_even_while_firing(tmp_path, monkeypatch):
+    """Card f8dd9441: ATLAS never actuates on a human CAB vote."""
     paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
     iid = _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id, lane="escalate")
     apply_fn = _Apply(observer)
     outcomes = _dispatch_pass(paths, observer, ledger, itil, apply_fn)
-    assert outcomes[0].outcome == "verified"
-    assert ledger.current_state(iid) is action_ledger.ActionState.VERIFIED
+    assert apply_fn.calls == []
+    assert outcomes[0].outcome.startswith(dispatch.REPORT_ONLY_REFUSAL)
+    assert ledger.current_state(iid) is action_ledger.ActionState.PROPOSED
 
 
 def test_no_owning_observer_means_no_actuation(tmp_path, monkeypatch):
     paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
-    _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id, lane="escalate")
+    _proposed_intent(ledger, _standard_change(itil).id, evidence=FRESH)
     apply_fn = _Apply(observer)
     outcomes = dispatch.run_dispatch_pass(
         paths,
@@ -396,7 +395,7 @@ def test_no_owning_observer_means_no_actuation(tmp_path, monkeypatch):
         problem_types=set(),  # Ready is a health type: fires when False
         apply_fn=apply_fn,
         now_iso=NOW,
-        clock=lambda: CLOCK + timedelta(hours=13),  # after the (re-dated) human vote
+        clock=lambda: CLOCK,
     )
     assert apply_fn.calls == []
     assert "observer unavailable" in outcomes[0].outcome
@@ -440,9 +439,9 @@ def test_a_standard_intent_with_no_recorded_lane_is_refused_and_never_voided(
 def test_unknown_or_unobserved_is_not_firing_and_the_intent_stays(tmp_path, monkeypatch, status):
     paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
     observer.status_override = status or "Unknown"
-    iid = _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id, lane="escalate")
+    iid = _proposed_intent(ledger, _standard_change(itil).id, evidence=FRESH)
     apply_fn = _Apply(observer)
-    outcomes = _dispatch_pass(paths, observer, ledger, itil, apply_fn)
+    outcomes = _dispatch_pass(paths, observer, ledger, itil, apply_fn, clock=lambda: CLOCK)
     assert apply_fn.calls == []
     assert "Unknown" in outcomes[0].outcome
     assert ledger.current_state(iid) is action_ledger.ActionState.PROPOSED
@@ -460,10 +459,10 @@ def test_an_unknown_standard_intent_is_not_voided_either(tmp_path, monkeypatch):
 
 def test_a_re_observation_older_than_the_allowed_age_does_not_act(tmp_path, monkeypatch):
     paths, observer, ledger, itil = _setup(tmp_path, monkeypatch)
-    iid = _proposed_intent(ledger, _normal_change_approved_by_a_human(itil).id, lane="escalate")
+    iid = _proposed_intent(ledger, _standard_change(itil).id, evidence=FRESH)
     apply_fn = _Apply(observer)
-    clock = lambda: CLOCK + timedelta(days=1)  # noqa: E731
-    observer.stamp = "2026-08-20T00:00:30Z"  # the adapter hands back a day-old reading
+    clock = lambda: CLOCK  # noqa: E731
+    observer.stamp = "2026-08-19T00:00:30Z"  # the adapter hands back a day-old reading
     outcomes = dispatch.run_dispatch_pass(
         paths,
         ledger,

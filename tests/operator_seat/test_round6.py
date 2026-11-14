@@ -19,10 +19,8 @@ from skcapstone.operator_seat import action_ledger, dispatch, loop, safety, skch
 
 from .test_dispatch_e2e import (  # noqa: F401  (world is a fixture)
     BIND,
-    WEEK,
     _apply_fn,
     _dispatch_one,
-    _escalated_intent,
     _iso,
     _loop_pass,
     _manual_intent,
@@ -44,11 +42,10 @@ HUMAN = store.Writer(role="operator", node="node-158", identity="chef")
 
 
 def _long_dispatch(world, *, advance, sweeper_ahead=timedelta(0), pass_started_ago=timedelta(0)):
-    """Dispatch one human-approved intent whose actuation takes ``advance`` of wall time, with a
+    """Dispatch one auto-lane intent whose actuation takes ``advance`` of wall time, with a
     sweeper running on another 'process' (its clock ``sweeper_ahead``) while it is in flight."""
-    change = _normal_change(world)
-    _vote(world, change.id)
-    intent_id = _manual_intent(world, change.id, lane="escalate")
+    change = _standard_bound_change(world)
+    intent_id = _manual_intent(world, change.id, lane="auto", evidence=_stamp(world))
     alerts, rollbacks, swept = [], [], []
     started = world.time.now
 
@@ -127,11 +124,14 @@ class _VerifiedAppendFails(action_ledger.ActionLedger):
 
 
 def test_a_failed_verified_append_never_rolls_back_a_fix_that_worked(world, tmp_path):
-    change = _normal_change(world)
-    _vote(world, change.id)
+    change = _standard_bound_change(world)
     world.ledger = _VerifiedAppendFails(tmp_path / "ledger")
     intent_id = _manual_intent(
-        world, change.id, lane="escalate", rollback={"action": "restart-daemon"}
+        world,
+        change.id,
+        lane="auto",
+        evidence=_stamp(world),
+        rollback={"action": "restart-daemon"},
     )
     rollbacks, alerts = [], []
     outcome = dispatch.dispatch_intent(
@@ -191,58 +191,30 @@ def test_the_loops_inline_lane_never_rolls_back_a_fix_that_worked_either(world, 
 # --------------------------------------------------------------------------
 
 
-def test_a_future_dated_vote_closes_the_intent_and_retires_the_change(world, monkeypatch):
-    from tests import cab_grants
-
-    change = _normal_change(world)
-    # Card bada5c86: the grant itself is issued in the future (its signed time counts).
-    monkeypatch.setattr(cab_grants, "ISSUED_AT", world.time.now + timedelta(days=5))
-    _vote(world, change.id)
-    intent_id = _manual_intent(world, change.id, lane="escalate")
-    outcomes = _sweep(world, max_approval_age_s=WEEK)
-    assert world.calls == []
-    assert "dated in the future" in outcomes[0].outcome
-    assert world.ledger.current_state(intent_id) is action_ledger.ActionState.ESCALATED
-    retired = next(c for c in world.itil.list_changes() if c.id == change.id)
-    assert retired.status.value in ("rejected", "closed")
-    # The vote's own future date arrives: nothing is left to act on.
-    world.time.advance(days=5, hours=23)
-    assert _sweep(world, max_approval_age_s=WEEK) == []
-    assert world.calls == []
-
-
 # --------------------------------------------------------------------------
 # 3: the loop closes an episode it sees clear
 # --------------------------------------------------------------------------
 
 
-def test_the_loop_closes_a_cleared_escalation_so_a_later_vote_cannot_ride_the_next_episode(world):
-    first = _escalated_intent(world)
-    old_change = world.ledger.read_intent(first).itil_change_id
-    world.heal()  # episode 1 ends
+def test_the_loop_closes_a_leftover_escalated_intent_once_its_condition_clears(world):
+    """An escalated intent an older loop left behind is never dispatched, and the loop
+    closes it (and retires its change) once its condition reads definitely cleared."""
+    change = _normal_change(world)
+    _vote(world, change.id)
+    first = _manual_intent(world, change.id, lane="escalate")
+    _loop_pass(world, target_known=lambda p: False)  # still firing: left alone
+    assert world.ledger.current_state(first) is action_ledger.ActionState.PROPOSED
+    world.heal()
     _loop_pass(world, target_known=lambda p: False)
     assert world.ledger.current_state(first) is action_ledger.ActionState.ESCALATED
-    retired = next(c for c in world.itil.list_changes() if c.id == old_change)
+    retired = next(c for c in world.itil.list_changes() if c.id == change.id)
     assert retired.status.value in ("rejected", "closed")
-    # Episode 2, 18 hours later.
-    world.time.advance(hours=18)
+    # The next episode is report-only: no new intent, no new change.
     world.wedge()
     again = _loop_pass(world, target_known=lambda p: False)
-    second = again["outcomes"][0]["intent_id"]
-    assert second != first, "a new episode is a new intent"
-    assert world.ledger.read_intent(second).itil_change_id != old_change
-    # A (late) human vote on the episode-1 change is useless.
-    _vote(world, old_change)
-    outcomes = _sweep(world)
+    assert again["outcomes"][0]["intent_id"] is None
+    assert world.ledger.list_intents() == [first]
     assert world.calls == []
-    assert all(o.intent_id != first for o in outcomes)
-
-
-def test_an_escalation_whose_condition_is_still_firing_is_kept_and_reused(world):
-    first = _escalated_intent(world)
-    again = _loop_pass(world, target_known=lambda p: False)
-    assert again["outcomes"][0]["intent_id"] == first
-    assert world.ledger.current_state(first) is action_ledger.ActionState.PROPOSED
 
 
 # --------------------------------------------------------------------------
@@ -253,9 +225,8 @@ def test_an_escalation_whose_condition_is_still_firing_is_kept_and_reused(world)
 def test_change_locks_live_in_the_node_local_state_dir_not_the_synced_ledger_tree(world):
     from skcapstone.operator_seat import node_local
 
-    change = _normal_change(world)
-    _vote(world, change.id)
-    _manual_intent(world, change.id, lane="escalate")
+    change = _standard_bound_change(world)
+    _manual_intent(world, change.id, lane="auto", evidence=_stamp(world))
     assert _sweep(world)[0].outcome == "verified"
     assert not (world.ledger.root / "change-locks").exists()
     locks = node_local.state_dir() / "atlas" / "change-locks"
@@ -267,9 +238,8 @@ def test_change_locks_live_in_the_node_local_state_dir_not_the_synced_ledger_tre
 def test_a_lock_directory_that_is_not_private_is_refused(world):
     from skcapstone.operator_seat import node_local
 
-    change = _normal_change(world)
-    _vote(world, change.id)
-    _manual_intent(world, change.id, lane="escalate")
+    change = _standard_bound_change(world)
+    _manual_intent(world, change.id, lane="auto", evidence=_stamp(world))
     locks = node_local.state_dir() / "atlas" / "change-locks"
     locks.mkdir(parents=True, mode=0o700)
     locks.chmod(0o777)
@@ -281,9 +251,8 @@ def test_a_lock_directory_that_is_not_private_is_refused(world):
 def test_a_symlinked_lock_directory_is_refused(world, tmp_path):
     from skcapstone.operator_seat import node_local
 
-    change = _normal_change(world)
-    _vote(world, change.id)
-    _manual_intent(world, change.id, lane="escalate")
+    change = _standard_bound_change(world)
+    _manual_intent(world, change.id, lane="auto", evidence=_stamp(world))
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir(mode=0o700)
     locks = node_local.state_dir() / "atlas" / "change-locks"
@@ -320,9 +289,8 @@ def test_the_designation_comes_from_node_local_config_and_defaults_to_none(tmp_p
 def test_dispatch_intent_refuses_on_a_node_that_is_not_the_actuator(world, monkeypatch):
     from skcapstone.operator_seat import node_local
 
-    change = _normal_change(world)
-    _vote(world, change.id)
-    intent_id = _manual_intent(world, change.id, lane="escalate")
+    change = _standard_bound_change(world)
+    intent_id = _manual_intent(world, change.id, lane="auto", evidence=_stamp(world))
     monkeypatch.setattr(
         node_local, "actuator_refusal", lambda: "this node is not the designated actuator"
     )
@@ -351,9 +319,8 @@ def test_the_loop_refuses_to_actuate_on_a_node_that_is_not_the_actuator(world, m
 
 
 def test_an_intent_stranded_in_authorized_retires_its_still_approved_change(world):
-    change = _normal_change(world)
-    _vote(world, change.id)
-    intent_id = _manual_intent(world, change.id, lane="escalate")
+    change = _standard_bound_change(world)
+    intent_id = _manual_intent(world, change.id, lane="auto", evidence=_stamp(world))
     long_ago = world.time.now - timedelta(minutes=30)
     world.ledger.append(
         intent_id, action_ledger.ActionState.AUTHORIZED, occurred_at=long_ago, actor="crashed"

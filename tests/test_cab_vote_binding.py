@@ -182,5 +182,4 @@ def test_trustee_guard_refuses_a_future_dated_approval(tmp_path, monkeypatch):
 def test_every_gate_shares_one_default_age():
     from skcapstone.operator_seat import dispatch
 
-    assert dispatch.DEFAULT_MAX_APPROVAL_AGE_SECONDS == 86400.0
     assert cab_approval.DEFAULT_MAX_APPROVAL_AGE_SECONDS == 86400.0

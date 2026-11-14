@@ -8,15 +8,18 @@ authenticates the approver -- CAB votes are provenance-bound, no-self-approval
 is enforced inside the fold, and the AI structurally cannot satisfy a
 human-approval requirement); the action ledger is EVIDENCE and this module's
 QUEUE (an intent in PROPOSED state, bound to an ITIL change, is exactly what
-this dispatcher iterates); the decisions store stays the human inbox, a
-PROJECTION, whose resolution becomes write-through (``resolve_decision``
-below): approving submits a provenance-bound CAB vote on the linked change,
-and it is THAT vote, folded by ITIL, that authorizes. A decisions record with
-no linked change authorizes nothing.
+this dispatcher iterates); the decisions store is a report-only inbox.
 
-Per pass (``run_dispatch_pass``, called from ``loop._run_once`` for the fast/
-auto lane and standalone by ``skoperator honor-pending`` for the slow/human
-lane -- one code path, two speeds):
+ATLAS has exactly two gates (card f8dd9441, Chef: fewest gates): the freeze, and
+one-time signed ratification (standard catalog actions) plus auto-normal. A loop
+intent dispatches only on a standard or auto-normal approval; one whose approval
+would come from a human CAB vote, or that the loop recorded as escalated, is
+refused as report-only. No ATLAS decision can be approved (``resolve_decision``).
+The signed human vote still gates the CMDB apply and the trustee guard, which
+share ``approval_refusal`` and ``cab_approval`` but not this dispatcher.
+
+Per pass (``run_dispatch_pass``, called from ``loop._run_once`` for the auto
+lane and standalone by ``skoperator honor-pending``):
 
 1. Refuse unless the fleet is actuation-ready and not frozen
    (``store.check_actuation_gate``), freeze first.
@@ -65,17 +68,41 @@ from . import action_ledger, actuator, decisions, evidence, node_local, policy, 
 BINDING_TAG_PREFIX = "op-bind:"
 
 
-#: How long a human CAB approval stays usable, measured from its signed grant's
-#: ``issued_at`` (card bada5c86; not the unsigned ``decided_at``) against the real
-#: clock. A human approves a CHANGE for an EPISODE; a day is generous for
-#: the slow lane and short enough that a recurrence next week cannot ride an old vote.
-#: Configurable (``honor-pending --max-approval-age``) up to the cap below; Chef can relax it.
-DEFAULT_MAX_APPROVAL_AGE_SECONDS = cab_approval.DEFAULT_MAX_APPROVAL_AGE_SECONDS
-MAX_ALLOWED_APPROVAL_AGE_SECONDS = cab_approval.MAX_ALLOWED_APPROVAL_AGE_SECONDS
-
 #: How long an intent may sit in AUTHORIZED/EXECUTING before it is treated as stranded by a
 #: crash. A pass has a five minute runtime budget, so twice that is not a live dispatch.
 DEFAULT_EXECUTING_TIMEOUT_SECONDS = 600.0
+
+#: The outcome prefix of an intent the dispatcher will never actuate (card f8dd9441).
+REPORT_ONLY_REFUSAL = "refused: report-only"
+
+
+def report_only_reason(app: Any, action: Any, change_class: str | None = None) -> str:
+    """Why an ATLAS escalation is report-only, and what (if anything) would automate it.
+
+    The hint follows the proposal's class: a major or emergency change (irreversible, or
+    high risk) can never be automated, so ratifying cannot help and a human handles it by
+    hand; a reversible non-standard change becomes auto-normal once ratified; with no class
+    known the generic hint is given.
+    """
+    head = (
+        f"ATLAS escalations are report-only: no approval can make ATLAS run {action!r} for {app!r}"
+    )
+    ratify = f"`skoperator apps ratify {app} {action}`"
+    if change_class in ("major", "emergency"):
+        return (
+            f"{head}. It is a {change_class} change (irreversible or high risk), so ratifying "
+            "cannot help: a human must handle it by hand"
+        )
+    if change_class == "normal":
+        return (
+            f"{head}. It is reversible but not standard: ratifying it once ({ratify}) lets "
+            "ATLAS run it as auto-normal; otherwise a human handles it"
+        )
+    return (
+        f"{head}. To let ATLAS act on it, ratify it once as a standard action ({ratify}); "
+        "otherwise a human handles it"
+    )
+
 
 _CHANGE_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -194,16 +221,11 @@ qualifying_human_approval = cab_approval.qualifying_human_approval
 human_approval_times = cab_approval.human_approval_times
 
 
-def change_human_approved(itil: Any, change: Any) -> bool:
-    """Whether a qualifying human approved this change (see ``human_approval_times``)."""
-    return bool(human_approval_times(itil, change))
-
-
 def _valid_approval_age(value: Any) -> bool:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False
     try:
-        return math.isfinite(value) and 0 < value <= MAX_ALLOWED_APPROVAL_AGE_SECONDS
+        return math.isfinite(value) and 0 < value <= cab_approval.MAX_ALLOWED_APPROVAL_AGE_SECONDS
     except OverflowError:
         return False
 
@@ -493,80 +515,14 @@ def reobserve(
 
 
 # ---------------------------------------------------------------------------
-# Decisions write-through: approving a decision submits a provenance-bound
-# CAB vote on the linked ITIL change; it is that vote, folded by ITIL, that
-# authorizes. by="human" dies here -- every caller supplies its own
-# authenticated ``subject`` (capauth.resolve_agent_identity's canonical
-# subject; see ``fleet/store.py::resolved_writer_identity``), never a
-# caller-typed literal.
+# Decisions: acknowledge-only. A rejection acknowledges a report-only record; an
+# approval is refused before any write. The resolver is the caller's authenticated
+# ``subject`` (``fleet/store.py::resolved_writer_identity``), never a typed literal.
 # ---------------------------------------------------------------------------
 
 
-def decision_option(decisions_dir: str, decision_id: str, choice: int | None) -> tuple[dict, str]:
-    """The chosen option of a pending decision and the ITIL change it links.
-
-    Raises:
-        ValueError: unknown or already-resolved decision, or an out-of-range choice.
-        UnauthorizedDecisionError: the chosen option links no ITIL change.
-    """
-    pending = {record["id"]: record for record in decisions.list_pending(decisions_dir)}
-    record = pending.get(decision_id)
-    if record is None:
-        raise ValueError(f"unknown or already-resolved decision: {decision_id}")
-    options = record.get("options") or []
-    index = choice if (choice is not None and len(options) > 1) else 0
-    if not options or not 0 <= index < len(options):
-        raise ValueError(f"choice out of range for {len(options)} option(s)")
-    change_id = options[index].get("itil_change_id") or options[index].get("change_id")
-    if not change_id:
-        raise UnauthorizedDecisionError(
-            f"decision {decision_id!r} has no ITIL change linked to option {index}; "
-            "approving it here would authorize nothing (no store on this estate "
-            "can turn a bare decisions-store approval into an actuation) -- "
-            "the proposal must be re-parked with a bound change before it can "
-            "be approved"
-        )
-    return options[index], change_id
-
-
-def bound_decision_option(
-    decisions_dir: Any, itil: Any, decision_id: str, choice: int | None
-) -> tuple[dict, str]:
-    """The chosen option and its linked change, once the change is proven bound to it.
-
-    The change must carry exactly the binding tag of THIS decision's proposal (app,
-    action, target): a decision whose option points at a change drafted for something
-    else would put a human vote on the wrong change. Callers run this before they
-    redeem a signed grant, so a mismatch never burns the grant's nonce.
-
-    Raises:
-        UnauthorizedDecisionError: no linked change, or one not bound to the option.
-        ValueError: unknown decision, already resolved, or an out-of-range choice.
-    """
-    option, change_id = decision_option(decisions_dir, decision_id, choice)
-    try:
-        expected = change_binding_tag(
-            str(option.get("app") or "unknown"),
-            str(option.get("action") or "unknown"),
-            str(option.get("object") or "unknown"),
-        )
-    except ValueError as exc:
-        raise UnauthorizedDecisionError(
-            f"decision {decision_id!r} cannot be bound to a change: {exc}"
-        ) from exc
-    try:
-        change = _read_change(itil, change_id)
-    except Exception:  # noqa: BLE001 - an unreadable change authorizes nothing
-        change = None
-    bound_tags = [
-        t for t in (getattr(change, "tags", None) or []) if str(t).startswith(BINDING_TAG_PREFIX)
-    ]
-    if change is None or bound_tags != [expected]:
-        raise UnauthorizedDecisionError(
-            f"decision {decision_id!r}: change {change_id!r} is not bound to this decision's "
-            "app, action and target; approving it would put a vote on the wrong change"
-        )
-    return option, change_id
+class ReportOnlyDecisionError(UnauthorizedDecisionError):
+    """Approving an ATLAS decision: every ATLAS escalation is report-only (card f8dd9441)."""
 
 
 def resolve_decision(
@@ -578,77 +534,32 @@ def resolve_decision(
     choice: int | None,
     subject: str,
     resolved_iso: str,
-    authorization: dict | None = None,
 ) -> dict:
-    """Resolve a parked decision, write-through to a CAB vote when approving.
+    """Resolve a parked ATLAS decision: reject (acknowledge) only.
 
-    Rejection needs no ITIL involvement (there is nothing to authorize) and
-    resolves the projection directly. Approval REQUIRES the chosen option to
-    carry an ``itil_change_id`` (or ``change_id``): that is the only thing
-    this dispatcher, or any future one, will ever look at to decide whether
-    the corresponding ledger intent may be dispatched. A decision parked
-    without one cannot be write-through approved -- raises
-    ``UnauthorizedDecisionError`` BEFORE any write, so a caller that fails to
-    catch it never silently prints success either.
-
-    Args:
-        decisions_dir: The pending-decision store directory.
-        itil: An ``ITILManager``-shaped object (``submit_cab_vote``).
-        decision_id: The decision to resolve.
-        approve: True to approve, False to reject.
-        choice: Option index for a multi-option decision.
-        subject: The caller's authenticated identity (never a magic string
-            like ``"human"``): recorded as the CAB vote's authenticated
-            voter and as the decision record's ``resolved_by``.
-        resolved_iso: ISO timestamp of resolution.
-        authorization: The signed human CapAuth grant behind an approval (card
-            bada5c86), as a dict. It must verify against a pinned approver key
-            (``cab_approval.verify_grant_for``) for this decision's linked change
-            and the ``approved`` decision, and name *subject* as its issuer. The
-            vote's voter, role, fingerprint and authorization id all come from
-            it, and it is stored with the vote. Approving without one, with one
-            that does not verify, or as the operator seat raises before any
-            write: the running agent's identity is not a human approval.
-
-    Returns:
-        The updated decision record.
+    Approving raises ``ReportOnlyDecisionError`` before any write: ATLAS has no
+    human-approval lane, so an approval would authorize nothing. Ratification
+    (``skoperator apps ratify <app> <action>``) is the path. ``itil`` is unused and kept
+    for the callers' signature.
 
     Raises:
-        UnauthorizedDecisionError: approving a decision whose chosen option
-            has no linked ITIL change.
-        ValueError: unknown decision, already resolved, or an out-of-range
-            choice (same failures ``decisions.resolve`` itself raises).
+        ReportOnlyDecisionError: ``approve`` is True.
+        ValueError: unknown or already-resolved decision (from ``decisions.resolve``).
     """
-    if not approve:
-        return decisions.resolve(
-            decisions_dir,
-            decision_id,
-            approve=False,
-            choice=choice,
-            by=subject,
-            resolved_iso=resolved_iso,
+    if approve:
+        pending = {r["id"]: r for r in decisions.list_pending(decisions_dir)}
+        option = ((pending.get(decision_id) or {}).get("options") or [{}])[0]
+        reason = option.get("report_only_reason") or report_only_reason(
+            option.get("app"), option.get("action"), option.get("change_class")
         )
-
-    option, change_id = bound_decision_option(decisions_dir, itil, decision_id, choice)
-    if (
-        not isinstance(authorization, dict)
-        or cab_approval.identity_key(authorization.get("issuer"))
-        != cab_approval.identity_key(subject)
-        or not cab_approval.verify_grant_for(
-            authorization, change_id=change_id, decision="approved"
+        raise ReportOnlyDecisionError(
+            f"decision {decision_id!r} can never be approved: {reason}; reject it to "
+            "acknowledge it"
         )
-    ):
-        raise UnauthorizedDecisionError(
-            f"decision {decision_id!r}: approving needs a verified human CapAuth grant "
-            f"from a pinned approver for change {change_id!r}, issued by the approving "
-            "subject; the running agent's or operator seat's own identity is not a human "
-            "approval"
-        )
-    cab_approval.record_signed_vote(itil, authorization)
     return decisions.resolve(
         decisions_dir,
         decision_id,
-        approve=True,
+        approve=False,
         choice=choice,
         by=subject,
         resolved_iso=resolved_iso,
@@ -826,7 +737,7 @@ def _spend_change(itil: Any, change_id: str, intent_id: str, actor: str) -> str 
 
 def _retire_change(itil: Any, change_id: str, actor: str, note: str) -> None:
     """Move an approval that will not be used to a terminal state (rejected, then closed),
-    so a later recurrence needs a new proposal and a new human vote. Best effort."""
+    so a later recurrence needs a new proposal (and a new auto approval). Best effort."""
     for status in ("rejected", "closed"):
         try:
             itil.update_change(change_id, actor, new_status=status, note=note[:200])
@@ -926,7 +837,13 @@ def escalate_stranded(
                 if decisions_dir is not None:
                     decisions.park(
                         decisions_dir,
-                        [{**_reconstruct_proposal(intent), "rationale": reason}],
+                        [
+                            {
+                                **_reconstruct_proposal(intent),
+                                "rationale": reason,
+                                "report_only": True,
+                            }
+                        ],
                         decision_id=f"stranded-{intent_id[3:15]}",
                         created_iso=now_iso,
                     )
@@ -981,7 +898,8 @@ def void_stale_auto_intents(
     (``loop``). If the process was killed in between, the intent is left PROPOSED with no one
     waiting on it, and a later pass could act on it unattended. An auto-lane intent older than
     a pass (twice the runtime budget) is closed, and its change retired, before anything else
-    runs. Escalate-lane intents are never touched: a human decision may be waiting on them.
+    runs. Escalate-lane intents are left to the loop, which closes them once their condition
+    clears.
     """
     moment = (clock or (lambda: datetime.now(timezone.utc)))()
     if moment.tzinfo is None:
@@ -1043,7 +961,6 @@ def _preaction_refusal(
     target_known: Callable[[dict], bool] | None,
     action_allowed: Callable[[dict], bool] | None,
     execution_state: safety.ExecutionState | None,
-    max_approval_age_s: float,
 ) -> DispatchOutcome | None:
     """Everything that must hold before AUTHORIZED, or the refusal to return.
 
@@ -1061,58 +978,33 @@ def _preaction_refusal(
             "refused: the ITIL change is not bound to this intent (an approval authorizes "
             "one app, action and target)",
         )
-    approval_times = human_approval_times(itil, change)
-    human_approved = bool(approval_times)
     lane = stored_lane(ledger, intent_id)
-    if not human_approved and lane == "escalate":
+    # Card f8dd9441: ATLAS never actuates on a human CAB vote. An intent the loop recorded
+    # as escalated, or whose change carries a human approval, is report-only: refused before
+    # anything is spent, and left PROPOSED (the loop closes it once its condition clears).
+    if lane == "escalate" or human_approval_times(itil, change):
         return DispatchOutcome(
             intent_id,
-            "pending: no human approval (the proposal was escalated for a human and the "
-            "change carries no qualifying human vote); left PROPOSED for its pending decision",
+            f"{REPORT_ONLY_REFUSAL}: " f"{report_only_reason(intent.application, intent.action)}",
         )
     # Card bada5c86: auto approval is derived positively (standard, or the auto-normal
-    # shape), never as "no human vote" on top of the fold's approved status, which an
-    # older skcoord grants a normal change on a bare `human` vote.
+    # shape), never as "no human vote" on top of the fold's approved status.
     try:
         votes = cab_approval.current_votes(itil, change.id)
     except Exception:  # noqa: BLE001 - unreadable votes are no approval
         votes = None
-    auto_approved = (
-        not human_approved and votes is not None and cab_approval.auto_approved(change, votes)
-    )
-    if not human_approved and not auto_approved:
+    if votes is None or not cab_approval.auto_approved(change, votes):
         return DispatchOutcome(
             intent_id,
-            "pending: no qualifying approval (not a standard or auto-normal change, and no "
-            "verified human grant); left PROPOSED",
+            "pending: no qualifying approval (not a standard or auto-normal change); "
+            "left PROPOSED",
         )
-    if auto_approved and lane != "auto":
+    if lane != "auto":
         return DispatchOutcome(
             intent_id,
-            "refused: no qualifying human approval and no recorded auto lane (cannot tell "
-            "it from a pending human decision)",
+            "refused: no recorded auto lane (an intent written by hand or by an older loop "
+            "is never actuated as auto)",
         )
-    if human_approved:
-        # A human approves a change for an EPISODE, and the approval expires: past the
-        # limit it is refused and the intent closed (a new vote needs a new proposal).
-        # A bad configuration or a future-dated vote is refused and closes nothing.
-        stale_vote = approval_refusal(approval_times, _clock_iso(clock), max_approval_age_s)
-        if stale_vote is not None:
-            kind, why = stale_vote
-            if kind in ("expired", "future"):
-                # A vote dated in the future is closed too: merely refusing it would let it
-                # buy time (a vote dated five days ahead would be refused now and honored
-                # when its date arrives, long past the age limit it was meant to meet).
-                _close_intent(
-                    ledger,
-                    itil,
-                    change,
-                    intent_id,
-                    occurred_at=_event_dt(clock),
-                    actor=actor,
-                    reason=why,
-                )
-            return DispatchOutcome(intent_id, f"refused: {why}")
     if stale_reason is not None:
         return DispatchOutcome(intent_id, f"refused: {stale_reason}")
     if target_known is not None and not target_known(prop):
@@ -1120,21 +1012,20 @@ def _preaction_refusal(
     if action_allowed is not None and not action_allowed(prop):
         return DispatchOutcome(intent_id, "refused: action not allowed for this app at dispatch")
     clock_iso = _clock_iso(clock)
-    if auto_approved:
-        stale = evidence.refusal(
-            {"evidence": stored_evidence(ledger, intent_id)}, clock_iso, max_evidence_age_s
+    stale = evidence.refusal(
+        {"evidence": stored_evidence(ledger, intent_id)}, clock_iso, max_evidence_age_s
+    )
+    if stale is not None:
+        _close_intent(
+            ledger,
+            itil,
+            change,
+            intent_id,
+            occurred_at=_event_dt(clock),
+            actor=actor,
+            reason=stale,
         )
-        if stale is not None:
-            _close_intent(
-                ledger,
-                itil,
-                change,
-                intent_id,
-                occurred_at=_event_dt(clock),
-                actor=actor,
-                reason=stale,
-            )
-            return DispatchOutcome(intent_id, f"refused: {stale}")
+        return DispatchOutcome(intent_id, f"refused: {stale}")
     if execution_state is not None:
         # Cooldown and an open circuit are SUPPRESSION: nothing is attempted, so it is
         # not a failure, not recorded against the breaker, and never rolled back. The
@@ -1156,9 +1047,8 @@ def _preaction_refusal(
     if verdict == "firing":
         return None
     if verdict == "cleared":
-        # The episode this intent (and its approval, human or not) was for is over. Close the
-        # intent and retire the change: a recurrence is a new episode and needs a new
-        # proposal and, for the human lane, a new human vote.
+        # The episode this intent was for is over. Close the intent and retire the change:
+        # a recurrence is a new episode and needs a new proposal.
         reason = f"condition cleared before dispatch ({why})"
         _close_intent(
             ledger,
@@ -1192,7 +1082,6 @@ def dispatch_intent(
     max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
     target_known: Callable[[dict], bool] | None = None,
     action_allowed: Callable[[dict], bool] | None = None,
-    max_approval_age_s: float = DEFAULT_MAX_APPROVAL_AGE_SECONDS,
     postcondition_sleep: Callable[[float], Any] | None = None,
     deadline: float | None = None,
 ) -> DispatchOutcome:
@@ -1203,8 +1092,7 @@ def dispatch_intent(
 
     * it re-observes the owning app and requires the bound condition to be DEFINITELY
       firing now (``reobserve``; Unknown is not firing, and the reading must itself
-      be fresh). A human-approved change may wait hours or days; the approval is for
-      the condition, not for whatever the estate looked like then;
+      be fresh);
     * it re-checks the target (``target_known``) and the ratified action binding
       (``action_allowed``) when the caller supplies them, because the planner's
       verdict at proposal time is not a permission that lasts;
@@ -1214,37 +1102,26 @@ def dispatch_intent(
       re-read, moved to ``implementing`` with a note naming this intent, and this dispatch
       must be the FIRST unconflicted ``approved->implementing`` entry on its timeline, or
       nothing is attempted. It then goes ``deployed`` or ``failed``;
-    * a human approval covers one EPISODE and expires (``approval_refusal``): older than
-      ``max_approval_age_s`` (default a day, capped at a week) it is refused and the intent
-      closed, and when re-observation sees the condition definitely cleared the intent is
-      closed and the change retired, so a recurrence needs a new proposal and a new vote;
-    * "human-approved" is derived from the VOTES (``change_human_approved``), never from
-      a missing ``auto-approved`` marker. An intent the loop recorded as ESCALATED with
-      no qualifying human vote stays pending and is NEVER voided, because a human
-      decision is waiting on it; one with no recorded lane is refused and left alone;
-    * a change with no human behind it (standard, or ``auto-normal``) must carry fresh
-      evidence stored on the intent's PROPOSED event, against the REAL clock. Stored
-      evidence only ages, so an auto-lane intent that fails this, or whose condition
-      definitely cleared, is voided (``void_proposed``) rather than retried forever;
+    * only a standard or auto-normal approval (``cab_approval.auto_approved``) on an
+      intent the loop recorded in the AUTO lane dispatches. An intent recorded as
+      ESCALATED, or whose change carries a human CAB vote, is refused as report-only
+      (``REPORT_ONLY_REFUSAL``, card f8dd9441) before anything is spent, and left PROPOSED;
+      one with no recorded lane is refused and left alone;
+    * the intent must carry fresh evidence stored on its PROPOSED event, against the REAL
+      clock. Stored evidence only ages, so an intent that fails this, or whose condition
+      definitely cleared, is closed rather than retried forever;
     * cooldown and an open circuit are suppression, not failure: a refusal before
       AUTHORIZED with nothing recorded and nothing rolled back.
-
-    A human-approved intent is exempt from the EVIDENCE age limit (the approval legitimately
-    arrives long after the observation) but not from its own approval-age limit, and never
-    from the re-observation.
 
     Safe to call on an intent that turns out not to be ready: returns a
     ``"pending: ..."`` outcome and appends nothing when the intent is not
     currently PROPOSED, carries no ``itil_change_id``, or its change has not
     yet folded to approved -- an unapproved change is simply left alone for a
-    later pass, exactly the "never actuates" the negative test requires,
-    without manufacturing a false escalation for the ordinary case of "still
-    waiting on a human".
+    later pass, exactly the "never actuates" the negative test requires.
 
     A STALE ``catalog_generation`` or a HARDENED classification refuses too, AFTER the
-    change, human-approval and lane checks, and leaves the intent PROPOSED with no
-    AUTHORIZED written: nothing was authorized, and closing the intent here would let a
-    stale catalog destroy a pending human decision. A proposal under the new catalog is
+    change, approval and lane checks, and leaves the intent PROPOSED with no AUTHORIZED
+    written: nothing was authorized. A proposal under the new catalog is
     a new intent (``catalog_generation`` is part of the identity).
     """
     intent = ledger.read_intent(intent_id)
@@ -1323,7 +1200,6 @@ def dispatch_intent(
             target_known=target_known,
             action_allowed=action_allowed,
             execution_state=execution_state,
-            max_approval_age_s=max_approval_age_s,
         )
         if refusal is not None:
             emit(f"dispatch: {refusal.outcome} ({intent_id})")
@@ -1513,7 +1389,6 @@ def run_dispatch_pass(
     max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
     target_known: Callable[[dict], bool] | None = None,
     action_allowed: Callable[[dict], bool] | None = None,
-    max_approval_age_s: float = DEFAULT_MAX_APPROVAL_AGE_SECONDS,
     executing_timeout_s: float = DEFAULT_EXECUTING_TIMEOUT_SECONDS,
 ) -> list[DispatchOutcome]:
     """Enumerate every PROPOSED, ITIL-bound ledger intent and dispatch each.
@@ -1550,7 +1425,6 @@ def run_dispatch_pass(
             max_evidence_age_s=max_evidence_age_s,
             target_known=target_known,
             action_allowed=action_allowed,
-            max_approval_age_s=max_approval_age_s,
             executing_timeout_s=executing_timeout_s,
         )
 
@@ -1581,7 +1455,6 @@ def _dispatch_pass_body(
     max_evidence_age_s: float,
     target_known: Callable[[dict], bool] | None,
     action_allowed: Callable[[dict], bool] | None,
-    max_approval_age_s: float,
     executing_timeout_s: float,
 ) -> list[DispatchOutcome]:
     outcomes: list[DispatchOutcome] = []
@@ -1630,7 +1503,6 @@ def _dispatch_pass_body(
                     max_evidence_age_s=max_evidence_age_s,
                     target_known=target_known,
                     action_allowed=action_allowed,
-                    max_approval_age_s=max_approval_age_s,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - one bad intent never crashes the pass
@@ -1644,7 +1516,9 @@ __all__ = [
     "DispatchOutcome",
     "condition_firing",
     "verify_postcondition",
-    "decision_option",
+    "REPORT_ONLY_REFUSAL",
+    "ReportOnlyDecisionError",
+    "report_only_reason",
     "qualifying_human_approval",
     "MAX_POSTCONDITION_SETTLE_S",
     "resolve_decision",
@@ -1658,7 +1532,6 @@ __all__ = [
     "human_approval_times",
     "reobserve",
     "stored_lane",
-    "change_human_approved",
     "change_bound_to",
     "change_binding_tag",
     "stored_evidence",
