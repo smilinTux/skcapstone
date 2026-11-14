@@ -85,7 +85,9 @@ dependencies = [
     # Bumped 2026-11-02: skcoord 0.1.90 contains the reviewed root-cause fix
     # from skcoord #138; keeping this floor prevents reconciliation from
     # downgrading task1-3 to a release that lacks it.
-    "skcoord>=0.1.90",
+    # Bumped 2026-11-14: skcoord 0.1.97 verifies signed CAB vote grants in the
+    # fold (skcoord #145), which skcapstone #1362 relies on fleet-wide.
+    "skcoord>=0.1.97",
     "skmemory>=0.11.156",
     "skskills>=0.1.1",
 ]
