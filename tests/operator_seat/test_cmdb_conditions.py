@@ -102,6 +102,15 @@ def test_shadow_is_refused_for_a_condition_it_does_not_remedy(tmp_path, monkeypa
     assert res["planned"][0]["disposition"] == "escalate"
 
 
+def test_a_ratified_action_with_no_row_is_eligible_for_nothing(tmp_path, monkeypatch):
+    """The next cmdb action someone adds without a row must not slip through."""
+    paths, chef = _paths(tmp_path, monkeypatch)
+    _register_cmdb(paths, chef, ["run-cmdb-shadow"])
+    monkeypatch.setattr(cmdb_adapter, "ACTION_CONDITIONS", {"apply-cmdb-reconcile": ()})
+    for condition in cmdb_adapter.CONDITIONS:
+        assert loop._operatorapp_allows(paths, _proposal(condition=condition)) is False
+
+
 def test_ratified_apply_is_refused_for_every_condition(tmp_path, monkeypatch):
     paths, chef = _paths(tmp_path, monkeypatch)
     _register_cmdb(paths, chef, ["apply-cmdb-reconcile"])

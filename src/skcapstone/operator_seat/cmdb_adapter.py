@@ -34,10 +34,9 @@ PROBLEM_WHEN_TRUE = frozenset()
 #: remedied by a shadow when CmdbAuditClean is False (that is store corruption a
 #: human repairs). Apply is non-standard and irreversible: no condition makes it
 #: eligible for any autonomous lane, it runs only through ``cmdb_act`` and
-#: ``_apply_gate`` with a signed human vote. Enforcement of eligibility is the
-#: existing gate (loop._operatorapp_allows: condition in the app spec's
-#: conditions AND action ratified); this table is the declared intent it is
-#: tested against.
+#: ``_apply_gate`` with a signed human vote. loop._operatorapp_allows enforces
+#: this table on top of the app spec and ratification: an action with no row, or
+#: an empty row, is eligible for no condition.
 ACTION_CONDITIONS: dict[str, tuple[str, ...]] = {
     "run-cmdb-shadow": ("CmdbReconcileFresh", "CmdbLastScanComplete"),
     "apply-cmdb-reconcile": (),
