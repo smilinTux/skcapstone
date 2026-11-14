@@ -50,6 +50,7 @@ tests/test_integration_backbone.py::TestIntegratedMode::*[skvoice]
 # instead of being deselected. Fix by adding watchdog to the dev extra or
 # moving the import inside the tests.
 tests/integration/test_consciousness_e2e.py
+tests/test_config_reload.py::TestRunConfigWatcher::test_config_watcher_calls_reload_on_modified_event
 
 # setuptools-scm is a PEP 517 build-system requirement only; it is never in the
 # runtime env of an editable install. One `pip install setuptools-scm` in
