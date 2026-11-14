@@ -91,17 +91,34 @@ def test_loop_brief_sees_a_firing_cmdb_condition(tmp_path, monkeypatch):
     assert stale == {"CmdbLastScanComplete", "CmdbAuditClean"}
 
 
-def test_every_action_declares_its_eligible_conditions():
-    names = {a["name"] for a in cmdb_adapter.cmdb_explain()["actions"]}
-    assert set(cmdb_adapter.ACTION_CONDITIONS) == names
-    for conds in cmdb_adapter.ACTION_CONDITIONS.values():
-        assert set(conds) <= set(cmdb_adapter.CONDITIONS)
-    assert cmdb_adapter.ACTION_CONDITIONS["run-cmdb-shadow"] == (
-        "CmdbReconcileFresh",
-        "CmdbLastScanComplete",
-    )
-    # Non-standard, irreversible: never eligible for an autonomous lane.
-    assert cmdb_adapter.ACTION_CONDITIONS["apply-cmdb-reconcile"] == ()
+def test_shadow_is_refused_for_a_condition_it_does_not_remedy(tmp_path, monkeypatch):
+    """CmdbAuditClean is in the app spec and the shadow is ratified, yet not eligible."""
+    paths, chef = _paths(tmp_path, monkeypatch)
+    _register_cmdb(paths, chef, ["run-cmdb-shadow"])
+    proposal = _proposal(condition="CmdbAuditClean")
+    assert loop._operatorapp_allows(paths, proposal) is False
+    res = _run(paths, proposal, monkeypatch)
+    assert res["planned"][0]["binding_denied"] is True
+    assert res["planned"][0]["disposition"] == "escalate"
+
+
+def test_ratified_apply_is_refused_for_every_condition(tmp_path, monkeypatch):
+    paths, chef = _paths(tmp_path, monkeypatch)
+    _register_cmdb(paths, chef, ["apply-cmdb-reconcile"])
+    for condition in cmdb_adapter.CONDITIONS:
+        proposal = _proposal(condition=condition, action="apply-cmdb-reconcile")
+        assert loop._operatorapp_allows(paths, proposal) is False
+        # Apply is non-standard, so the planner escalates it before the binding
+        # check runs (binding_denied is only computed for auto candidates).
+        res = _run(paths, proposal, monkeypatch)
+        assert res["planned"][0]["disposition"] == "escalate"
+
+
+def test_shadow_is_allowed_for_both_conditions_it_remedies(tmp_path, monkeypatch):
+    paths, chef = _paths(tmp_path, monkeypatch)
+    _register_cmdb(paths, chef, ["run-cmdb-shadow"])
+    for condition in ("CmdbReconcileFresh", "CmdbLastScanComplete"):
+        assert loop._operatorapp_allows(paths, _proposal(condition=condition)) is True
 
 
 def test_condition_outside_the_table_is_refused_by_the_gate(tmp_path, monkeypatch):

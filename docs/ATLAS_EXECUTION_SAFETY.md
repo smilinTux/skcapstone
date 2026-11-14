@@ -63,15 +63,27 @@ is empty.
 | `CmdbAuditClean` | none | relationship audit findings are store damage a human repairs |
 | (any) | `apply-cmdb-reconcile`: none | non-standard and irreversible, never eligible for an autonomous lane |
 
-The declared mapping is `cmdb_adapter.ACTION_CONDITIONS`. Enforcement is the existing gate,
-unchanged: a proposal passes only if its condition is in the app's OperatorApp `conditions`
-(derived from `CONDITIONS`) and its action is in `ratifiedStandardActions`. A condition outside
-the table is refused (`binding_denied`, escalated and report-only). `run-cmdb-shadow` is a
-standard, reversible, low blast radius action, so once a human ratifies it a firing
-`CmdbReconcileFresh` plans as auto; whether it actually runs still depends on the freeze, the
-honor adapter and the evidence age, as for any app. `apply-cmdb-reconcile` stays
-non-standard: it always plans as an escalation (report-only), and the manual apply goes through
-`cmdb_act` and `_apply_gate` with a signed human vote, which this table does not touch.
+The declared mapping is `cmdb_adapter.ACTION_CONDITIONS`, and it is enforced at the planning
+gate. `loop._operatorapp_allows` requires, in addition to the app-spec condition and the
+ratified action, that the condition is in the owning adapter's `ACTION_CONDITIONS[action]`
+whenever that adapter defines the table (an action with no row or an empty row is eligible for
+nothing; adapters without the table behave as before). So a firing `CmdbAuditClean` with a
+ratified `run-cmdb-shadow` is `binding_denied` and escalates, and `apply-cmdb-reconcile` is
+refused for every condition. A condition outside the table is refused too.
+
+`run-cmdb-shadow` is a standard, reversible, low blast radius action and is already ratified in
+the live catalog (`~/.skcapstone/fleet/objects/operatorapp/cmdb.json`), so a firing
+`CmdbReconcileFresh` or `CmdbLastScanComplete` passes the planning gate and plans as auto.
+That does not mean it runs in production: production planning uses
+`act_dispatch.merged_explain()` (fleet and skchat), which has no cmdb actions and no honor
+adapter for cmdb, so in a real `skoperator` run the shadow still plans as an escalation
+(report-only) until cmdb gets an honor adapter. `apply-cmdb-reconcile` stays non-standard:
+always an escalation, and the manual apply goes through `cmdb_act` and `_apply_gate` with a
+signed human vote, which this table does not touch.
+
+A node running `skoperator` without local CMDB artifacts reads the three conditions as Unknown
+and never has a quiet brief. That is the intended fail-safe: missing evidence is stale, not
+healthy.
 
 ## Execution path
 
