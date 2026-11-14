@@ -224,7 +224,7 @@ def build_venv(
                 str(reqs),
                 "-c",
                 str(cons),
-                *(["--no-deps"] if manifest.lock else []),
+                *(["--no-deps"] if manifest.lock_for(node) else []),
                 # a release is often minutes old: never trust a cached index for SK packages
                 *[
                     arg
@@ -304,7 +304,9 @@ def _pip_check(python: Path, runner: Runner) -> set[str]:
     return {ln for ln in lines if ln and not ln.startswith(noise)}
 
 
-def carry_bin(manifest: Manifest, live: Optional[Path], dest: Path) -> list[str]:
+def carry_bin(
+    manifest: Manifest, live: Optional[Path], dest: Path, node: Optional[str] = None
+) -> list[str]:
     """Copy the manifest's hand-placed ``bin/`` files from the live venv.
 
     Some nodes keep shell shims and symlinks in the deploy venv's ``bin/``
@@ -318,7 +320,7 @@ def carry_bin(manifest: Manifest, live: Optional[Path], dest: Path) -> list[str]
     copied: list[str] = []
     if live is None:
         return copied
-    for name in manifest.carry_bin:
+    for name in manifest.carry_bin_for(node):
         src, dst = live / "bin" / name, dest / "bin" / name
         if dst.exists() or dst.is_symlink() or not (src.exists() or src.is_symlink()):
             continue
@@ -454,7 +456,7 @@ def apply(
     dest = paths.releases / f"{time.strftime('%Y%m%d-%H%M%S')}-{manifest_id[:12]}"
     log(f"build: {dest}")
     build_venv(manifest, dest, python, runner, node)
-    carried = carry_bin(manifest, live, dest)
+    carried = carry_bin(manifest, live, dest, node)
     if carried:
         log(f"carried bin/: {', '.join(carried)}")
     log("verify: imports, entry points, pip check, bin/")

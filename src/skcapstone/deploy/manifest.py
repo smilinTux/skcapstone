@@ -109,10 +109,16 @@ class ServiceSpec(BaseModel):
 
 
 class NodeProfile(BaseModel):
-    """Which packages and services a node gets. ``all`` means every one."""
+    """Which packages and services a node gets. ``all`` means every one.
+
+    ``lock`` and ``carry_bin`` override the manifest-wide ones: two nodes
+    rarely have the same third-party set or the same hand-placed shims.
+    """
 
     packages: Union[Literal["all"], list[str]] = "all"
     services: Union[Literal["all"], list[str]] = "all"
+    lock: Optional[list[str]] = None
+    carry_bin: Optional[list[str]] = None
 
 
 class Manifest(BaseModel):
@@ -179,7 +185,17 @@ class Manifest(BaseModel):
         ``--no-deps``), so only the SK packages differ from what was locked.
         """
         lines = [spec.requirement(name) for name, spec in self.packages_for(node).items()]
-        return lines + list(self.lock or self.requirements)
+        return lines + list(self.lock_for(node) or self.requirements)
+
+    def lock_for(self, node: Optional[str] = None) -> list[str]:
+        """The third-party lock for *node* (its own, else the manifest's)."""
+        prof = self.profile(node)
+        return list(prof.lock if prof.lock is not None else self.lock)
+
+    def carry_bin_for(self, node: Optional[str] = None) -> list[str]:
+        """The hand-placed bin/ files to carry on *node*."""
+        prof = self.profile(node)
+        return list(prof.carry_bin if prof.carry_bin is not None else self.carry_bin)
 
 
 def load_manifest(path: Path) -> Manifest:

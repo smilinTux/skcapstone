@@ -445,3 +445,14 @@ def test_carry_bin_copies_files_and_symlinks_but_not_over_packaged(tmp_path):
     assert os.access(dest / "bin" / "shim", os.X_OK)
     assert os.readlink(dest / "bin" / "tool") == "/somewhere/tool.py"
     assert (dest / "bin" / "pkg").read_text() == "packaged"
+
+
+def test_node_lock_and_carry_bin_override_the_manifest():
+    data = json.loads(json.dumps(MANIFEST))
+    data["lock"] = ["a==1"]
+    data["carry_bin"] = ["x"]
+    data["nodes"]["laptop"] = {"lock": ["b==2"], "carry_bin": []}
+    m = Manifest.model_validate(data)
+    assert m.lock_for("laptop") == ["b==2"] and m.lock_for("other") == ["a==1"]
+    assert m.carry_bin_for("laptop") == [] and m.carry_bin_for("other") == ["x"]
+    assert "b==2" in m.requirement_lines("laptop") and "a==1" not in m.requirement_lines("laptop")
