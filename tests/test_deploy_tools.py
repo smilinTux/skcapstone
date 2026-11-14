@@ -314,3 +314,75 @@ def test_empty_dot_git_directory_is_not_a_tree(tmp_path):
     assert exec_paths_in_trees(home, units) == []
     _git(home, "init", "-q", "-b", "main")
     assert git_tree_of(str(home / "bin/run.sh")) == home
+
+
+def _real_runner(cmd, **kw):
+    """git and the tool's setup run for real; systemctl is stubbed."""
+    if cmd[:1] == ["systemctl"]:
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    return subprocess.run(cmd, **kw)
+
+
+def _apply_real(tmp_path, home, units, manifest):
+    return tools.apply_tools(
+        manifest,
+        None,
+        tmp_path / "state",
+        root=home / ".local/share/sk-tools",
+        unit_dir=units,
+        home=home,
+        runner=_real_runner,
+    )
+
+
+def test_setup_runs_in_the_final_export_before_publishing(tmp_path, origin):
+    """A launcher the setup generates (bin/launch) satisfies a unit that runs it."""
+    home, units, manifest = _setup(tmp_path, origin)
+    (units / "gen.service").write_text(f"[Service]\nExecStart={home}/src/thing/bin/launch\n")
+    manifest.tools["thing"].setup = [
+        "/bin/sh",
+        "-c",
+        'mkdir -p bin && printf "%s|%s" "$PWD" "$MARK" > bin/launch',
+    ]
+    manifest.tools["thing"].setup_env = {"MARK": "~/m"}
+    change = _apply_real(tmp_path, home, units, manifest)
+    root = home / ".local/share/sk-tools/thing"
+    export = root / change.exported["thing"]
+    where, mark = (root / "current/bin/launch").read_text().split("|")
+    assert Path(where) == export  # at its final path, not the staging directory
+    assert mark == str(Path("~/m").expanduser())
+    assert tools.installed(root.parent, "thing")["setup"][0] == "/bin/sh"
+    assert "gen.service" in change.units
+
+
+def test_failed_setup_publishes_nothing_and_leaves_no_export(tmp_path, origin):
+    home, units, manifest = _setup(tmp_path, origin)
+    manifest.tools["thing"].setup = ["/bin/sh", "-c", "touch half && echo boom >&2 && exit 3"]
+    with pytest.raises(tools.ToolError, match=r"setup failed \(3\): boom"):
+        _apply_real(tmp_path, home, units, manifest)
+    root = home / ".local/share/sk-tools/thing"
+    assert not (root / "current").exists()
+    assert not [p for p in root.iterdir() if not p.name.startswith(".")]
+    assert not list(units.glob(f"*.service.d/{tools.DROPIN}"))
+
+
+def test_setup_runs_once_per_export(tmp_path, origin):
+    home, units, manifest = _setup(tmp_path, origin)
+    counter = tmp_path / "count"
+    manifest.tools["thing"].setup = ["/bin/sh", "-c", f"echo x >> {counter}"]
+    _apply_real(tmp_path, home, units, manifest)
+    again = _apply_real(tmp_path, home, units, manifest)
+    assert again.empty
+    assert counter.read_text() == "x\n"
+
+
+def test_unfinished_setup_export_is_rebuilt(tmp_path, origin):
+    """An export directory without metadata (a setup killed mid-run) is redone."""
+    home, units, manifest = _setup(tmp_path, origin)
+    manifest.tools["thing"].setup = ["/bin/sh", "-c", "touch done"]
+    first = _apply_real(tmp_path, home, units, manifest)
+    export = home / ".local/share/sk-tools/thing" / first.exported["thing"]
+    (export / tools._META).unlink()
+    (export / "stale").write_text("left over\n")
+    _apply_real(tmp_path, home, units, manifest)
+    assert (export / "done").exists() and not (export / "stale").exists()

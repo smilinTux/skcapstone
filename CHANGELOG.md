@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A tool that provisions itself could not ship as a `tools:` export.**
+  Hermes runs a launcher and a dependency environment that its own installer
+  generates from the tree, keyed to the tree's path; neither is in `git
+  archive`, so the export was refused. Tools gain `setup` (argv),
+  `setup_env` and `setup_timeout`: setup runs inside the export at its final
+  `<name>/<sha12>` path before it is marked complete or published. A failed
+  setup removes the export and publishes nothing.
+
 - **A fleet pin outside `.[fleet-qualify]` could never roll out.** The rollout
   install step used the pins file only as `-c` constraints, so a bump of a
   package the extra does not pull in (skwhisper 0.6.4 to 0.6.5) was never
