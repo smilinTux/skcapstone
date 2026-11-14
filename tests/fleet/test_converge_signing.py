@@ -9,7 +9,7 @@ import pytest
 
 from skcapstone.fleet import backoff, converge, events, signing, store
 
-NODE = "node-41"
+NODE = "node-test-fixture"  # not a real node: a leaked alert once read as .41
 SHOW = (
     "systemctl --user show skgateway.service "
     "--property=LoadState,ActiveState,MainPID,ActiveEnterTimestamp"
