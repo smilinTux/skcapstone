@@ -22,9 +22,7 @@ Usage:
 from __future__ import annotations
 
 import logging
-import os
 import random
-import shutil
 import subprocess
 import threading
 import time
@@ -36,6 +34,7 @@ from typing import Callable, Optional
 from .scheduler_jobs import JobSpec, is_due, job_runs_here
 from .scheduler_runner import JobRunner
 from .scheduler_state import SchedulerState
+from .sk_alert_bin import sk_alert_bin
 
 logger = logging.getLogger("skcapstone.scheduled_tasks")
 
@@ -406,7 +405,7 @@ class TaskScheduler:
         if tail:
             msg += "\n" + tail
         level = "info" if result.ok else getattr(job, "notify_level", "warn")
-        alert = shutil.which("sk-alert") or os.path.expanduser("~/.skenv/bin/sk-alert")
+        alert = sk_alert_bin()
         try:
             subprocess.run([alert, "-l", level, msg], timeout=30, check=False)
         except Exception as exc:  # noqa: BLE001 - notify must never break the loop

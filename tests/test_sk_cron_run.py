@@ -48,9 +48,13 @@ OK = ["/bin/sh", "-c", "echo fine"]
 
 
 def _base_env(tmp_path, home):
-    """A SCHEDULER's environment: no ``~/.skenv/bin`` anywhere on PATH."""
+    """A SCHEDULER's environment: no ``~/.skenv/bin`` anywhere on PATH.
+
+    Drops the suite's SK_ALERT_BIN=/bin/true guard: these tests resolve the
+    fake sk-alert under the temporary HOME, so nothing real can fire.
+    """
     return dict(
-        os.environ,
+        {k: v for k, v in os.environ.items() if k != "SK_ALERT_BIN"},
         HOME=str(home),
         SK_GTD_DIR=str(tmp_path / "gtd"),
         SKOS_BIN="/nonexistent/skos",
