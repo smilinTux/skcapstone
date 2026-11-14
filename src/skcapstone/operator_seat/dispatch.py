@@ -76,18 +76,26 @@ DEFAULT_EXECUTING_TIMEOUT_SECONDS = 600.0
 REPORT_ONLY_REFUSAL = "refused: report-only"
 
 
-def report_only_reason(app: Any, action: Any, change_class: str | None = None) -> str:
+def report_only_reason(
+    app: Any, action: Any, change_class: str | None = None, *, unresolved_target: bool = False
+) -> str:
     """Why an ATLAS escalation is report-only, and what (if anything) would automate it.
 
     The hint follows the proposal's class: a major or emergency change (irreversible, or
     high risk) can never be automated, so ratifying cannot help and a human handles it by
     hand; a reversible non-standard change becomes auto-normal once ratified; with no class
-    known the generic hint is given.
+    known the generic hint is given. When the target did not resolve, ratifying cannot fix
+    that, so no ratify hint is given.
     """
     head = (
         f"ATLAS escalations are report-only: no approval can make ATLAS run {action!r} for {app!r}"
     )
     ratify = f"`skoperator apps ratify {app} {action}`"
+    if unresolved_target:
+        return (
+            f"{head}. Its target did not resolve, so ratifying cannot help: a human must "
+            "handle it by hand"
+        )
     if change_class in ("major", "emergency"):
         return (
             f"{head}. It is a {change_class} change (irreversible or high risk), so ratifying "

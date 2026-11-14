@@ -101,8 +101,10 @@ def end_cleared_episodes(
     ``cleared(option)`` answers from the current observation. Pending records are left
     alone, so an unacknowledged episode is never replaced. With ``node``, only records
     whose every option was observed on that node (``observed_on``) are judged: the store
-    is replicated, and one node's view must not end another node's episode. Returns the
-    ids marked.
+    is replicated, and one node's view must not end another node's episode. An option with
+    no ``observed_on`` (parked before the field existed, or by the stranded sweep) is not
+    bound to a node and may be judged by any node, so such a record can still end and a
+    later escalation of the same condition still gets a new record. Returns the ids marked.
     """
     directory = Path(store_dir)
     if not directory.exists():
@@ -116,7 +118,7 @@ def end_cleared_episodes(
         if record.get("status") == "pending" or record.get("episode_ended_at"):
             continue
         options = [o for o in record.get("options", []) if isinstance(o, dict)]
-        if node is not None and any(o.get("observed_on") != node for o in options):
+        if node is not None and any(o.get("observed_on") not in (None, node) for o in options):
             continue
         if options and all(cleared(o) for o in options):
             record["episode_ended_at"] = ended_iso

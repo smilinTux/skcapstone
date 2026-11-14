@@ -573,10 +573,13 @@ def _run_once(
             # escalates is REPORT-ONLY: no ITIL change, no ledger intent, and an
             # acknowledge-only decision record that no approval can turn into an actuation.
             change_class = (pl.get("classification") or {}).get("change_class")
-            reason = (
-                f"{_escalation_cause(pl)}; "
-                f"{dispatch.report_only_reason(prop.get('app'), prop.get('action'), change_class)}"
+            hint = dispatch.report_only_reason(
+                prop.get("app"),
+                prop.get("action"),
+                change_class,
+                unresolved_target=bool(pl.get("unresolved_target")),
             )
+            reason = f"{_escalation_cause(pl)}; {hint}"
             if decisions_dir is not None:
                 decisions.park(
                     decisions_dir,
