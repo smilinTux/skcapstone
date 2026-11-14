@@ -16,8 +16,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from .inspect import default_unit_dir, exec_paths_in_trees, list_dists, normalize
+from .inspect import (
+    default_unit_dir,
+    exec_paths_in_trees,
+    list_dists,
+    live_units,
+    normalize,
+    unit_missing_paths,
+)
 from .manifest import Manifest
+from .tools import default_root, installed
 
 
 @dataclass
@@ -27,14 +35,21 @@ class DriftReport:
     editable: list[str] = field(default_factory=list)
     exec_in_tree: list[str] = field(default_factory=list)
     behind: list[str] = field(default_factory=list)
+    tools: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
+    #: Units nothing can start that still name a tree or a missing path.
+    #: Informational only: not a finding, not alerted.
+    dormant: list[str] = field(default_factory=list)
 
     def lines(self) -> list[str]:
         """Every finding as one line, prefixed with its kind."""
         return (
             [f"editable: {x}" for x in self.editable]
             + [f"exec-in-tree: {x}" for x in self.exec_in_tree]
+            + [f"exec-missing: {x}" for x in self.missing]
             + [f"version: {x}" for x in self.behind]
+            + [f"tool: {x}" for x in self.tools]
         )
 
     def digest(self) -> str:
@@ -48,6 +63,8 @@ def compute(
     manifest: Optional[Manifest] = None,
     unit_dir: Optional[Path] = None,
     node: Optional[str] = None,
+    tools_root: Optional[Path] = None,
+    runner=subprocess.run,
 ) -> DriftReport:
     """Compute the drift findings for this node.
 
@@ -58,6 +75,9 @@ def compute(
             comparison is reported as unknown rather than as a pass.
         unit_dir: systemd user unit directory override.
         node: Node profile override.
+        tools_root: Where tool exports live (``~/.local/share/sk-tools``).
+        runner: subprocess.run, replaceable in tests (asks systemd which
+            units can run at all).
 
     Returns:
         The drift report.
@@ -82,8 +102,29 @@ def compute(
             suffix = f" (declared exception: {note})" if note else ""
             report.editable.append(f"{dist.name} {dist.version} -> {where}{suffix}")
     allow = manifest.allow_exec_in_tree if manifest else []
-    for ep, tree in exec_paths_in_trees(home, unit_dir or default_unit_dir(home), allow):
-        report.exec_in_tree.append(f"{ep.origin}: {ep.path} (tree {tree})")
+    units = unit_dir or default_unit_dir(home)
+    live = live_units(units, runner)
+    for ep, tree in exec_paths_in_trees(home, units, allow):
+        line = f"{ep.origin}: {ep.path} (tree {tree})"
+        if live is None or not ep.origin.startswith("unit ") or ep.origin[5:] in live:
+            report.exec_in_tree.append(line)
+        else:
+            report.dormant.append(f"exec-in-tree {line}")
+    for ep in unit_missing_paths(units, home):
+        line = f"{ep.origin}: {ep.path}"
+        if live is None or ep.origin[5:] in live:
+            report.missing.append(line)
+        else:
+            report.dormant.append(f"exec-missing {line}")
+    if manifest is not None:
+        root = tools_root or default_root(home)
+        for name in manifest.tools_for(node):
+            _url, ref, _branch = manifest.tool_source(name)
+            meta = installed(root, name)
+            if meta is None:
+                report.tools.append(f"{name} not exported (manifest {ref})")
+            elif meta.get("ref") != ref:
+                report.tools.append(f"{name} {meta.get('ref')} != manifest {ref}")
     if manifest is None:
         report.unknown.append("no release manifest on this node; versions not compared")
     elif dists:

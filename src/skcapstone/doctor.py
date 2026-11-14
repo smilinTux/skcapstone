@@ -4248,8 +4248,15 @@ def _check_deploy(deep: bool = False) -> list[Check]:
             "deploy:exec-in-tree",
             "No unit or MCP command runs a file inside a git working tree",
             report.exec_in_tree,
-            "Run the packaged entry point from ~/.skenv/bin, or a release tree of a tag; "
-            "list a deliberate exception under allow_exec_in_tree in the manifest",
+            "Run the packaged entry point from ~/.skenv/bin, or add the files as a manifest "
+            "tool (skcapstone deploy tools); list a deliberate exception under "
+            "allow_exec_in_tree in the manifest",
+        ),
+        _one(
+            "deploy:exec-missing",
+            "Every live unit's program, script and working directory exists",
+            report.missing,
+            "restore the file from main as a manifest tool, or disable the unit if it is dead",
         ),
     ]
     if manifest is None:
@@ -4273,6 +4280,14 @@ def _check_deploy(deep: bool = False) -> list[Check]:
                 "Installed SK versions match the release manifest",
                 report.behind,
                 "skcapstone deploy plan && skcapstone deploy apply",
+            )
+        )
+        checks.append(
+            _one(
+                "deploy:tools",
+                "Tool exports match the release manifest",
+                report.tools,
+                "skcapstone deploy tools",
             )
         )
     return checks

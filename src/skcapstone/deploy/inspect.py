@@ -123,27 +123,40 @@ def _abs_paths(words: Iterable[str], home: Path) -> list[str]:
 
 
 _EXEC_KEYS = ("ExecStart", "ExecStartPre", "ExecStartPost", "WorkingDirectory")
+_KEY_RE = re.compile(r"^(ExecStart(?:Pre|Post)?|WorkingDirectory|Environment)=(.*)$", re.M)
 
 
-def _unit_settings(unit: Path) -> dict[str, list[str]]:
+def _unit_settings(unit: Path, skip: Iterable[str] = ()) -> dict[str, list[str]]:
     """The effective exec settings of *unit*, with its drop-ins applied.
 
     Drop-ins in ``<unit>.d/*.conf`` are read after the unit in name order, as
     systemd does: an empty ``ExecStart=`` clears the list so far, and a later
-    ``WorkingDirectory=`` replaces an earlier one.
+    ``WorkingDirectory=`` replaces an earlier one. ``Environment`` keeps every
+    assignment line in order (a later one wins per variable).
+
+    Args:
+        unit: The unit file.
+        skip: Drop-in file names to leave out (a managed drop-in that is
+            about to be regenerated from the rest).
     """
     files = [unit]
     dropin = unit.with_name(unit.name + ".d")
     if dropin.is_dir():
-        files += sorted(dropin.glob("*.conf"))
-    settings: dict[str, list[str]] = {k: [] for k in _EXEC_KEYS}
+        files += sorted(p for p in dropin.glob("*.conf") if p.name not in set(skip))
+    settings: dict[str, list[str]] = {k: [] for k in (*_EXEC_KEYS, "Environment")}
     for path in files:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for match in re.finditer(r"^(ExecStart(?:Pre|Post)?|WorkingDirectory)=(.*)$", text, re.M):
+        # systemd joins a line ending in a backslash with the next one
+        text = re.sub(r"\\\n[ \t]*", " ", text)
+        for match in _KEY_RE.finditer(text):
             key, value = match.group(1), match.group(2).strip()
+            if key == "Environment":
+                if value:
+                    settings[key].append(value)
+                continue
             if not value:
                 settings[key] = []
             elif key == "WorkingDirectory":
@@ -159,8 +172,9 @@ def unit_exec_paths(unit_dir: Path, home: Path) -> list[ExecPath]:
     if not unit_dir.is_dir():
         return found
     for unit in sorted(unit_dir.glob("*.service")):
-        for values in _unit_settings(unit).values():
-            for raw in values:
+        settings = _unit_settings(unit)
+        for key in _EXEC_KEYS:
+            for raw in settings[key]:
                 value = raw.lstrip("-@+!:")
                 try:
                     words = shlex.split(value)
@@ -169,6 +183,93 @@ def unit_exec_paths(unit_dir: Path, home: Path) -> list[ExecPath]:
                 for path in _abs_paths(words, home):
                     found.append(ExecPath(f"unit {unit.name}", path))
     return found
+
+
+_INTERPRETERS = ("python", "python3", "bash", "sh", "node", "perl")
+
+
+def unit_missing_paths(unit_dir: Path, home: Path) -> list[ExecPath]:
+    """Program, script and working directory paths of units that do not exist.
+
+    Only the program, the script an interpreter runs (its first non-option
+    argument) and ``WorkingDirectory`` are checked: other arguments are often
+    remote paths or files a unit creates, which are not breakage.
+    """
+    missing: list[ExecPath] = []
+    for unit in sorted(unit_dir.glob("*.service")):
+        settings = _unit_settings(unit)
+        candidates: list[str] = []
+        for key in ("ExecStart", "ExecStartPre", "ExecStartPost"):
+            for raw in settings[key]:
+                try:
+                    words = shlex.split(raw.lstrip("-@+!:"))
+                except ValueError:
+                    words = raw.split()
+                if not words:
+                    continue
+                candidates.append(words[0])
+                if Path(words[0]).name.rstrip("0123456789.") in _INTERPRETERS:
+                    rest = [w for w in words[1:] if not w.startswith("-")]
+                    if rest and "-m" not in words[1:2] and "-c" not in words[1:2]:
+                        candidates.append(rest[0])
+        candidates += settings["WorkingDirectory"][-1:]
+        for path in _abs_paths(candidates, home):
+            if "%i" in path or "%" in path or "$" in path:
+                continue
+            if not Path(path).exists():
+                missing.append(ExecPath(f"unit {unit.name}", path))
+    return missing
+
+
+def live_units(unit_dir: Path, runner=subprocess.run) -> Optional[set[str]]:
+    """User units that can run: enabled, active, or started by a live trigger.
+
+    A template counts as live when any instance is enabled or active. Returns
+    None when systemd cannot be asked, so callers treat every unit as live.
+    """
+    names = [u.name for u in sorted(unit_dir.glob("*.service"))]
+    if not names:
+        return set()
+    try:
+        proc = runner(
+            ["systemctl", "--user", "list-units", "--all", "--plain", "--no-legend", "--no-pager"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        files = runner(
+            ["systemctl", "--user", "list-unit-files", "--plain", "--no-legend", "--no-pager"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0 or files.returncode != 0:
+        return None
+    active: set[str] = set()
+    for line in proc.stdout.splitlines():
+        cols = line.split()
+        if len(cols) >= 3 and cols[2] in ("active", "activating", "reloading"):
+            active.add(cols[0])
+    enabled = {
+        cols[0]
+        for cols in (line.split() for line in files.stdout.splitlines())
+        if len(cols) >= 2 and cols[1] in ("enabled", "enabled-runtime", "linked", "alias")
+    }
+    running = active | enabled
+    live: set[str] = set()
+    for name in names:
+        stem = name.removesuffix(".service")
+        triggers = [f"{stem}.timer", f"{stem}.path", f"{stem}.socket"]
+        if stem.endswith("@"):
+            if any(u.startswith(stem) and u != name for u in running):
+                live.add(name)
+        elif name in running or any(t in running for t in triggers):
+            live.add(name)
+    return live
 
 
 def _mcp_entries(servers: object) -> Iterable[tuple[str, list[str]]]:
@@ -208,7 +309,10 @@ def mcp_exec_paths(home: Path) -> list[ExecPath]:
 
 
 def exec_paths_in_trees(
-    home: Path, unit_dir: Path, allow: Iterable[str] = ()
+    home: Path,
+    unit_dir: Path,
+    allow: Iterable[str] = (),
+    live: Optional[set[str]] = None,
 ) -> list[tuple[ExecPath, Path]]:
     """Every executed path that sits inside a git working tree.
 
@@ -216,6 +320,8 @@ def exec_paths_in_trees(
         home: The user's home directory.
         unit_dir: The systemd user unit directory.
         allow: Path prefixes accepted as exceptions (from the manifest).
+        live: When given, only these units are reported (a unit nothing can
+            start is not running anything from a tree).
 
     Returns:
         Pairs of the executed path and the working tree that holds it.
@@ -226,12 +332,33 @@ def exec_paths_in_trees(
     for ep in unit_exec_paths(unit_dir, home) + mcp_exec_paths(home):
         if any(ep.path.startswith(a) for a in allowed):
             continue
+        if live is not None and ep.origin.startswith("unit ") and ep.origin[5:] not in live:
+            continue
         tree = git_tree_of(ep.path)
         if tree is None or (ep.origin, ep.path) in seen:
+            continue
+        if tree == home and (Path(ep.path) == home or not _tracked(home, ep.path)):
+            # A dotfiles repository at ~ contains everything under home; only a
+            # path it actually tracks is "running from a working tree".
             continue
         seen.add((ep.origin, ep.path))
         hits.append((ep, tree))
     return hits
+
+
+def _tracked(tree: Path, path: str) -> bool:
+    """True when *tree* tracks *path* (a file, or any file under a directory)."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(tree), "ls-files", "--", path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return proc.returncode != 0 or bool(proc.stdout.strip())
 
 
 def default_unit_dir(home: Path) -> Path:

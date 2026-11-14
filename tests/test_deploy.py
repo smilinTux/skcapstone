@@ -247,6 +247,10 @@ def test_exec_paths_allowlist(tmp_path):
     assert exec_paths_in_trees(home, units, allow=[str(home / "repo")]) == []
 
 
+def _no_systemd(*_a, **_k):
+    raise OSError("no systemd in tests")
+
+
 def test_drift_compute_and_alert_dedupe(tmp_path, monkeypatch):
     home, units = _home_with_tree(tmp_path)
     monkeypatch.setattr(
@@ -254,7 +258,7 @@ def test_drift_compute_and_alert_dedupe(tmp_path, monkeypatch):
         "list_dists",
         lambda _p: [Dist("skfoo", "1.1.0", True, "file:///t"), Dist("skbar", "0.3.0", False, "")],
     )
-    report = drift_mod.compute(home, Path("/x/python"), _m(), unit_dir=units)
+    report = drift_mod.compute(home, Path("/x/python"), _m(), unit_dir=units, runner=_no_systemd)
     assert report.editable == ["skfoo 1.1.0 -> /t"]
     assert report.behind == ["skfoo 1.1.0 != manifest 1.2.0"]
     assert len(report.exec_in_tree) == 2
@@ -342,7 +346,12 @@ def test_doctor_deploy_checks_shape(monkeypatch, tmp_path):
     monkeypatch.delenv("SK_DEPLOY_MANIFEST", raising=False)
     checks = doctor._check_deploy()
     names = [c.name for c in checks]
-    assert names == ["deploy:editable", "deploy:exec-in-tree", "deploy:manifest"]
+    assert names == [
+        "deploy:editable",
+        "deploy:exec-in-tree",
+        "deploy:exec-missing",
+        "deploy:manifest",
+    ]
     manifest_check = checks[-1]
     assert manifest_check.unknown and not manifest_check.passed
 
