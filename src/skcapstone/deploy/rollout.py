@@ -225,6 +225,12 @@ def build_venv(
                 "-c",
                 str(cons),
                 *(["--no-deps"] if manifest.lock else []),
+                # a release is often minutes old: never trust a cached index for SK packages
+                *[
+                    arg
+                    for name in manifest.packages_for(node)
+                    for arg in ("--refresh-package", name)
+                ],
             ],
             runner,
             timeout=3600,
