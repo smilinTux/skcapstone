@@ -1,0 +1,1 @@
+- `skcapstone deploy tools` (the no-venv path) now runs the restarted units' `services:` smoke and restores the previous tool exports and drop-ins when it fails, as `deploy apply` already did. It used to accept a unit that came up and failed its health check.

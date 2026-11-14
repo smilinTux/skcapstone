@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from skcapstone.deploy import drift as drift_mod
-from skcapstone.deploy import resolve_manifest, rollout
+from skcapstone.deploy import resolve_manifest, rollout, tools
 from skcapstone.deploy.inspect import Dist, exec_paths_in_trees, git_tree_of, unit_exec_paths
 from skcapstone.deploy.manifest import Manifest, load_manifest
 
@@ -501,3 +501,51 @@ def test_unit_without_dropin_unchanged(tmp_path):
     home, units = _unit_with_dropin(tmp_path, "")
     paths = sorted(ep.path for ep in unit_exec_paths(units, home))
     assert paths == [str(home / "repo/tool"), str(home / "repo/tool/s.py")]
+
+
+# ------------------------------------------------------- tools-only apply smoke
+
+
+def _tools_only(tmp_path, monkeypatch, smoke_exit: int):
+
+    undone = []
+
+    class _Change(tools.ToolsChange):
+        def undo(self, root, unit_dir):
+            undone.append(True)
+
+    change = _Change(published={"thing": None}, units=["relay.service"])
+    monkeypatch.setattr(rollout, "apply_tools", lambda *a, **k: change)
+    calls = []
+
+    def runner(cmd, **_kw):
+        calls.append(cmd)
+        if cmd[:2] == ["bash", "-c"]:
+            return subprocess.CompletedProcess(cmd, smoke_exit, "", "smoke said no")
+        if "is-active" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "active\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    manifest = Manifest.model_validate(
+        {
+            "packages": {},
+            "services": {"relay.service": {"smoke": "curl -sf localhost:1/health"}},
+        }
+    )
+    paths = rollout.Paths(tmp_path / ".skenv", tmp_path / ".skenv-releases", tmp_path / "state")
+    result = rollout.apply_tools_only(manifest, paths, runner=runner)
+    return result, undone, calls
+
+
+def test_tools_only_apply_runs_the_unit_smoke(tmp_path, monkeypatch):
+    result, undone, calls = _tools_only(tmp_path, monkeypatch, 0)
+    assert result.ok and result.restarted == ["relay.service"]
+    assert ["bash", "-c", "curl -sf localhost:1/health"] in calls
+    assert not undone
+
+
+def test_tools_only_apply_rolls_back_on_smoke_failure(tmp_path, monkeypatch):
+    result, undone, _calls = _tools_only(tmp_path, monkeypatch, 7)
+    assert not result.ok and result.rolled_back
+    assert "smoke said no" in result.problems[0]
+    assert undone == [True]
