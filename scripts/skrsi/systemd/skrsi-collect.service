@@ -1,0 +1,10 @@
+[Unit]
+Description=SKRSI daily evidence collection into this estate's skrsi instance repo
+After=network-online.target
+
+[Service]
+Type=oneshot
+# SKRSI_INSTANCE: local clone of the instance repo (pushes evidence/** only).
+EnvironmentFile=%h/.config/skrsi/collect.env
+ExecStart=/usr/bin/python3 %h/.local/share/skrsi/collect_instance.py --instance ${SKRSI_INSTANCE} --push
+Nice=10
