@@ -43,7 +43,10 @@ class PackageSpec(BaseModel):
 
     Attributes:
         source: ``pypi`` installs ``name==version`` from PyPI; ``git`` installs
-            the package straight from a tag (private repositories).
+            the package straight from a tag (private repositories);
+            ``editable`` is a DECLARED, temporary exception (a tree running
+            unmerged work that must not be dropped). It is still reported as
+            drift, and needs ``path`` and ``reason``.
         version: The released version (required for ``pypi``).
         repo: ``owner/name`` of the GitHub repository the release comes from.
         tag: Tag template the release was cut from; ``{version}`` is expanded.
@@ -55,7 +58,7 @@ class PackageSpec(BaseModel):
             distribution name with dashes turned into underscores.
     """
 
-    source: Literal["pypi", "git"] = "pypi"
+    source: Literal["pypi", "git", "editable"] = "pypi"
     version: Optional[str] = None
     repo: str
     tag: str = "v{version}"
@@ -63,6 +66,8 @@ class PackageSpec(BaseModel):
     branch: str = "main"
     subdirectory: Optional[str] = None
     imports: list[str] = Field(default_factory=list)
+    path: Optional[str] = None
+    reason: Optional[str] = None
 
     @model_validator(mode="after")
     def _source_fields(self) -> "PackageSpec":
@@ -70,6 +75,8 @@ class PackageSpec(BaseModel):
             raise ValueError("a pypi package needs a version")
         if self.source == "git" and not self.ref:
             raise ValueError("a git package needs a ref (a tag on the default branch)")
+        if self.source == "editable" and not (self.path and self.reason):
+            raise ValueError("an editable exception needs a path and a reason")
         return self
 
     def release_tag(self) -> str:
@@ -82,6 +89,8 @@ class PackageSpec(BaseModel):
         """The pip requirement line that installs exactly this release."""
         if self.source == "pypi":
             return f"{name}=={self.version}"
+        if self.source == "editable":
+            return f"-e {Path(str(self.path)).expanduser()}"
         url = f"git+https://github.com/{self.repo}@{self.ref}"
         if self.subdirectory:
             url += f"#subdirectory={self.subdirectory}"

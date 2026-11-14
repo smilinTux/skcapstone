@@ -344,3 +344,32 @@ def test_doctor_deploy_checks_shape(monkeypatch, tmp_path):
     assert names == ["deploy:editable", "deploy:exec-in-tree", "deploy:manifest"]
     manifest_check = checks[-1]
     assert manifest_check.unknown and not manifest_check.passed
+
+
+def test_editable_exception_is_declared_but_still_drift(monkeypatch, tmp_path):
+    data = json.loads(json.dumps(MANIFEST))
+    data["packages"]["skingest"] = {
+        "source": "editable",
+        "repo": "o/skingest",
+        "path": "/t/skingest",
+        "reason": "unmerged fix branch",
+    }
+    m = Manifest.model_validate(data)
+    assert "-e /t/skingest" in m.requirement_lines()
+    runner = FakeRunner([(lambda c: c[0] == "gh", 0, "identical\n")])
+    rollout.preflight(m, runner)
+    assert not any("skingest" in " ".join(c) for c in runner.calls)
+    monkeypatch.setattr(
+        drift_mod, "list_dists", lambda _p: [Dist("skingest", "0.2.0", True, "file:///t/skingest")]
+    )
+    report = drift_mod.compute(tmp_path, Path("/x/python"), m, unit_dir=tmp_path / "none")
+    assert report.editable == [
+        "skingest 0.2.0 -> /t/skingest (declared exception: unmerged fix branch)"
+    ]
+
+
+def test_editable_exception_needs_reason():
+    with pytest.raises(ValueError, match="path and a reason"):
+        Manifest.model_validate(
+            {"packages": {"a": {"source": "editable", "repo": "o/a", "path": "/x"}}}
+        )

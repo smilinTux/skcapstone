@@ -68,11 +68,19 @@ def compute(
     except (RuntimeError, OSError, ValueError) as exc:
         report.unknown.append(f"cannot list {venv_python}: {exc}")
         dists = []
+    declared = {}
+    if manifest is not None:
+        declared = {
+            normalize(n): spec.reason
+            for n, spec in manifest.packages_for(node).items()
+            if spec.source == "editable"
+        }
     for dist in dists:
         if dist.editable:
-            report.editable.append(
-                f"{dist.name} {dist.version} -> {dist.location.removeprefix('file://')}"
-            )
+            where = dist.location.removeprefix("file://")
+            note = declared.get(normalize(dist.name))
+            suffix = f" (declared exception: {note})" if note else ""
+            report.editable.append(f"{dist.name} {dist.version} -> {where}{suffix}")
     allow = manifest.allow_exec_in_tree if manifest else []
     for ep, tree in exec_paths_in_trees(home, unit_dir or default_unit_dir(home), allow):
         report.exec_in_tree.append(f"{ep.origin}: {ep.path} (tree {tree})")

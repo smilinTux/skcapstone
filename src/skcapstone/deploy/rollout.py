@@ -139,6 +139,10 @@ def make_plan(manifest: Manifest, live_python: Path, node: Optional[str] = None)
     for name, spec in manifest.packages_for(node).items():
         have = installed.get(normalize(name))
         want = spec.version or str(spec.ref)
+        if spec.source == "editable":
+            if have is None or not have.editable:
+                plan.changed[name] = (have.version if have else None, "editable")
+            continue
         if have is None or have.editable or (spec.source == "pypi" and have.version != want):
             plan.changed[name] = (have.version if have else None, want)
         if have is not None and have.editable:
@@ -166,6 +170,8 @@ def preflight(
     """
     problems: list[str] = []
     for name, spec in manifest.packages_for(node).items():
+        if spec.source == "editable":
+            continue  # a declared exception; drift keeps reporting it
         tag = spec.release_tag()
         proc = _run(
             ["gh", "api", f"repos/{spec.repo}/compare/{spec.branch}...{tag}", "--jq", ".status"],
@@ -244,8 +250,9 @@ def verify_venv(
     proc = _run(["uv", "pip", "check", "--python", str(dest / "bin" / "python")], runner)
     if proc.returncode != 0:
         problems.append("pip check: " + (proc.stdout + proc.stderr).strip()[-800:])
+    declared = {normalize(n) for n, spec in pkgs.items() if spec.source == "editable"}
     for dist in list_dists(dest / "bin" / "python"):
-        if dist.editable:
+        if dist.editable and normalize(dist.name) not in declared:
             problems.append(f"{dist.name} is editable in the new venv")
     if live is not None and (live / "bin").is_dir():
         have = {p.name for p in (dest / "bin").iterdir()}
