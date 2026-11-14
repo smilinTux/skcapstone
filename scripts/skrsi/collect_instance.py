@@ -62,7 +62,9 @@ def _source(reader: str) -> Path:
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(repo), *args], check=check, capture_output=True, text=True)
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], check=check, capture_output=True, text=True
+    )
 
 
 def _run_script(scripts: Path, name: str, args: list[str]) -> dict:
@@ -113,9 +115,22 @@ def _github(scripts: Path, services: list[dict], end: str, work: Path) -> dict:
         out = work / f"{name}.json"
         try:
             proc = subprocess.run(
-                ["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", str(GH_LIMIT),
-                 "--json", "number,title,mergedAt"],
-                capture_output=True, text=True, timeout=120,
+                [
+                    "gh",
+                    "pr",
+                    "list",
+                    "-R",
+                    repo,
+                    "--state",
+                    "merged",
+                    "--limit",
+                    str(GH_LIMIT),
+                    "--json",
+                    "number,title,mergedAt",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
         except (OSError, subprocess.TimeoutExpired):
             missing.append(name)
@@ -126,7 +141,11 @@ def _github(scripts: Path, services: list[dict], end: str, work: Path) -> dict:
         out.write_text(proc.stdout)
         pr_args += ["--pr", f"{name}={out}"]
     if not pr_args:
-        return {"status": "missing", "reason": "no service PR list could be fetched", "services_missing": missing}
+        return {
+            "status": "missing",
+            "reason": "no service PR list could be fetched",
+            "services_missing": missing,
+        }
     rec = _run_script(scripts, "github", ["--end", end, "--days", "1", *pr_args])
     if missing:
         rec["services_missing"] = missing
@@ -151,11 +170,17 @@ def collect(instance: Path, node: str, end: str, share_model: str | None) -> dic
                 readers[reader] = _github(scripts, cluster.get("services", []), end, Path(tmp))
                 continue
             if reader not in SOURCES:
-                readers[reader] = {"status": "missing", "reason": "reader not supported by this collector"}
+                readers[reader] = {
+                    "status": "missing",
+                    "reason": "reader not supported by this collector",
+                }
                 continue
             src = _source(reader)
             if not src.exists():
-                readers[reader] = {"status": "missing", "reason": f"source not found ({SOURCES[reader][0]})"}
+                readers[reader] = {
+                    "status": "missing",
+                    "reason": f"source not found ({SOURCES[reader][0]})",
+                }
                 continue
             args = {
                 "cron": ["--ledger", str(src), "--days", "1", "--host", node],
@@ -173,7 +198,9 @@ def collect(instance: Path, node: str, end: str, share_model: str | None) -> dic
             rec["result"] = _strip_content_like(rec["result"], _content_key, dropped)
             if dropped:
                 rec["dropped_fields"] = dropped
-    tag = _git(instance / "framework", "describe", "--tags", "--always", check=False).stdout.strip()
+    tag = _git(
+        instance / "framework", "describe", "--tags", "--always", check=False
+    ).stdout.strip()
     commit = _git(instance / "framework", "rev-parse", "HEAD", check=False).stdout.strip()
     return {
         "schema_version": 1,
@@ -192,11 +219,23 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     yesterday = (dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=1)).isoformat()
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--instance", required=True, type=Path, help="local clone of the skrsi instance repo")
-    p.add_argument("--node", default=socket.gethostname().split(".")[0], help="node short name (default: hostname)")
+    p.add_argument(
+        "--instance", required=True, type=Path, help="local clone of the skrsi instance repo"
+    )
+    p.add_argument(
+        "--node",
+        default=socket.gethostname().split(".")[0],
+        help="node short name (default: hostname)",
+    )
     p.add_argument("--date", default=yesterday, help="day to collect, UTC (default: yesterday)")
-    p.add_argument("--share-model", default=os.environ.get(SHARE_MODEL_ENV), help="model for the sessions share metric")
-    p.add_argument("--push", action="store_true", help="pull first, then commit the evidence file and push")
+    p.add_argument(
+        "--share-model",
+        default=os.environ.get(SHARE_MODEL_ENV),
+        help="model for the sessions share metric",
+    )
+    p.add_argument(
+        "--push", action="store_true", help="pull first, then commit the evidence file and push"
+    )
     a = p.parse_args(argv)
     dt.date.fromisoformat(a.date)
     inst = a.instance.expanduser().resolve()
@@ -209,8 +248,12 @@ def main(argv: list[str] | None = None) -> int:
     record = collect(inst, a.node, a.date, a.share_model)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
-    val = subprocess.run([sys.executable, "-I", str(inst / "framework/scripts/validate_instance.py"), str(inst)],
-                         capture_output=True, text=True, cwd=inst)
+    val = subprocess.run(
+        [sys.executable, "-I", str(inst / "framework/scripts/validate_instance.py"), str(inst)],
+        capture_output=True,
+        text=True,
+        cwd=inst,
+    )
     if val.returncode != 0:
         out.unlink()
         print(val.stdout + val.stderr, file=sys.stderr)
@@ -220,8 +263,19 @@ def main(argv: list[str] | None = None) -> int:
     if a.push:
         rel = str(out.relative_to(inst))
         _git(inst, "add", "--", rel)
-        _git(inst, "-c", "user.name=Lumina", "-c", "user.email=lumina@skworld.io", "commit", "-q",
-             "-m", f"evidence({a.node}): {a.date} daily collection", "--", rel)
+        _git(
+            inst,
+            "-c",
+            "user.name=Lumina",
+            "-c",
+            "user.email=lumina@skworld.io",
+            "commit",
+            "-q",
+            "-m",
+            f"evidence({a.node}): {a.date} daily collection",
+            "--",
+            rel,
+        )
         _git(inst, "push", "-q", "origin", "HEAD:main")
         print("pushed", _git(inst, "rev-parse", "--short", "HEAD").stdout.strip())
     return 0

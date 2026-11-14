@@ -45,7 +45,8 @@ if __name__ == "__main__":
 FAKE_CRON = """
 import json, sys
 runs = -1 if "--poison" in open(sys.argv[sys.argv.index("--ledger") + 1]).read() else 7
-print(json.dumps({"schema": "skrsi.baseline.cron.v1", "runs": runs, "output_label": "x", "output_n": 3}))
+print(json.dumps({"schema": "skrsi.baseline.cron.v1", "runs": runs,
+                  "output_label": "x", "output_n": 3}))
 """
 
 
@@ -124,7 +125,11 @@ def test_failed_validation_removes_the_file(env):
 def test_failing_reader_is_an_error_not_zero(env, monkeypatch):
     mod = load_module()
     inst = make_instance(env, ["cron"])
-    (inst / "framework" / "scripts" / "baseline_cron.py").write_text("import sys; sys.exit('boom')\n")
+    (inst / "framework" / "scripts" / "baseline_cron.py").write_text(
+        "import sys; sys.exit('boom')\n"
+    )
     assert run(mod, inst) == 0
-    cron = json.loads((inst / "evidence" / "node-a" / f"{DAY}.json").read_text())["readers"]["cron"]
+    cron = json.loads((inst / "evidence" / "node-a" / f"{DAY}.json").read_text())["readers"][
+        "cron"
+    ]
     assert cron == {"status": "error", "reason": "boom"}
