@@ -395,3 +395,36 @@ def test_build_venv_refuses_existing_dest(tmp_path):
     (tmp_path / "d").mkdir()
     with pytest.raises(rollout.DeployError, match="already exists"):
         rollout.build_venv(_m(), tmp_path / "d", "3.12", FakeRunner())
+
+
+def test_lock_replaces_requirements_and_installs_no_deps(tmp_path):
+    seen: dict[str, object] = {}
+
+    def runner(cmd, **kw):
+        if cmd[:3] == ["uv", "pip", "install"]:
+            seen["cmd"] = list(cmd)
+            seen["r"] = Path(cmd[cmd.index("-r") + 1]).read_text()
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    m = _m(lock=["numpy==2.3.4", "uvicorn==0.30.1"])
+    rollout.build_venv(m, tmp_path / "rel" / "new", "3.12", runner)
+    assert "--no-deps" in seen["cmd"]
+    assert "uvicorn==0.30.1" in seen["r"] and "uvicorn==0.30.6" not in seen["r"]
+
+
+def test_verify_flags_only_new_pip_check_problems(tmp_path, monkeypatch):
+    live, new = tmp_path / "live", tmp_path / "new"
+    for d in (live, new):
+        (d / "bin").mkdir(parents=True)
+    monkeypatch.setattr(rollout, "list_dists", lambda _p: [])
+
+    def runner(cmd, **kw):
+        if cmd[:3] == ["uv", "pip", "check"]:
+            old = "a 1 has requirement b<2, but you have b 2"
+            fresh = "skfoo 1.2.0 has requirement c>=3, but you have c 1"
+            out = old if str(live) in cmd[-1] else f"{old}\n{fresh}"
+            return subprocess.CompletedProcess(cmd, 1, out, "")
+        return subprocess.CompletedProcess(cmd, 0, "[]", "")
+
+    problems = rollout.verify_venv(_m(), new, live, runner)
+    assert len(problems) == 1 and "skfoo 1.2.0" in problems[0] and "b<2" not in problems[0]

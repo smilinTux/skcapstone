@@ -18,6 +18,7 @@ Example::
       - "uvicorn==0.30.6"
     constraints:            # pins that only apply if something pulls them in
       - "numpy==2.3.4"
+    lock: []                # optional: the exact third-party set, installed --no-deps
     services:
       skchat-daemon.service:
         packages: [skchat-sovereign, skcomms]
@@ -121,6 +122,7 @@ class Manifest(BaseModel):
     packages: dict[str, PackageSpec]
     requirements: list[str] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
+    lock: list[str] = Field(default_factory=list)
     services: dict[str, ServiceSpec] = Field(default_factory=dict)
     smoke: list[str] = Field(default_factory=list)
     nodes: dict[str, NodeProfile] = Field(default_factory=lambda: {"default": NodeProfile()})
@@ -169,9 +171,13 @@ class Manifest(BaseModel):
         return {n: self.services[n] for n in prof.services if n in self.services}
 
     def requirement_lines(self, node: Optional[str] = None) -> list[str]:
-        """Every pip requirement the node's venv is built from, SK pins first."""
+        """Every pip requirement the node's venv is built from, SK pins first.
+
+        With a ``lock`` the third-party set is exactly the lock (installed
+        ``--no-deps``), so only the SK packages differ from what was locked.
+        """
         lines = [spec.requirement(name) for name, spec in self.packages_for(node).items()]
-        return lines + list(self.requirements)
+        return lines + list(self.lock or self.requirements)
 
 
 def load_manifest(path: Path) -> Manifest:

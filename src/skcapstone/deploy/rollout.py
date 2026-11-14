@@ -224,6 +224,7 @@ def build_venv(
                 str(reqs),
                 "-c",
                 str(cons),
+                *(["--no-deps"] if manifest.lock else []),
             ],
             runner,
             timeout=3600,
@@ -260,9 +261,11 @@ def verify_venv(
         problems.append(f"verify script failed: {proc.stderr.strip()[-500:]}")
     else:
         problems += json.loads(proc.stdout or "[]")
-    proc = _run(["uv", "pip", "check", "--python", str(dest / "bin" / "python")], runner)
-    if proc.returncode != 0:
-        problems.append("pip check: " + (proc.stdout + proc.stderr).strip()[-800:])
+    new_issues = _pip_check(dest / "bin" / "python", runner)
+    old_issues = _pip_check(live / "bin" / "python", runner) if live is not None else set()
+    fresh = sorted(new_issues - old_issues)
+    if fresh:
+        problems.append(f"pip check: {len(fresh)} new problem(s): " + "; ".join(fresh[:20]))
     declared = {normalize(n) for n, spec in pkgs.items() if spec.source == "editable"}
     for dist in list_dists(dest / "bin" / "python"):
         if dist.editable and normalize(dist.name) not in declared:
@@ -279,6 +282,19 @@ def verify_venv(
         if lost:
             problems.append(f"bin/ would lose {len(lost)} executable(s): {', '.join(lost)}")
     return problems
+
+
+def _pip_check(python: Path, runner: Runner) -> set[str]:
+    """``uv pip check`` problems as a set of lines (empty when consistent).
+
+    The live venv may already be inconsistent; verification compares against
+    it so a rollout is refused only for problems it would INTRODUCE.
+    """
+    proc = _run(["uv", "pip", "check", "--python", str(python)], runner)
+    if proc.returncode == 0:
+        return set()
+    lines = {ln.strip() for ln in (proc.stdout + proc.stderr).splitlines()}
+    return {ln for ln in lines if ln and not ln.startswith(("Checked", "Found", "Resolved"))}
 
 
 # ------------------------------------------------------------------------- switch
