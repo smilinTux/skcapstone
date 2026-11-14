@@ -186,17 +186,18 @@ def rewrite_pairs(manifest: Manifest, node: Optional[str], root: Path, home: Pat
     """``(old spelling, new path)`` substitutions, longest first."""
     pairs: list[tuple[str, str]] = []
     for name, tool in manifest.tools_for(node).items():
-        checkout = str(Path(tool.checkout).expanduser())
         current = root / name / "current"
         new_base = (
             "%h" + str(current)[len(str(home)) :]
             if str(current).startswith(str(home) + "/")
             else str(current)
         )
-        for rel in tool.paths or [""]:
-            old = f"{checkout}/{rel}".rstrip("/")
-            new = f"{new_base}/{rel}".rstrip("/")
-            pairs += [(form, new) for form in _forms(old, home)]
+        for checkout in tool.checkouts:
+            checkout = str(Path(checkout).expanduser())
+            for rel in tool.paths or [""]:
+                old = f"{checkout}/{rel}".rstrip("/")
+                new = f"{new_base}/{rel}".rstrip("/")
+                pairs += [(form, new) for form in _forms(old, home)]
     return sorted(pairs, key=lambda p: len(p[0]), reverse=True)
 
 
@@ -230,6 +231,29 @@ def desired_dropins(unit_dir: Path, pairs: list[tuple[str, str]]) -> dict[str, s
         if lines:
             out[unit.name] = _MARK + "[Service]\n" + "\n".join(lines) + "\n"
     return out
+
+
+def _missing_in_exports(
+    want: dict[str, str], exports: dict[str, Path], root: Path, home: Path
+) -> list[str]:
+    """Paths the new drop-ins name under a tool's ``current`` that its export lacks.
+
+    Checked against the NEW export before anything is published, so a ref on
+    main that dropped a script a unit runs is refused instead of breaking the
+    unit on its next start.
+    """
+    gone: list[str] = []
+    for unit, text in want.items():
+        for name, dest in exports.items():
+            for base in (
+                f"%h{str(root)[len(str(home)):]}/{name}/current",
+                f"{root}/{name}/current",
+            ):
+                for match in re.finditer(re.escape(base) + r"(/[^\s\"':;]*)?", text):
+                    rel = (match.group(1) or "").lstrip("/")
+                    if not (dest / rel).exists():
+                        gone.append(f"{unit}: {name}/{rel or '.'}")
+    return sorted(set(gone))
 
 
 def apply_tools(
@@ -267,6 +291,13 @@ def apply_tools(
             name, url, ref, branch, tool.paths, root, state_dir / "tool-src", runner
         )
         change.exported[name] = exports[name].name
+    pairs = rewrite_pairs(manifest, node, root, home)
+    want = desired_dropins(unit_dir, pairs)
+    gone = _missing_in_exports(want, exports, root, home)
+    if gone:
+        raise ToolError(
+            "units would point at files the export does not have: " + "; ".join(gone[:8])
+        )
     moved: set[str] = set()
     for name, dest in exports.items():
         link = root / name / "current"
@@ -276,8 +307,6 @@ def apply_tools(
             _atomic_link(link, dest.name)
             moved.add(name)
             log(f"tool {name}: {previous or 'none'} -> {dest.name}")
-    pairs = rewrite_pairs(manifest, node, root, home)
-    want = desired_dropins(unit_dir, pairs)
     have = {p.parent.name.removesuffix(".d"): p for p in unit_dir.glob(f"*.service.d/{DROPIN}")}
     for unit in sorted(set(want) | set(have)):
         path = unit_dir / f"{unit}.d" / DROPIN

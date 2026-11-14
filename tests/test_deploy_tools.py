@@ -250,3 +250,26 @@ def test_dotfiles_repo_at_home_counts_only_tracked_paths(tmp_path):
     (units / "b.service").write_text("[Service]\nExecStart=/bin/sh %h/bin/untracked.sh\n")
     hits = sorted((ep.origin, ep.path) for ep, _t in exec_paths_in_trees(home, units))
     assert hits == [("unit a.service", str(home / "bin/tracked.sh"))]
+
+
+def test_export_lacking_a_unit_script_is_refused_before_publishing(tmp_path, origin):
+    home, units, manifest = _setup(tmp_path, origin)
+    (units / "gone.service").write_text(
+        f"[Service]\nExecStart=/usr/bin/python3 {home}/src/thing/scripts/removed.py\n"
+    )
+    with pytest.raises(tools.ToolError, match="thing/scripts/removed.py"):
+        _apply(tmp_path, home, units, manifest)
+    assert not (home / ".local/share/sk-tools/thing/current").exists()
+    assert not list(units.glob(f"*.service.d/{tools.DROPIN}"))
+
+
+def test_checkout_list_rewrites_every_location(tmp_path, origin):
+    home, units, manifest = _setup(tmp_path, origin)
+    manifest.tools["thing"].checkout = [str(home / "src/thing"), str(home / "elsewhere/thing")]
+    (units / "alt.service").write_text(
+        f"[Service]\nExecStart=/usr/bin/python3 {home}/elsewhere/thing/scripts/relay.py\n"
+    )
+    pairs = tools.rewrite_pairs(manifest, None, home / ".local/share/sk-tools", home)
+    want = tools.desired_dropins(units, pairs)
+    assert set(want) == {"relay.service", "alt.service"}
+    assert "%h/.local/share/sk-tools/thing/current/scripts/relay.py" in want["alt.service"]

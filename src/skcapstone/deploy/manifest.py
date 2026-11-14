@@ -124,7 +124,8 @@ class ToolSpec(BaseModel):
         url: Any git URL (a private forge); overrides ``repo``.
         ref: Tag or commit to export. Defaults to the package release tag.
         branch: The default branch the ref must be on.
-        checkout: Where the working tree sits on nodes (``~`` allowed).
+        checkout: Where the working tree sits on nodes (``~`` allowed). A list
+            when nodes keep it in different places.
         paths: Repository paths to export and rewrite; empty means all.
         reason: Why this is a tool export and not a package entry point.
     """
@@ -134,7 +135,7 @@ class ToolSpec(BaseModel):
     url: Optional[str] = None
     ref: Optional[str] = None
     branch: Optional[str] = None
-    checkout: str
+    checkout: Union[str, list[str]]
     paths: list[str] = Field(default_factory=list)
     reason: Optional[str] = None
 
@@ -147,6 +148,11 @@ class ToolSpec(BaseModel):
         if any(p.startswith("/") or ".." in Path(p).parts for p in self.paths):
             raise ValueError("tool paths are relative to the repository root")
         return self
+
+    @property
+    def checkouts(self) -> list[str]:
+        """Every checkout location, as a list."""
+        return [self.checkout] if isinstance(self.checkout, str) else list(self.checkout)
 
 
 class ServiceSpec(BaseModel):
