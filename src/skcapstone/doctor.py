@@ -4259,7 +4259,10 @@ def _check_deploy(deep: bool = False) -> list[Check]:
                 description="Installed SK versions match the release manifest",
                 passed=False,
                 unknown=True,
-                detail="UNKNOWN: no release manifest on this node (SK_DEPLOY_MANIFEST_REPO in ~/.config/sk-deploy/env)",
+                detail=(
+                    "UNKNOWN: no release manifest on this node "
+                    "(SK_DEPLOY_MANIFEST_REPO in ~/.config/sk-deploy/env)"
+                ),
                 category="deploy",
             )
         )
