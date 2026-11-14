@@ -81,6 +81,19 @@ def _no_real_skmail(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_sk_alert(monkeypatch):
+    """Never send a test's alert to the real Telegram path.
+
+    Fleet converge tests exercise the enforce-mode refusal, which calls
+    ``fleet.alerts.send_alert``. Run on noroc2027, that fired real
+    "fleet: service skgateway on node-41 REFUSED actuation" alerts
+    (2026-11-13). Every sk-alert lookup honours $SK_ALERT_BIN first, so point
+    it at /bin/true. A test that exercises resolution sets or deletes it.
+    """
+    monkeypatch.setenv("SK_ALERT_BIN", "/bin/true")
+
+
+@pytest.fixture(autouse=True)
 def _no_external_network(monkeypatch, request):
     """Fail at the socket boundary if a unit test misses an endpoint stub.
 

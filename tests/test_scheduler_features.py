@@ -51,7 +51,7 @@ class _Res:
 
 def _patch_alert(monkeypatch):
     calls = []
-    monkeypatch.setattr(st.shutil, "which", lambda _n: "/usr/bin/sk-alert")
+    monkeypatch.setenv("SK_ALERT_BIN", "/usr/bin/sk-alert")
     monkeypatch.setattr(st.subprocess, "run", lambda args, **k: calls.append(args) or None)
     return calls
 

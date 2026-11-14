@@ -11,11 +11,13 @@ from __future__ import annotations
 import subprocess
 from typing import Callable
 
+from ..sk_alert_bin import sk_alert_bin
+
 
 def default_sender(text: str) -> bool:
     """Send one Telegram message via sk-alert. Never raises; returns success."""
     try:
-        r = subprocess.run(["sk-alert", text], capture_output=True, text=True, timeout=20)
+        r = subprocess.run([sk_alert_bin(), text], capture_output=True, text=True, timeout=20)
         return r.returncode == 0
     except Exception:
         return False
