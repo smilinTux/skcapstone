@@ -12,7 +12,7 @@ fixes both:
    tree, never edited in place).
 2. ``publish``: ``<name>/current`` is switched atomically to that export.
 3. ``rewrite``: every user unit that names a path under the tool's
-   ``checkout`` gets one managed drop-in, ``zz-sk-deploy-tools.conf``, that
+   ``checkout`` gets one managed drop-in, ``zzzz-sk-deploy-tools.conf``, that
    re-states its ``ExecStart*``, ``WorkingDirectory`` and ``Environment``
    lines with the checkout replaced by ``current``. The unit files themselves
    are never edited, and deleting the drop-in reverts the unit.
@@ -40,7 +40,11 @@ from .manifest import Manifest
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
-DROPIN = "zz-sk-deploy-tools.conf"
+#: systemd applies drop-ins in name order and the last assignment wins, so the
+#: managed one must sort after every hand-written drop-in (``zz-*`` included).
+DROPIN = "zzzz-sk-deploy-tools.conf"
+#: Earlier names of the managed drop-in, removed on the next apply.
+LEGACY_DROPINS = ("zz-sk-deploy-tools.conf",)
 _MARK = "# Managed by `skcapstone deploy` (manifest tools). Regenerated on every\n"
 _MARK += "# apply; edit the manifest, not this file. Delete it to revert the unit.\n"
 _META = ".sk-tool.json"
@@ -58,6 +62,7 @@ class ToolsChange:
     published: dict[str, Optional[str]] = field(default_factory=dict)
     dropins: dict[str, Optional[str]] = field(default_factory=dict)
     units: list[str] = field(default_factory=list)
+    legacy: dict[str, str] = field(default_factory=dict)
 
     @property
     def empty(self) -> bool:
@@ -77,6 +82,8 @@ class ToolsChange:
                 path.unlink(missing_ok=True)
             else:
                 path.write_text(old, encoding="utf-8")
+        for path, text in self.legacy.items():
+            Path(path).write_text(text, encoding="utf-8")
 
 
 def default_root(home: Optional[Path] = None) -> Path:
@@ -213,7 +220,7 @@ def desired_dropins(unit_dir: Path, pairs: list[tuple[str, str]]) -> dict[str, s
     if not pairs or not unit_dir.is_dir():
         return out
     for unit in sorted(unit_dir.glob("*.service")):
-        settings = _unit_settings(unit, skip=(DROPIN,))
+        settings = _unit_settings(unit, skip=(DROPIN, *LEGACY_DROPINS))
         lines: list[str] = []
         for key in _EXEC_KEYS:
             values = settings[key]
@@ -307,6 +314,11 @@ def apply_tools(
             _atomic_link(link, dest.name)
             moved.add(name)
             log(f"tool {name}: {previous or 'none'} -> {dest.name}")
+    for legacy in LEGACY_DROPINS:
+        for path in unit_dir.glob(f"*.service.d/{legacy}"):
+            change.dropins.setdefault(path.parent.name.removesuffix(".d"), None)
+            change.legacy[str(path)] = path.read_text(encoding="utf-8")
+            path.unlink()
     have = {p.parent.name.removesuffix(".d"): p for p in unit_dir.glob(f"*.service.d/{DROPIN}")}
     for unit in sorted(set(want) | set(have)):
         path = unit_dir / f"{unit}.d" / DROPIN
