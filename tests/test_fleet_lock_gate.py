@@ -108,6 +108,54 @@ def test_workflow_runs_every_check():
         "caps deploy/dependency-caps.md",
         "security-downgrades",
         "pip-audit -r deploy/fleet-constraints.txt",
+        "pip-audit -r deploy/audit-canary.txt",
+        "audit-sees",
         '"3.12", "3.14"',
     ):
         assert needle in wf, needle
+
+
+def test_brotli_is_a_security_package():
+    base = "brotli==1.2.1\nbrotlicffi==1.2.1.0\n"
+    head = "Brotli==1.2.0\nbrotlicffi==1.2.0.0\n"
+    findings = gate.security_downgrades(base, head, "")
+    assert [f.split(":")[0] for f in findings] == ["brotli", "brotlicffi"]
+
+
+def test_lock_holds_the_brotli_floors():
+    from packaging.version import Version
+
+    versions = gate.lock_versions((ROOT / "deploy" / "fleet-constraints.txt").read_text())
+    assert min(versions["brotli"]) >= Version("1.2.1")
+    assert min(versions["brotlicffi"]) >= Version("1.2.1.0")
+
+
+def test_audit_sees_every_canary_or_fails():
+    canary = (ROOT / "deploy" / "audit-canary.txt").read_text()
+    full = {
+        "dependencies": [
+            {"name": "brotli", "version": "1.2.0", "vulns": [{"id": "PYSEC-2026-4322"}]},
+            {"name": "brotlicffi", "version": "1.2.0.0", "vulns": [{"id": "PYSEC-2026-4323"}]},
+        ]
+    }
+    assert gate.audit_blind_spots(full, canary) == []
+    full["dependencies"][1]["vulns"] = []
+    assert gate.audit_blind_spots(full, canary) == ["brotlicffi"]
+    # An empty report (service down, wrong flags) is blind on everything.
+    assert gate.audit_blind_spots({}, canary) == ["brotli", "brotlicffi"]
+
+
+def test_audit_sees_cli_fails_closed_on_a_missing_report(tmp_path):
+    script = ROOT / "scripts" / "ci" / "fleet_lock_gate.py"
+    r = subprocess.run(
+        [
+            "python3",
+            str(script),
+            "audit-sees",
+            str(tmp_path / "none.json"),
+            str(ROOT / "deploy" / "audit-canary.txt"),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 1 and "AUDIT_BLIND" in r.stdout

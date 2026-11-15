@@ -140,10 +140,19 @@ Every PR that touches the lock, its inputs, `deploy/dependency-caps.md` or
    third-party library is a row in `deploy/dependency-caps.md`;
 7. `fleet_lock_gate.py security-downgrades`: no security-relevant package
    (cryptography, pyOpenSSL, PyJWT, urllib3, requests, certifi, paramiko,
-   Pillow, starlette, fastapi, aiohttp, h11, jinja2, PGPy) goes down compared
+   Pillow, starlette, fastapi, aiohttp, h11, jinja2, PGPy, Brotli, brotlicffi)
+   goes down compared
    with main, unless the PR body has a line `security-downgrade: <name> <why>`;
 8. `pip-audit` against PyPI and OSV advisories on the resolved lock (also daily
-   on main, so a new advisory against an unchanged lock turns main red).
+   on main, so a new advisory against an unchanged lock turns main red). First
+   it audits `deploy/audit-canary.txt`, pins that are vulnerable on purpose,
+   and `fleet_lock_gate.py audit-sees` fails unless both services report every
+   one of them, so a clean audit can never come from a blind one.
+
+A fix made by hand on a host (for example `pip install -U brotli` after
+CVE-2026-111497) is not durable until it is a floor in `deploy/fleet-tools.in`
+and the lock carries it. Add the vulnerable version to the canary in the same PR,
+and add the package to the security list in `fleet_lock_gate.py` when it is one.
 
 The jobs always report (they skip their steps on a PR that touches none of
 those files), so they can be required checks.
