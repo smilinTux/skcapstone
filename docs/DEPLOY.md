@@ -112,6 +112,60 @@ tools:
 setup output, so a rollback (`current` back to the previous export) needs no
 rebuild.
 
+## Per-cluster config repos
+
+A framework that runs with site configuration (skgateway is the example) is
+split the way skstacks is: the public framework is a tool with one pinned
+release for every node, and each cluster keeps its configuration in its own
+private repository, one directory per instance. Each node names its config
+repository and a pinned ref next to the framework's tool:
+
+```yaml
+tools:
+  skgateway:
+    repo: smilinTux/skgateway
+    ref: skgateway-v1.1.17          # the framework release, the same everywhere
+    checkout: ~/skworld-deploy/skgateway
+    setup: [npm, ci, --omit=dev]
+nodes:
+  node-a:
+    tools: [skgateway]
+    configs:
+      skgateway:
+        repo: example-org/skgateway-config-a   # private, per cluster
+        ref: 3f2a1c9d0b7e                      # a commit (or tag) on its main
+        instance: node-a                       # the directory to deploy
+```
+
+`deploy apply` and `deploy tools` then also:
+
+1. export `<instance>/` of the config at its ref (refused unless the ref is
+   on the config repo's main) to `~/.local/share/sk-tools/<tool>-config/<sha12>`
+   and publish it as `<tool>-config/current`, together with the tool;
+2. render every unit file in `<instance>/systemd/` (`*.service`, `*.timer`):
+   `@TOOL@` becomes `%h/.local/share/sk-tools/<tool>/current` and `@CONFIG@`
+   becomes `%h/.local/share/sk-tools/<tool>-config/current/<instance>`. Any other
+   `@NAME@` left in the file, or a path under either export that the new
+   exports do not have, refuses the apply before anything is published;
+3. install each rendered file as the whole user unit (a header names the
+   config commit) and move every drop-in of that unit aside to
+   `~/.local/state/sk-deploy/displaced-dropins/<time>/`, so the config repo is
+   the unit's only source. No `zzzz-sk-deploy-tools.conf` is written for it;
+4. restart the units whose file changed or whose tool or config export moved,
+   run their manifest smokes, and on failure put back the previous exports,
+   unit files and drop-ins.
+
+So an instance runs exactly (framework ref, config ref), both reviewed by PR,
+and a config change ships by: PR in the config repo, merge, PR in the release
+manifest bumping that node's `configs.<tool>.ref`, `deploy tools`.
+
+Credentials never go in a config repo. The unit references them as 0600 files
+on the node (`EnvironmentFile=-%h/.config/<tool>/secrets.env`, a credentials
+path inside the config), kept in skvault, and the config repo's `.gitignore`
+names them. A node needs read access to the private config repository: use a
+read-only deploy key or a forge URL in `url:`. Drift reports a config export
+that is missing or not at the manifest's ref.
+
 ## Drift
 
 `skcapstone doctor` reports the `deploy:*` checks, and the
