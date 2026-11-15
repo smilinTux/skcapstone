@@ -34,6 +34,7 @@ The whole step is undoable: :class:`ToolsChange` remembers the previous
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -90,6 +91,29 @@ class ToolsChange:
     displaced: dict[str, str] = field(default_factory=dict)
     #: files the config instances manage (``<instance>/files.yaml``), to put back
     files: "FilesUndo" = field(default_factory=_files_undo)  # noqa: F821
+    #: what this step left on disk, keyed by path: managed files (see
+    #: :func:`.files.apply_files`), plus ``{"mode": "unit"|"dropin", "sha256"}``
+    #: for unit files and managed drop-ins (``sha256`` None: removed)
+    written: dict[str, dict] = field(default_factory=dict)
+
+    _PLAIN = ("exported", "published", "dropins", "units", "legacy", "unit_files", "displaced")
+
+    def to_dict(self) -> dict:
+        """Plain JSON data, for the change record (rollback runs in a later process)."""
+        out = {k: getattr(self, k) for k in self._PLAIN}
+        out["files"] = self.files.to_dict()
+        out["written"] = self.written
+        return json.loads(json.dumps(out))
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ToolsChange":
+        """The change :meth:`to_dict` wrote."""
+        from .files import FilesUndo
+
+        change = cls(**{k: data[k] for k in cls._PLAIN if data.get(k) is not None})
+        change.files = FilesUndo.from_dict(data.get("files") or {})
+        change.written = dict(data.get("written") or {})
+        return change
 
     @property
     def empty(self) -> bool:
@@ -127,6 +151,10 @@ class ToolsChange:
         for original, moved in self.displaced.items():
             Path(original).parent.mkdir(parents=True, exist_ok=True)
             shutil.move(moved, original)
+
+
+def _sha(text: Optional[str]) -> Optional[str]:
+    return None if text is None else hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def default_root(home: Optional[Path] = None) -> Path:
@@ -584,6 +612,7 @@ def apply_tools(
         if hand and dropdir.is_dir() and not any(dropdir.iterdir()):
             dropdir.rmdir()
         path = unit_dir / unit
+        change.written[str(path)] = {"mode": "unit", "sha256": _sha(text)}
         old = path.read_text(encoding="utf-8") if path.is_file() else None
         if old != text:
             change.unit_files[unit] = old
@@ -595,6 +624,7 @@ def apply_tools(
         path = unit_dir / f"{unit}.d" / DROPIN
         old = path.read_text(encoding="utf-8") if path.is_file() else None
         new = want.get(unit)
+        change.written[str(path)] = {"mode": "dropin", "sha256": _sha(new)}
         if old == new:
             continue
         change.dropins[unit] = old
@@ -616,6 +646,7 @@ def apply_tools(
                 tools_root=root,
                 exports=exports,
                 undo=change.files,
+                written=change.written,
             )
             if change.files.previous.keys() - before.keys():
                 file_units.update(inst_units)

@@ -28,7 +28,9 @@ text, file mode, symlink or moved directory. No substitution happens beyond
 
 from __future__ import annotations
 
+import base64
 import difflib
+import hashlib
 import os
 import re
 import shutil
@@ -60,6 +62,22 @@ def begin_marker(block: str) -> str:
 
 def end_marker(block: str) -> str:
     return f"# <<< {block} <<<"
+
+
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def block_body(text: str, block: str) -> Optional[str]:
+    """The lines between *block*'s markers in *text*, or None when it has no such block."""
+    parts = text.split("\n")
+    begin, end = begin_marker(block), end_marker(block)
+    starts = [i for i, line in enumerate(parts) if line.rstrip() == begin]
+    ends = [i for i, line in enumerate(parts) if line.rstrip() == end]
+    if len(starts) != 1 or len(ends) != 1 or starts[0] > ends[0]:
+        return None
+    inner = parts[starts[0] + 1 : ends[0]]
+    return "\n".join(inner) + ("\n" if inner else "")
 
 
 class FileSpec(BaseModel):
@@ -279,6 +297,43 @@ class FilesUndo:
     def empty(self) -> bool:
         return not self._was
 
+    def to_dict(self) -> dict:
+        """Plain JSON data (previous bytes as base64), for the change record."""
+        out = []
+        for key, was in self._was.items():
+            entry: dict = {"path": key, "was": was[0]}
+            if was[0] == "file":
+                entry["data"] = base64.b64encode(was[1]).decode("ascii")
+                entry["mode"] = was[2]
+            elif was[0] == "link":
+                entry["target"] = was[1]
+            elif was[0] == "moved":
+                entry["aside"] = was[1]
+            out.append(entry)
+        return {"entries": out}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "FilesUndo":
+        """The undo :meth:`to_dict` wrote, in a fresh process."""
+        undo = cls()
+        for entry in (data or {}).get("entries") or []:
+            key, kind = entry["path"], entry["was"]
+            undo.previous[key] = None
+            if kind == "file":
+                raw = base64.b64decode(entry["data"])
+                undo._was[key] = ("file", raw, int(entry["mode"]))
+                undo.previous[key] = _decode(raw)
+            elif kind == "link":
+                undo._was[key] = ("link", entry["target"])
+            elif kind == "moved":
+                undo._was[key] = ("moved", entry["aside"])
+                undo.displaced[key] = entry["aside"]
+            elif kind == "absent":
+                undo._was[key] = ("absent",)
+            else:
+                raise ValueError(f"{key}: unknown undo kind {kind!r}")
+        return undo
+
     def _note(self, path: Path) -> None:
         key = str(path)
         if key in self._was:
@@ -355,8 +410,14 @@ def apply_files(
     tools_root: Optional[Path] = None,
     exports: Optional[dict[str, Path]] = None,
     undo: Optional[FilesUndo] = None,
+    written: Optional[dict[str, dict]] = None,
 ) -> dict[str, Optional[str]]:
     """Make the host match *specs*. Everything is checked before anything is written.
+
+    Args:
+        written: Filled with what every spec leaves on disk, keyed by path, changed
+            or not: ``{"mode", "sha256"}`` of the whole file (plus ``block`` and
+            ``block_sha256`` of the block body), or ``{"mode": "link", "target"}``.
 
     Returns:
         Each path written, to its previous text (None: it was not a regular file).
@@ -377,6 +438,8 @@ def apply_files(
     stamp = time.strftime("%Y%m%d-%H%M%S")
     for r in plan:
         path, key = r.path, str(r.path)
+        if written is not None:
+            written[key] = _written(r)
         if r.link is not None:
             if path.is_symlink() and os.readlink(path) == r.link:
                 continue
@@ -398,6 +461,16 @@ def apply_files(
         changed[key] = undo.previous[key]
         _atomic_write(path, data, r.spec.file_mode)
     return changed
+
+
+def _written(r: Rendered) -> dict:
+    if r.link is not None:
+        return {"mode": "link", "target": r.link}
+    out = {"mode": r.spec.mode, "sha256": sha256(_encode(r.text))}
+    if r.spec.mode == "block":
+        body = block_body(r.text, r.spec.block) or ""
+        out.update(block=r.spec.block, block_sha256=sha256(_encode(body)))
+    return out
 
 
 def diff_files(

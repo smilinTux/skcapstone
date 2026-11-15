@@ -30,9 +30,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+from .files import _atomic_write
+from .files import sha256 as _sha_bytes
 from .inspect import default_unit_dir, list_dists, normalize
 from .manifest import Manifest
-from .tools import ToolError, ToolsChange, apply_tools, default_root, restart_targets
+from .tools import DROPIN, ToolError, ToolsChange, apply_tools, default_root, restart_targets
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
@@ -524,6 +526,8 @@ class Result:
     restarted: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     rolled_back: bool = False
+    #: things worth knowing that are not failures (a rollback over hand edits)
+    notes: list[str] = field(default_factory=list)
 
 
 def apply(
@@ -595,13 +599,24 @@ def apply(
     units = plan.restarts if live else list(manifest.services_for(node))
     units += [u for u in restart_targets(tools.units, runner) if u not in units]
     if not restart:
-        return Result(ok=True, release=dest, previous=previous)
+        return Result(
+            ok=True,
+            release=dest,
+            previous=previous,
+            notes=_record(paths, tools, manifest_id, unit_dir, log),
+        )
     log(f"restart: {', '.join(units) or 'nothing'}")
     started: dict[str, dict[str, str]] = {}
     problems = restart_units(units, runner, started=started)
     problems += smoke(manifest, units, paths.venv_link, runner, node, started=started)
     if not problems:
-        return Result(ok=True, release=dest, previous=previous, restarted=units)
+        return Result(
+            ok=True,
+            release=dest,
+            previous=previous,
+            restarted=units,
+            notes=_record(paths, tools, manifest_id, unit_dir, log),
+        )
     log("smoke failed: switching back")
     if not tools.empty:
         tools.undo(paths.tools_root or default_root(), unit_dir)
@@ -632,8 +647,13 @@ def apply_tools_only(
     node: Optional[str] = None,
     restart: bool = True,
     log: Callable[[str], None] = lambda _m: None,
+    manifest_id: str = "",
 ) -> Result:
-    """Roll only the tool exports (no venv rebuild), undoing them on failure."""
+    """Roll only the tool exports (no venv rebuild), undoing them on failure.
+
+    A change that sticks is recorded (:func:`save_change`) for
+    :func:`rollback_tools`.
+    """
     unit_dir = default_unit_dir(Path.home())
     try:
         tools = apply_tools(
@@ -641,8 +661,12 @@ def apply_tools_only(
         )
     except ToolError as exc:
         return Result(ok=False, release=None, problems=[str(exc)])
-    if tools.empty or not restart:
+    if tools.empty:
         return Result(ok=True, release=None)
+    if not restart:
+        return Result(
+            ok=True, release=None, notes=_record(paths, tools, manifest_id, unit_dir, log)
+        )
     units = restart_targets(tools.units, runner)
     log(f"restart: {', '.join(units) or 'nothing'}")
     started: dict[str, dict[str, str]] = {}
@@ -650,7 +674,12 @@ def apply_tools_only(
     if not problems:
         problems = smoke(manifest, units, paths.venv_link, runner, node, started=started)
     if not problems:
-        return Result(ok=True, release=None, restarted=units)
+        return Result(
+            ok=True,
+            release=None,
+            restarted=units,
+            notes=_record(paths, tools, manifest_id, unit_dir, log),
+        )
     log("restart or smoke failed: restoring the previous tools")
     tools.undo(paths.tools_root or default_root(), unit_dir)
     _run(["systemctl", "--user", "daemon-reload"], runner, timeout=60)
@@ -673,3 +702,193 @@ def rollback(paths: Paths, units: list[str], runner: Runner = subprocess.run) ->
     return Result(
         ok=not problems, release=Path(prev), previous=current, restarted=units, problems=problems
     )
+
+
+# ------------------------------------------------------------ tools change record
+
+#: Under ``state_dir``: one record per tools change that stuck, plus ``last.json``.
+CHANGES_DIR = "tools-changes"
+LAST = "last.json"
+
+
+def _changes(paths: Paths) -> Path:
+    return paths.state_dir / CHANGES_DIR
+
+
+def _write_record(path: Path, record: dict) -> None:
+    """Write *record* atomically, mode 0600: previous file texts may hold secrets."""
+    data = json.dumps(record, indent=1, sort_keys=True).encode("utf-8")
+    _atomic_write(path, data, 0o600)
+
+
+def save_change(
+    paths: Paths, change: ToolsChange, manifest_id: str, unit_dir: Optional[Path] = None
+) -> Path:
+    """Record *change* as ``state_dir/tools-changes/<epoch>.json`` and point ``last.json`` at it.
+
+    The record is plain JSON (mode 0600, its directory 0700): the previous
+    ``current`` targets, drop-ins, unit files, moved drop-ins, managed files and
+    legacy drop-ins to restore, the units to restart, the manifest commit, and
+    the sha256 of what this change wrote (``written``), so a later process can
+    undo it and tell what was edited since.
+
+    Returns:
+        The record's path.
+    """
+    d = _changes(paths)
+    d.mkdir(parents=True, exist_ok=True)
+    os.chmod(d, 0o700)
+    now = time.time()
+    stem, n = str(int(now)), 0
+    path = d / f"{stem}.json"
+    while path.exists():
+        n += 1
+        path = d / f"{stem}-{n}.json"
+    prev = last_change_path(paths)
+    record = {
+        **change.to_dict(),
+        "at": now,
+        "manifest": manifest_id,
+        "tools_root": str(paths.tools_root or default_root()),
+        "unit_dir": str(unit_dir or default_unit_dir(Path.home())),
+        "previous": prev.name if prev else None,
+        "rolled_back": False,
+    }
+    _write_record(path, record)
+    _point_last(paths, path.name)
+    return path
+
+
+def _point_last(paths: Paths, name: Optional[str]) -> None:
+    last = _changes(paths) / LAST
+    if name is None:
+        last.unlink(missing_ok=True)
+        return
+    tmp = last.with_name(f".{LAST}.{os.getpid()}")
+    tmp.unlink(missing_ok=True)
+    os.symlink(name, tmp)
+    os.replace(tmp, last)
+
+
+def last_change_path(paths: Paths) -> Optional[Path]:
+    """The record ``last.json`` points at, or None."""
+    last = _changes(paths) / LAST
+    if not last.is_symlink():
+        return None
+    path = _changes(paths) / os.readlink(last)
+    return path if path.is_file() else None
+
+
+def last_change(paths: Paths) -> Optional[dict]:
+    """The last tools change that was not rolled back, or None."""
+    path = last_change_path(paths)
+    if path is None:
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _record(paths: Paths, change: ToolsChange, manifest_id: str, unit_dir: Path, log) -> list[str]:
+    """Save *change* if it changed anything; a failed save is a note, not a failure."""
+    if change.empty:
+        return []
+    try:
+        log(f"tools change recorded: {save_change(paths, change, manifest_id, unit_dir)}")
+        return []
+    except OSError as exc:
+        note = f"the tools change was not recorded ({exc}); deploy rollback cannot undo it"
+        log(note)
+        return [note]
+
+
+def _disk_state(path: Path, mode: str):
+    if mode == "link":
+        return os.readlink(path) if path.is_symlink() else None
+    if path.is_symlink() and not path.exists():
+        return None
+    return _sha_bytes(path.read_bytes()) if path.is_file() else None
+
+
+def _edited(change: ToolsChange, unit_dir: Path) -> list[str]:
+    """Paths this rollback overwrites whose disk state is not what the change wrote."""
+    restored = list(change.files.to_dict()["entries"])
+    targets = [e["path"] for e in restored]
+    targets += [str(unit_dir / u) for u in change.unit_files]
+    targets += [str(unit_dir / f"{u}.d" / DROPIN) for u in change.dropins]
+    out: list[str] = []
+    for key in dict.fromkeys(targets):
+        wrote = change.written.get(key)
+        if wrote is None:
+            continue
+        mode = wrote.get("mode", "")
+        want = wrote.get("target") if mode == "link" else wrote.get("sha256")
+        if _disk_state(Path(key), mode) != want:
+            out.append(key)
+    out += [orig for orig in change.displaced if Path(orig).exists()]
+    return sorted(set(out))
+
+
+def rollback_tools(paths: Paths, runner: Runner = subprocess.run) -> Result:
+    """Undo the last recorded tools change, reload systemd and restart its units.
+
+    The record is marked ``rolled_back`` and ``last.json`` moves to the newest
+    earlier record that was not, so a second rollback steps back one more change.
+
+    Returns:
+        The result; ``notes`` lists the paths edited since that apply (their
+        text was overwritten with the recorded one all the same).
+
+    Raises:
+        DeployError: No change is recorded, or something it would restore is
+            gone. Nothing was changed.
+    """
+    path = last_change_path(paths)
+    record = last_change(paths)
+    if path is None or record is None or record.get("rolled_back"):
+        raise DeployError(
+            "no recorded tools change on this node (tools applied before change records "
+            "existed cannot be rolled back; deploy an earlier manifest with --ref instead)"
+        )
+    try:
+        change = ToolsChange.from_dict(record)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DeployError(f"the tools change record {path} is unreadable: {exc}") from exc
+    root = Path(record.get("tools_root") or paths.tools_root or default_root())
+    unit_dir = Path(record.get("unit_dir") or default_unit_dir(Path.home()))
+    gone = [
+        f"{name}/{target}"
+        for name, target in change.published.items()
+        if target is not None and not (root / name / target).is_dir()
+    ]
+    gone += [aside for aside in change.displaced.values() if not Path(aside).exists()]
+    gone += [aside for aside in change.files.displaced.values() if not Path(aside).exists()]
+    if gone:
+        raise DeployError(
+            f"cannot roll back {path.name}: what it would restore is gone: " + "; ".join(gone)
+        )
+    notes = _edited(change, unit_dir)
+    change.undo(root, unit_dir)
+    record.update(rolled_back=True, rolled_back_at=time.time())
+    _write_record(path, record)
+    _point_last(paths, _previous_live(paths, record.get("previous")))
+    _run(["systemctl", "--user", "daemon-reload"], runner, timeout=60)
+    units = restart_targets(change.units, runner)
+    problems = restart_units(units, runner)
+    return Result(ok=not problems, restarted=units, problems=problems, notes=notes)
+
+
+def _previous_live(paths: Paths, name: Optional[str]) -> Optional[str]:
+    """Follow the ``previous`` chain from *name* to the first record not rolled back."""
+    seen: set[str] = set()
+    while name and name not in seen:
+        seen.add(name)
+        try:
+            rec = json.loads((_changes(paths) / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not rec.get("rolled_back"):
+            return name
+        name = rec.get("previous")
+    return None

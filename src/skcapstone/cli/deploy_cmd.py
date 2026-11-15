@@ -3,7 +3,7 @@
 Commands:
     skcapstone deploy plan       what a rollout would change and restart
     skcapstone deploy apply      pre-flight, build, verify, switch, restart, smoke
-    skcapstone deploy rollback   back to the previous release
+    skcapstone deploy rollback   back to the previous release (or tools change)
     skcapstone deploy status     the release this node runs
     skcapstone deploy drift      editable installs, exec paths in git trees, version drift
 """
@@ -151,16 +151,19 @@ def register_deploy_commands(main: click.Group) -> None:
         """Roll only the manifest's tool exports (no venv rebuild)."""
         from ..deploy.rollout import apply_tools_only
 
-        manifest, _mid = _manifest(manifest_path, ref, node=node)
+        manifest, mid = _manifest(manifest_path, ref, node=node)
         res = apply_tools_only(
             manifest,
             _paths(),
             node=node,
             restart=not no_restart,
             log=lambda m: console.print(f"[dim]{m}[/]"),
+            manifest_id=mid,
         )
         for p in res.problems:
             console.print(f"  [red]x[/] {p}")
+        for n in res.notes:
+            console.print(f"  [yellow]![/] {n}")
         if res.ok:
             console.print(
                 f"[green]tools deployed[/]; restarted: {', '.join(res.restarted) or '-'}"
@@ -173,19 +176,52 @@ def register_deploy_commands(main: click.Group) -> None:
     @manifest_opt
     @node_opt
     def rollback_cmd(manifest_path, node) -> None:
-        """Switch back to the previous release and restart its services."""
-        from ..deploy.rollout import DeployError, rollback
+        """Switch back to the previous release (or tools change) and restart its services.
 
+        On a node whose profile has no packages (tools only), this undoes the
+        last recorded tools change. Elsewhere the venv switches back, and a
+        tools change recorded after that venv switch is undone with it.
+        """
+        from ..deploy import rollout
+        from ..deploy.rollout import DeployError, last_change, load_state
+
+        paths = _paths()
         manifest, _mid = _manifest(manifest_path, None, fetch=False, node=node)
+        if not manifest.packages_for(node):
+            try:
+                res = rollout.rollback_tools(paths)
+            except DeployError as exc:
+                console.print(f"[red]{exc}[/]")
+                sys.exit(1)
+            _report_tools(res)
+            sys.exit(0 if res.ok else 1)
+        switched = (load_state(paths).get("current") or {}).get("at") or 0
+        record = last_change(paths)
         try:
-            res = rollback(_paths(), list(manifest.services_for(node)))
+            res = rollout.rollback(paths, list(manifest.services_for(node)))
         except DeployError as exc:
             console.print(f"[red]{exc}[/]")
             sys.exit(1)
         for p in res.problems:
             console.print(f"  [red]x[/] {p}")
         console.print(f"now on {res.release} (was {res.previous})")
-        sys.exit(0 if res.ok else 1)
+        ok = res.ok
+        if record and not record.get("rolled_back") and record.get("at", 0) > switched:
+            try:
+                tres = rollout.rollback_tools(paths)
+            except DeployError as exc:
+                console.print(f"[red]{exc}[/]")
+                sys.exit(1)
+            _report_tools(tres)
+            ok = ok and tres.ok
+        sys.exit(0 if ok else 1)
+
+    def _report_tools(res) -> None:
+        for p in res.problems:
+            console.print(f"  [red]x[/] {p}")
+        for n in res.notes:
+            console.print(f"  [yellow]edited since the apply, overwritten:[/] {n}")
+        console.print(f"tools change rolled back; restarted: {', '.join(res.restarted) or '-'}")
 
     @deploy.command("status")
     def status_cmd() -> None:
