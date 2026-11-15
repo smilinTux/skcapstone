@@ -19,6 +19,7 @@ Example::
     constraints:            # pins that only apply if something pulls them in
       - "numpy==2.3.4"
     lock: []                # optional: the exact third-party set, installed --no-deps
+    resolve: strict         # refuse a set that does not resolve (default: report)
     services:
       skchat-daemon.service:
         packages: [skchat-sovereign, skcomms]
@@ -298,6 +299,12 @@ class Manifest(BaseModel):
     carry_bin: list[str] = Field(default_factory=list)
     tools: dict[str, ToolSpec] = Field(default_factory=dict)
     stacks: dict[str, StackRef] = Field(default_factory=dict)
+    #: ``strict``: ``deploy plan`` and ``deploy apply`` refuse a node set whose
+    #: pinned PyPI packages and lock do not resolve together (the conflict
+    #: ``pip check`` would report after the build). ``report``: they print the
+    #: conflict and go on; for a manifest whose lock still carries known
+    #: conflicts (verify then refuses only NEW ``pip check`` problems).
+    resolve: Literal["strict", "report"] = "report"
 
     model_config = {"populate_by_name": True}
 

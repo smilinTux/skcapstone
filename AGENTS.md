@@ -37,7 +37,7 @@ the required check), `providers.yml`, `secret-scan.yml` (gitleaks),
 
 ```bash
 # install (dev: editable with all extras, as CI's test-env action does)
-python -m pip install -c deploy/fleet-constraints.txt -e ".[all,dev]"
+python -m pip install -c deploy/fleet-constraints.txt -r deploy/fleet-requirements.in -e ".[all,dev]"
 # end users: bash scripts/install.sh   (creates ~/.skenv and installs every SK package)
 # test (CI shards this on py3.12)
 python -m pytest tests/ --strict-markers -m "not integration and not e2e"

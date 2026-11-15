@@ -83,9 +83,19 @@ skcapstone deploy status               # what this node runs
 skcapstone deploy drift [--alert]      # editable installs, exec in trees, versions
 ```
 
+`plan` also resolves the node's pinned set (its PyPI package pins plus its lock,
+or requirements) as one set with `uv pip compile` on the manifest's Python and
+prints the conflict `pip check` would report after a build. The manifest's
+`resolve:` sets what happens then: `report` (the default) prints it and goes on;
+`strict` makes `plan` exit 3 and `apply` refuse in pre-flight, before anything is
+built. sk-release-chi runs `strict`; sk-release stays `report` until its lock no
+longer carries known conflicts. Git sources are not resolved there (they would
+need a clone each); `verify` still catches them.
+
 `apply`, in order, each step able to stop before production changes:
 
-1. pre-flight: every release tag is on its default branch (GitHub compare API);
+1. pre-flight: every release tag is on its default branch (GitHub compare API),
+   and with `resolve: strict` the pinned set resolves;
 2. build `~/.skenv-releases/<time>-<manifest>` with uv, non-editable;
 3. verify that venv: imports, every console-script target loads, `pip check`,
    nothing editable, and no `bin/` entry of the live venv is lost (name
@@ -458,6 +468,18 @@ the change wrote.
 * Offline, `doctor` and `drift --offline` on a node with stacks report the
   manifest as unavailable until the stack mirror has been fetched once (any
   online `plan`, `apply`, `doctor --deep` or `drift` does it).
+
+## Dependency updates (Renovate)
+
+Package versions in the manifest, its `lock` and its `requirements` move by PR
+like everything else. Renovate opens those PRs from the shared preset
+`smilinTux/renovate-config` that every SK repo extends: security fixes at once
+(label `security`), minor and patch updates in weekly groups, majors one at a
+time, and Renovate merges only patch and security PRs, only with every check
+green. In the chi cluster the fleet lock (`deploy/fleet-constraints.txt` in
+skcapstone) carries the third-party set and its gate; see
+`docs/fleet/DEPLOY-FROM-MAIN.md` "The fleet lock" and "Renovate". A merged
+manifest PR still reaches a node only through `skcapstone deploy apply`.
 
 ## Drift
 

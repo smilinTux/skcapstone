@@ -88,7 +88,9 @@ def _hashes(*roots: Path, skip=("stacks", "tool-src", "manifest-repo")) -> dict[
 
 def test_plan_changes_nothing(world, monkeypatch, tmp_path):
     manifest, home, paths, _stack, _cfg = world
-    args = ("plan", "--manifest", str(manifest), "--node", "chiap04")
+    # --no-resolve: the resolve step (uv) fills its cache under $HOME, which is
+    # not node state; this test is about what the stack plan writes.
+    args = ("plan", "--manifest", str(manifest), "--node", "chiap04", "--no-resolve")
     assert _run(monkeypatch, paths, *args).exit_code == 0  # mirrors now exist
     before = _hashes(home, paths.state_dir)
     tmpdirs = set(Path("/tmp").glob("sk-deploy-plan-*"))

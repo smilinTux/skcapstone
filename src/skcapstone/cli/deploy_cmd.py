@@ -73,15 +73,23 @@ def register_deploy_commands(main: click.Group) -> None:
     @ref_opt
     @node_opt
     @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
-    def plan_cmd(manifest_path, ref, node, as_json) -> None:
-        """Show what a rollout would change and restart."""
-        from ..deploy.rollout import make_plan
+    @click.option("--no-resolve", is_flag=True, help="Skip resolving the pinned set (offline).")
+    def plan_cmd(manifest_path, ref, node, as_json, no_resolve) -> None:
+        """Show what a rollout would change and restart.
+
+        Also resolves the node's pinned set as one set. With ``resolve: strict``
+        in the manifest a set that does not resolve is refused (exit 3), so the
+        conflict stops at plan time on the first node, before any build.
+        """
+        from ..deploy.rollout import make_plan, resolve_problems
         from ..deploy.views import tools_plan
 
         manifest, mid = _manifest(manifest_path, ref, node=node)
         plan = make_plan(manifest, _paths().venv_link / "bin" / "python", node)
         extra = tools_plan(manifest, node, _paths().state_dir, plan.restarts)
         diffs = any(c["diffs"] for c in extra["files"].values())
+        unresolved = [] if no_resolve else resolve_problems(manifest, node=node)
+        refused = bool(unresolved) and manifest.resolve == "strict"
         if as_json:
             click.echo(
                 json.dumps(
@@ -97,12 +105,26 @@ def register_deploy_commands(main: click.Group) -> None:
                         "restarts_complete": extra["restarts_complete"],
                         "errors": extra["errors"],
                         "notes": extra["notes"],
+                        "resolve": {
+                            "mode": manifest.resolve,
+                            "checked": not no_resolve,
+                            "problems": unresolved,
+                            "refused": refused,
+                        },
                     },
                     indent=2,
                 )
             )
+            if refused:
+                raise SystemExit(3)
             return
         console.print(f"manifest {mid[:12]}")
+        for problem in unresolved:
+            colour = "red" if refused else "yellow"
+            console.print(f"[{colour}]resolve ({manifest.resolve}): {problem}[/]")
+        if refused:
+            console.print("[red]refused: fix the manifest so the set resolves[/]")
+            raise SystemExit(3)
         for name, st in sorted(extra["stacks"].items()):
             console.print(f"  stack {name}: {st['ref']} ({(st['sha'] or '-')[:12]})")
         for name, roles in sorted(extra["roles"].items()):

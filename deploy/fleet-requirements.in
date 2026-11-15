@@ -1,0 +1,36 @@
+# SK packages of the fleet runtime: exact pins, REQUIRED on every chi host.
+#
+# Input to the lock, not the lock itself. deploy/fleet-constraints.txt is the
+# fully resolved lock generated from this file, deploy/fleet-tools.in and
+# deploy/fleet-self.in (skcapstone's own '.[fleet-qualify]'): run
+# scripts/fleet-lock.sh after any change here and commit both files in the same
+# PR (Renovate does this itself for its own PRs). CI
+# (.github/workflows/fleet-lock.yml) refuses a lock that is stale, does not
+# install, fails `pip check`, lowers a security package, carries a known
+# vulnerability, or depends on an upper cap missing from deploy/dependency-caps.md.
+#
+# Every pin here must be installed on a host after rollout, or the parity gate
+# halts with DEPENDENCY_DRIFT (src/skcapstone/fleet/dependency_parity.py).
+#
+# skskills: 1.2.1 is the first release without the rich<14 cap.
+# skchat-sovereign: 0.14.267 is the first release without the fastapi<0.136 cap.
+# skbrain: 1.0.2 is the first release without the click<8.2 / typer<0.13 caps,
+#   which pulled the fleet down to click 8.1.8 and typer 0.12.5 (#1382).
+#
+# Rules: exact `==` pins only. A pyproject floor must never exceed its pin
+# (tests/test_fleet_dependency_parity.py). To bump, see
+# docs/fleet/DEPLOY-FROM-MAIN.md "Bumping a fleet dependency".
+skcoord==0.1.97
+skmemory==0.11.162
+cloud9==1.2.4
+skwhisper==0.6.6
+capauth==0.3.14
+skseed==0.1.9
+skdashboard==0.1.109
+skharness==0.3.45
+skskills==1.2.1
+skcomms==0.2.22
+skchat-sovereign==0.14.267
+sksecurity==1.2.8
+skbrain==1.0.2
+skvault==0.1.0

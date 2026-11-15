@@ -92,25 +92,107 @@ deploying it lived in an operator's chat session and had ended. Install and
 ownership notes are in `scripts/fleet/systemd/skfleet-auto-rollout.service`.
 Exactly one host runs it.
 
-Dependency parity: `deploy/fleet-constraints.txt` is the single source of truth
-for the SK* runtime dependency set production runs (skcoord, skmemory, cloud9;
-skskills is excluded because production runs a git build the CI index lacks), as exact `==` pins. CI installs with `pip install -c`, rollout installs
-with the same `-c`, and the `verify_dependency_parity` step right after
-`pip_install` runs `src/skcapstone/fleet/dependency_parity.py`. If any installed
-version differs, the host's deploy halts with a `DEPENDENCY_DRIFT: ...` reason
-naming the package, installed version and pinned version. Fix the host or the
-file; never edit the check. (Background: 2026-10-13, PR #1181 used a skcoord
-0.1.87 symbol while CI resolved the 0.1.86 floor.)
+### The fleet lock
 
-Bumping a fleet dependency (for example skcoord):
+`deploy/fleet-constraints.txt` is the fleet runtime's **fully resolved lock**:
+every package in the venv and every transitive dependency, at one version each,
+with environment markers so one file serves every fleet Python (3.12 and 3.14).
+It is generated, never hand-edited, by `scripts/fleet-lock.sh` from three inputs:
+
+| Input | Holds |
+| --- | --- |
+| `deploy/fleet-requirements.in` | the SK packages, exact `==` pins, required on every host |
+| `deploy/fleet-tools.in` | the third-party tools that live in the same venv (sentence-transformers, huggingface-hub, scrapling, twine, playwright, ...), unpinned; inventoried from `pip list --not-required` on the hosts |
+| `deploy/fleet-self.in` | skcapstone itself (`.[fleet-qualify]`, from the checkout) |
+
+Why: until 2026-11-15 the file held only the SK pins. PR #1382 pinned four SK
+releases whose caps pulled click and typer down, which broke huggingface-hub (a
+tool in the same venv), and every check was green because no check installed
+the whole set. A lock that names every package makes such a conflict visible
+before merge.
+
+How the consumers use it:
+
+- **CI** (`.github/actions/test-env`): `-c` the lock, `-r fleet-requirements.in`.
+- **Rollout** (`pip_install`): `-c` the lock, `-r fleet-requirements.in`, and `-r`
+  the lock lines for every package the host already has installed
+  (`dependency_parity.py --write-installed`). A tool a host never had is not
+  pushed onto it; a tool it has moves to the lock's version.
+- **Parity gate** (`verify_dependency_parity`): an SK pin missing or different
+  halts the host with `DEPENDENCY_DRIFT`; any other lock entry may be absent,
+  but if installed it must match.
+- **`verify_pip_check`** (new, right after parity): `pip check` on the live venv.
+  A conflict halts the rollout on the first host, so the canary is the only
+  host that sees it.
+
+#### The gate on a lock PR (`.github/workflows/fleet-lock.yml`)
+
+Every PR that touches the lock, its inputs, `deploy/dependency-caps.md` or
+`pyproject.toml` must pass, in a fresh venv on Linux with Python 3.12 and 3.14:
+
+1. `scripts/fleet-lock.sh --check`: the lock is current for its inputs;
+2. install the whole lock plus `.[fleet-qualify]`;
+3. `pip check`;
+4. `dependency_parity.py`: what got installed is what the lock says;
+5. `fleet_lock_gate.py smoke`: import every SK package and every MCP server
+   module, and run every SK console script with `--help`;
+6. `fleet_lock_gate.py caps`: every upper bound an SK package puts on a
+   third-party library is a row in `deploy/dependency-caps.md`;
+7. `fleet_lock_gate.py security-downgrades`: no security-relevant package
+   (cryptography, pyOpenSSL, PyJWT, urllib3, requests, certifi, paramiko,
+   Pillow, starlette, fastapi, aiohttp, h11, jinja2, PGPy) goes down compared
+   with main, unless the PR body has a line `security-downgrade: <name> <why>`;
+8. `pip-audit` against PyPI and OSV advisories on the resolved lock (also daily
+   on main, so a new advisory against an unchanged lock turns main red).
+
+The jobs always report (they skip their steps on a PR that touches none of
+those files), so they can be required checks.
+
+#### Changing the set
+
 1. The upstream release ships first (a published tag; never an unreleased git
    overlay, never "one past the newest tag").
-2. In the SAME PR as the code that needs it, raise the `==` pin in
-   `deploy/fleet-constraints.txt` and the floor in `pyproject.toml`. The floor
-   may equal the pin but must never exceed it
+2. In the SAME PR as the code that needs it: raise the `==` pin in
+   `deploy/fleet-requirements.in` (or add a tool to `deploy/fleet-tools.in`) and
+   the floor in `pyproject.toml`, then run `scripts/fleet-lock.sh` and commit the
+   regenerated lock. The floor may equal the pin but must never exceed it
    (`tests/test_fleet_dependency_parity.py`).
-3. Merge. The next auto-rollout installs exactly the pins on each host and halts
-   at the first host that does not match, so a bad bump stops at the canary.
+3. A new upper cap on a third-party library needs a reason and a test: add the
+   row to `deploy/dependency-caps.md` or the gate fails.
+4. Merge. The next auto-rollout installs the lock on each host and halts at the
+   first host whose parity or `pip check` fails.
+
+### Renovate
+
+Every SK repo extends one shared preset, `smilinTux/renovate-config`
+(`"extends": ["github>smilinTux/renovate-config"]`), so the policy lives in one
+place. What it does:
+
+- **Coverage:** Python (pyproject, requirements, uv/pip-compile locks), npm
+  (package.json and lockfiles), GitHub Actions (pinned to a commit SHA),
+  Dockerfiles and base images (pinned to a digest), and here the fleet lock
+  (Renovate's `pip-compile` manager reruns the command in the lock's header).
+- **Security first:** vulnerability alerts (GitHub and OSV) open a PR at once,
+  outside the schedule and the rate limits, labelled `security`, with the
+  advisory link in the body.
+- **Grouping:** one weekly PR of minor updates and one of patch updates per
+  repo; majors one at a time, each with its release notes; a Dependency
+  Dashboard issue per repo; weekly lock-file maintenance (here: one PR that
+  moves the whole fleet lock, which then faces the gate above).
+- **Caps:** a requirement with an upper bound gets a monthly "try lifting this
+  cap" PR when a release above it exists (label `cap-lift`). Its CI is the test:
+  green means the cap goes and its row in `deploy/dependency-caps.md` goes too;
+  red means the row stays and `last checked` moves.
+- **Merging:** Renovate merges only patch updates and security fixes, and only
+  after ALL checks are green (Renovate merges itself rather than through
+  GitHub auto-merge, which waits only for required checks). For the fleet lock
+  that includes resolve, `pip check`, smoke, caps, the security-downgrade check
+  and the vulnerability scan. Minors and majors need a human or orchestrator
+  review.
+- **Rollout:** a merged lock PR is an ordinary merge to main, so it reaches the
+  hosts only through the auto-rollout above: the canary first, the next host
+  only after the canary's parity and `pip check` pass. Nothing goes to every
+  host at once.
 
 **5b. Deploy by hand (canary, emergencies, or with the timer stopped).** Dry run first, then
 one canary host, then the rest. Rollout pulls main on each host, installs,
