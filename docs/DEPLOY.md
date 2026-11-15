@@ -278,6 +278,14 @@ was read at, never to the movable tag. `tools: all` and `services: all` keep
 meaning every tool the CLUSTER defines, so a stack part never lands on a node
 by accident.
 
+A node fetches and merges only the stacks its `roles` name (and its `stacks`
+pins for those). A node without roles, such as a chi node that runs only
+`skgateway`, resolves the manifest exactly as if it named no stack: an
+unreachable or bad stack tag never fails its `plan`, `tools`, `doctor` or
+`drift`, and no stack mirror is fetched for it. `@STACK:<name>@` expands only
+for a stack the node takes. A node `tools:` list cannot name a stack tool
+directly; the error says so ("stack tools come only through roles").
+
 ### A stack file
 
 ```yaml
@@ -327,7 +335,14 @@ files:
   - path: ~/.hermes/plugins/fw
     mode: link               # a symlink; the target may use @TOOL:<name>@
     target: "@TOOL:fw@/src"
+    restart: [hermes-gateway.service]   # units to restart when it changes
 ```
+
+When a managed file's content, link target or mode changes, the units in its
+`restart:` list and the units of its own instance (`<instance>/systemd/`)
+restart. A file that changes with neither prints
+`<path> changed; no unit restarts for it` in `plan` and `apply`, so a
+files-only instance is never changed silently with nothing picking it up.
 
 * `whole` replaces the file with the source.
 * `block` keeps everything outside the markers and replaces what is between
@@ -370,11 +385,16 @@ and the units that restart. It changes nothing on the node: the config is read
 at its ref from the tool mirror (cloned or fetched like any apply) into a
 temporary directory that is removed before the command ends.
 
+A config that cannot be read, or a restart list that cannot be computed, is
+listed under `errors` (top level in `--json`, next to `restarts_complete:
+false` and the `notes`), and the text output says `restarts: incomplete, see
+errors` rather than showing an empty or partial list as if it were complete.
+
 The restart list is the one apply restarts, by the same rule and in the same
 order. A unit restarts when its rendered unit file or managed drop-in would
 change, when a hand-written drop-in of it is moved aside, when a managed file
-of its config changes, or when it names the `current` link of a tool that
-moves. The order is the manifest's service order (a stack lists its services
+of its config changes (or a managed file names it in `restart:`), or when it
+names the `current` link of a tool that moves. The order is the manifest's service order (a stack lists its services
 first and the agent last); a unit the manifest does not list follows, sorted.
 
 `deploy status` adds the last tools change: when it ran, the manifest commit,
@@ -400,15 +420,41 @@ the change wrote.
   around.
 * `deploy rollback` on a node that runs only tool exports undoes the last live
   record, restarts its units, and marks the record rolled back; running it
-  again undoes the one before. Files edited since the apply are reported and
-  overwritten.
+  again undoes the one before. It works from the record alone: when the
+  manifest cannot be resolved (a bad manifest commit was fetched) and
+  `state.json` records no venv release, the rollback goes ahead and says the
+  manifest was unavailable. A node with a venv release still needs the
+  manifest.
+* A `block` file gets back only its block region: the previous block body, or
+  no block at all (both markers and the lines between them) when the file had
+  none. Every line outside the block stays as it is now, so a key rotated by
+  hand in `~/.hermes/.env` after the apply survives. If the apply created the
+  file and lines were added outside the block since, only the block is removed
+  and the file is kept (the rollback notes it). Broken markers refuse the
+  rollback before anything changes.
+* A `whole` file edited since the apply is copied to
+  `~/.local/state/sk-deploy/rolled-over/<time>/<path with / as %>` (0600, in
+  0700 directories) before it is restored, and the rollback names the copy.
+  An unedited file is restored without a copy. Other paths edited since the
+  apply (links, unit files, drop-ins) are reported and overwritten.
+* A unit file the apply created is stopped (and disabled when enabled) before
+  the rollback removes it, and is not restarted afterwards.
 * On a node with a venv, `deploy rollback` undoes every newer tools change
   first (newest to oldest) and switches the venv last. A refusal (a blocker
-  found before anything changes) changes nothing; a rollback that stops partway
-  is finished by running it again.
+  found before anything changes) changes nothing and says to fix the problem
+  and run `deploy rollback` again; a rollback that stops partway is finished by
+  running it again. A rollback whose restarts fail says so instead of claiming
+  success.
 * If saving a record fails (disk full, permissions), the apply still stands
-  and says so in its notes; a later rollback then undoes the older record, so
-  that change must be undone by hand.
+  and says so in its notes. `last.json` is removed and
+  `tools-changes/unrecorded.json` written, so a later rollback refuses ("the
+  last tools change was not recorded; rollback would undo an older one")
+  instead of undoing the older record against newer files. Roll forward with
+  `deploy tools`, or undo that change by hand and remove the marker; the next
+  record that saves clears it.
+* If the undo after a failed restart or smoke itself fails partway, the
+  partial change is saved as a record and the apply says to run
+  `deploy rollback`, which finishes it (every undo step is idempotent).
 * Offline, `doctor` and `drift --offline` on a node with stacks report the
   manifest as unavailable until the stack mirror has been fetched once (any
   online `plan`, `apply`, `doctor --deep` or `drift` does it).
