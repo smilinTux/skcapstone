@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -36,6 +37,7 @@ class DriftReport:
     exec_in_tree: list[str] = field(default_factory=list)
     behind: list[str] = field(default_factory=list)
     tools: list[str] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
     #: Units nothing can start that still name a tree or a missing path.
@@ -50,6 +52,7 @@ class DriftReport:
             + [f"exec-missing: {x}" for x in self.missing]
             + [f"version: {x}" for x in self.behind]
             + [f"tool: {x}" for x in self.tools]
+            + [f"files: {x}" for x in self.files]
         )
 
     def digest(self) -> str:
@@ -65,6 +68,7 @@ def compute(
     node: Optional[str] = None,
     tools_root: Optional[Path] = None,
     runner=subprocess.run,
+    state_dir: Optional[Path] = None,
 ) -> DriftReport:
     """Compute the drift findings for this node.
 
@@ -78,6 +82,8 @@ def compute(
         tools_root: Where tool exports live (``~/.local/share/sk-tools``).
         runner: subprocess.run, replaceable in tests (asks systemd which
             units can run at all).
+        state_dir: Deploy state directory; its last live tools change record is
+            what managed files are compared with (no record, no file findings).
 
     Returns:
         The drift report.
@@ -132,6 +138,7 @@ def compute(
                 report.tools.append(f"{cname} not exported (manifest {cfg.ref})")
             elif meta.get("ref") != cfg.ref:
                 report.tools.append(f"{cname} {meta.get('ref')} != manifest {cfg.ref}")
+    report.files = drifted_files(state_dir or Path(home) / ".local/state/sk-deploy")
     if manifest is None:
         report.unknown.append("no release manifest on this node; versions not compared")
     elif dists:
@@ -143,6 +150,43 @@ def compute(
             elif spec.source == "pypi" and dist.version != spec.version:
                 report.behind.append(f"{name} {dist.version} != manifest {spec.version}")
     return report
+
+
+def drifted_files(state_dir: Path) -> list[str]:
+    """Managed files that differ from what the last live tools change wrote.
+
+    Only the record is read (it holds the sha256 of each whole file and of
+    each block body), so this needs no network and no manifest. An edit
+    outside a managed block is not a finding.
+    """
+    from .files import _decode, _encode, block_body, sha256
+    from .rollout import Paths, last_change
+
+    rec = last_change(Paths(Path(), Path(), state_dir))
+    out: list[str] = []
+    for key, want in sorted(((rec or {}).get("written") or {}).items()):
+        mode = want.get("mode")
+        path = Path(key)
+        if mode == "link":
+            if not path.is_symlink() or os.readlink(path) != want.get("target"):
+                out.append(f"{key} is not the link the last deploy made")
+        elif mode == "whole":
+            try:
+                have = sha256(path.read_bytes())
+            except OSError:
+                out.append(f"{key} is missing (the last deploy wrote it)")
+                continue
+            if have != want.get("sha256"):
+                out.append(f"{key} was edited since the last deploy")
+        elif mode == "block":
+            try:
+                body = block_body(_decode(path.read_bytes()), want.get("block", ""))
+            except OSError:
+                out.append(f"{key} is missing (the last deploy wrote it)")
+                continue
+            if body is None or sha256(_encode(body)) != want.get("block_sha256"):
+                out.append(f"{key} block {want.get('block')} was edited since the last deploy")
+    return out
 
 
 def alert_on_change(report: DriftReport, state_file: Path, sender: Optional[str] = None) -> str:

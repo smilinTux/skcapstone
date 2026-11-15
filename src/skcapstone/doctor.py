@@ -4212,7 +4212,7 @@ def _check_deploy(deep: bool = False) -> list[Check]:
     except (ManifestUnavailableError, OSError, ValueError):
         manifest = None
     try:
-        report = compute(Path.home(), venv_python, manifest)
+        report = compute(Path.home(), venv_python, manifest, state_dir=paths.state_dir)
     except Exception as exc:  # noqa: BLE001 - a broken probe is unknown, not a pass
         return [
             Check(
@@ -4257,6 +4257,12 @@ def _check_deploy(deep: bool = False) -> list[Check]:
             "Every live unit's program, script and working directory exists",
             report.missing,
             "restore the file from main as a manifest tool, or disable the unit if it is dead",
+        ),
+        _one(
+            "deploy:files",
+            "Managed files match what the last deploy wrote",
+            report.files,
+            "skcapstone deploy tools  # rewrites them; edit the config repo, not the file",
         ),
     ]
     if manifest is None:

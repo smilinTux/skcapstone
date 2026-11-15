@@ -66,9 +66,12 @@ def register_deploy_commands(main: click.Group) -> None:
     def plan_cmd(manifest_path, ref, node, as_json) -> None:
         """Show what a rollout would change and restart."""
         from ..deploy.rollout import make_plan
+        from ..deploy.views import tools_plan
 
         manifest, mid = _manifest(manifest_path, ref, node=node)
         plan = make_plan(manifest, _paths().venv_link / "bin" / "python", node)
+        extra = tools_plan(manifest, node, _paths().state_dir, plan.restarts)
+        diffs = any(c["diffs"] or c.get("error") for c in extra["files"].values())
         if as_json:
             click.echo(
                 json.dumps(
@@ -76,20 +79,33 @@ def register_deploy_commands(main: click.Group) -> None:
                         "manifest": mid,
                         "changed": plan.changed,
                         "editable": plan.editable,
-                        "restarts": plan.restarts,
+                        "stacks": extra["stacks"],
+                        "roles": extra["roles"],
+                        "files": extra["files"],
+                        "restarts": extra["restarts"],
                     },
                     indent=2,
                 )
             )
             return
         console.print(f"manifest {mid[:12]}")
-        if plan.empty:
+        for name, st in sorted(extra["stacks"].items()):
+            console.print(f"  stack {name}: {st['ref']} ({(st['sha'] or '-')[:12]})")
+        for name, roles in sorted(extra["roles"].items()):
+            console.print(f"  roles from {name}: {', '.join(roles)}")
+        for cname, cfg in sorted(extra["files"].items()):
+            if cfg.get("error"):
+                console.print(f"  [red]files of {cname}: {cfg['error']}[/]")
+            for text in cfg["diffs"]:
+                console.print(f"  files of {cname}:")
+                click.echo(text.rstrip("\n"))
+        if plan.empty and not diffs and not extra["restarts"]:
             console.print("[green]nothing to do: this node runs the manifest[/]")
             return
         for name, (have, want) in sorted(plan.changed.items()):
             tag = " (editable)" if name in plan.editable else ""
             console.print(f"  {name}: {have or '-'}{tag} -> {want}")
-        console.print(f"restarts: {', '.join(plan.restarts) or 'none'}")
+        console.print(f"restarts: {', '.join(extra['restarts']) or 'none'}")
 
     @deploy.command("apply")
     @manifest_opt
@@ -258,7 +274,13 @@ def register_deploy_commands(main: click.Group) -> None:
             else ("directory (unmanaged)" if link.exists() else "missing")
         )
         console.print(f"{link}: {kind} -> {target}")
-        click.echo(json.dumps(load_state(paths), indent=2))
+        from ..deploy.views import last_tools_change
+
+        state = load_state(paths)
+        last = last_tools_change(paths)
+        if last:
+            state["last_tools_change"] = last
+        click.echo(json.dumps(state, indent=2))
 
     @deploy.command("drift")
     @manifest_opt
@@ -278,7 +300,13 @@ def register_deploy_commands(main: click.Group) -> None:
             )
         except (ManifestUnavailableError, OSError, ValueError):
             manifest = None
-        report = compute(Path.home(), paths.venv_link / "bin" / "python", manifest, node=node)
+        report = compute(
+            Path.home(),
+            paths.venv_link / "bin" / "python",
+            manifest,
+            node=node,
+            state_dir=paths.state_dir,
+        )
         if as_json:
             click.echo(
                 json.dumps(

@@ -150,8 +150,10 @@ def make_plan(manifest: Manifest, live_python: Path, node: Optional[str] = None)
     Returns:
         The changed packages, the editable ones, and the units to restart.
     """
-    installed = {normalize(d.name): d for d in list_dists(live_python)}
     plan = Plan()
+    if not manifest.packages_for(node):
+        return plan  # a tools-only node has no venv to compare
+    installed = {normalize(d.name): d for d in list_dists(live_python)}
     for name, spec in manifest.packages_for(node).items():
         have = installed.get(normalize(name))
         want = spec.version or str(spec.ref)
