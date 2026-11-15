@@ -13,7 +13,7 @@ fixes both:
 2. ``publish``: ``<name>/current`` is switched atomically to that export.
 3. ``rewrite``: every user unit that names a path under the tool's
    ``checkout`` gets one managed drop-in, ``zzzz-sk-deploy-tools.conf``, that
-   re-states its ``ExecStart*``, ``WorkingDirectory`` and ``Environment``
+   re-states its ``Exec*`` (start, stop, reload), ``WorkingDirectory`` and ``Environment``
    lines with the checkout replaced by ``current``. The unit files themselves
    are never edited, and deleting the drop-in reverts the unit.
 

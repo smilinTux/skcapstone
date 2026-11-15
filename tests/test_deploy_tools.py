@@ -275,6 +275,30 @@ def test_checkout_list_rewrites_every_location(tmp_path, origin):
     assert "%h/.local/share/sk-tools/thing/current/scripts/relay.py" in want["alt.service"]
 
 
+def test_stop_and_reload_lines_follow_the_export(tmp_path, origin):
+    """ExecStop/ExecStopPost/ExecReload must not keep running the checkout.
+
+    hermes-gateway 2026-11-15: only ExecStart was re-stated, so the stop of the
+    switch ran the checkout's launcher, which finished a source update there and
+    timed the stop out.
+    """
+    home, units, manifest = _setup(tmp_path, origin)
+    (units / "gw.service").write_text(
+        "[Service]\n"
+        f'ExecStart="{home}/src/thing/scripts/relay.py" run\n'
+        f'ExecStop=-"{home}/src/thing/scripts/relay.py" stop-mark\n'
+        f'ExecStopPost=-"{home}/src/thing/scripts/relay.py" cleanup\n'
+        "ExecReload=/bin/kill -USR1 $MAINPID\n"
+    )
+    pairs = tools.rewrite_pairs(manifest, None, home / ".local/share/sk-tools", home)
+    text = tools.desired_dropins(units, pairs)["gw.service"]
+    cur = "%h/.local/share/sk-tools/thing/current/scripts/relay.py"
+    assert f'ExecStop=\nExecStop=-"{cur}" stop-mark' in text
+    assert f'ExecStopPost=\nExecStopPost=-"{cur}" cleanup' in text
+    assert "ExecReload" not in text  # names nothing under the checkout
+    assert str(home / "src/thing") not in text
+
+
 def test_managed_dropin_wins_over_a_late_hand_dropin(tmp_path, origin):
     from skcapstone.deploy.inspect import _unit_settings
 
