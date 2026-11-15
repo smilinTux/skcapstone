@@ -126,7 +126,11 @@ class ToolsChange:
         )
 
     def undo(self, root: Path, unit_dir: Path) -> None:
-        """Restore the previous ``current`` links, drop-ins, units and managed files."""
+        """Restore the previous ``current`` links, drop-ins, units and managed files.
+
+        Every step is idempotent (see :meth:`.files.FilesUndo.restore`), so an
+        undo that stopped partway can run again and finish.
+        """
         self.files.restore()
         for name, previous in self.published.items():
             link = root / name / "current"
@@ -149,8 +153,30 @@ class ToolsChange:
             else:
                 path.write_text(old, encoding="utf-8")
         for original, moved in self.displaced.items():
+            problem = displaced_blocker(original, moved)
+            if problem == "restored":
+                continue
+            if problem:
+                raise ToolError(problem)
             Path(original).parent.mkdir(parents=True, exist_ok=True)
             shutil.move(moved, original)
+
+
+def displaced_blocker(original: str, moved: str) -> Optional[str]:
+    """Why the drop-in moved aside to *moved* cannot go back to *original*.
+
+    Returns:
+        None when it can, ``"restored"`` when it already is back (its aside
+        gone, a file at the original path), or the problem.
+    """
+    orig, aside = Path(original), Path(moved)
+    if not (aside.exists() or aside.is_symlink()):
+        if orig.is_file():
+            return "restored"
+        return f"{original}: the drop-in moved aside to {moved} is gone"
+    if orig.is_dir() and not orig.is_symlink():
+        return f"{original} is a directory now; moving {moved} back would nest it inside"
+    return None
 
 
 def _sha(text: Optional[str]) -> Optional[str]:

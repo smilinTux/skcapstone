@@ -322,3 +322,134 @@ def test_venv_node_rollback_also_undoes_a_newer_tools_change(world, monkeypatch)
     assert out.exit_code == 0, out.output
     assert os.readlink(paths.venv_link) == str(paths.releases / "r1")
     assert not (paths.tools_root / "fw/current").exists()
+
+
+# ------------------------------------------------------------- fix round 1
+
+
+def _with_real_plugin_dir(home: Path) -> Path:
+    """The nctalk case: a real directory where the config wants a link."""
+    plug = home / ".hermes/plugins/fw"
+    plug.mkdir(parents=True)
+    (plug / "hand.py").write_text("mine\n")
+    return plug
+
+
+def test_link_over_real_dir_round_trips_through_the_record(world):
+    fw, cfg, home, units, paths = world
+    plug = _with_real_plugin_dir(home)
+    original = _snapshot(home)
+    _apply(_manifest(fw, cfg), paths)
+    assert plug.is_symlink()
+    rec = json.loads((paths.state_dir / "tools-changes/last.json").read_text())
+    moved = [e for e in rec["files"]["entries"] if e["was"] == "moved"]
+    assert [e["path"] for e in moved] == [str(plug)]
+    res = rollout.rollback_tools(paths, runner=Calls())
+    assert res.ok and res.notes == []
+    assert plug.is_dir() and not plug.is_symlink() and not (plug / "fw").exists()
+    assert _snapshot(home) == original
+
+
+def test_displaced_dropins_round_trip_through_the_record(world):
+    fw, cfg, home, units, paths = world
+    hand = units / "gw.service.d/override.conf"
+    hand.parent.mkdir(parents=True)
+    hand.write_text("[Service]\nEnvironment=MINE=1\n")
+    original = _snapshot(home)
+    _apply(_manifest(fw, cfg), paths)
+    assert not hand.exists()
+    rec = json.loads((paths.state_dir / "tools-changes/last.json").read_text())
+    assert list(rec["displaced"]) == [str(hand)]
+    res = rollout.rollback_tools(paths, runner=Calls())
+    assert res.ok and res.notes == []
+    assert hand.read_text() == "[Service]\nEnvironment=MINE=1\n"
+    assert _snapshot(home) == original
+
+
+def test_real_dir_back_at_a_moved_path_refuses_and_changes_nothing(world):
+    fw, cfg, home, units, paths = world
+    plug = _with_real_plugin_dir(home)
+    _apply(_manifest(fw, cfg), paths)
+    plug.unlink()
+    plug.mkdir()  # someone put a directory back by hand
+    (plug / "new.py").write_text("new\n")
+    before = _snapshot(home)
+    calls = Calls()
+    with pytest.raises(rollout.DeployError, match="real directory now"):
+        rollout.rollback_tools(paths, runner=calls)
+    assert _snapshot(home) == before and calls.cmds == []
+
+
+def test_rollback_stopped_partway_finishes_on_the_next_run(world, monkeypatch):
+    fw, cfg, home, units, paths = world
+    plug = _with_real_plugin_dir(home)
+    original = _snapshot(home)
+    _apply(_manifest(fw, cfg), paths)
+    rec_path = rollout.last_change_path(paths)
+    real_unlink = Path.unlink
+    hits: list[Path] = []
+
+    def unlink(self, missing_ok=False):
+        # the first step after files.restore(): unpublishing fw/current
+        if self.name == "current" and not hits:
+            hits.append(self)
+            raise OSError("disk said no")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with pytest.raises(rollout.DeployError, match="stopped partway"):
+        rollout.rollback_tools(paths, runner=Calls())
+    assert hits and plug.is_dir() and not plug.is_symlink()  # files already restored
+    assert json.loads(rec_path.read_text())["rolled_back"] is False
+    res = rollout.rollback_tools(paths, runner=Calls())
+    assert res.ok, res.problems
+    assert res.notes == []
+    assert _snapshot(home) == original
+    assert json.loads(rec_path.read_text())["rolled_back"] is True
+
+
+def test_venv_rollback_undoes_every_newer_tools_record(world, monkeypatch):
+    fw, cfg, home, units, paths = world
+    manifest = _manifest(fw, cfg, packages={"skmemory": {"repo": "o/skmemory", "version": "1"}})
+    _venv_node(paths)
+    rollout.save_state(
+        paths,
+        {
+            "current": {"release": str(paths.releases / "r2"), "at": 1.0},
+            "previous": {"release": str(paths.releases / "r1")},
+        },
+    )
+    original = _snapshot(home)
+    _apply(manifest, paths, mid="a" * 40)
+    _bump_to_b(fw, cfg)
+    _apply(manifest, paths, mid="b" * 40)
+    out = _cli(monkeypatch, paths, manifest)("--node", "n1")
+    assert out.exit_code == 0, out.output
+    assert os.readlink(paths.venv_link) == str(paths.releases / "r1")
+    assert _snapshot(home) == original
+    assert rollout.last_change(paths) is None
+
+
+def test_venv_rollback_refuses_before_switching_when_tools_cannot_go_back(world, monkeypatch):
+    import shutil
+
+    fw, cfg, home, units, paths = world
+    manifest = _manifest(fw, cfg, packages={"skmemory": {"repo": "o/skmemory", "version": "1"}})
+    _venv_node(paths)
+    rollout.save_state(
+        paths,
+        {
+            "current": {"release": str(paths.releases / "r2"), "at": 1.0},
+            "previous": {"release": str(paths.releases / "r1")},
+        },
+    )
+    _apply(manifest, paths, mid="a" * 40)
+    a_export = paths.tools_root / "fw" / os.readlink(paths.tools_root / "fw/current")
+    _bump_to_b(fw, cfg)
+    _apply(manifest, paths, mid="b" * 40)
+    shutil.rmtree(a_export)  # the B record cannot put fw/current back
+    before = _snapshot(home)
+    out = _cli(monkeypatch, paths, manifest)("--node", "n1")
+    assert out.exit_code == 1 and "is gone" in out.output
+    assert os.readlink(paths.venv_link) == str(paths.releases / "r2")
+    assert _snapshot(home) == before

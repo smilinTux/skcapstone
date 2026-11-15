@@ -297,6 +297,10 @@ class FilesUndo:
     def empty(self) -> bool:
         return not self._was
 
+    def entries(self) -> list[tuple[str, tuple]]:
+        """``(path, how it was)`` for every path this undo restores, in write order."""
+        return list(self._was.items())
+
     def to_dict(self) -> dict:
         """Plain JSON data (previous bytes as base64), for the change record."""
         out = []
@@ -350,9 +354,26 @@ class FilesUndo:
             self.previous[key] = None
 
     def restore(self) -> None:
-        """Put every path back as it was, last change first."""
+        """Put every path back as it was, last change first.
+
+        Each step is idempotent, so a restore that stopped partway can run again:
+        a file already at its previous bytes and mode, a link already at its
+        previous target, and a moved directory already back (its aside gone, a
+        real directory at the path) are left alone.
+
+        Raises:
+            FilesError: A moved directory cannot go back: a real directory is
+                already at its path, or its aside is gone. Nothing of that entry
+                was changed.
+        """
         for key, was in reversed(list(self._was.items())):
             path = Path(key)
+            if restored(path, was):
+                continue
+            if was[0] == "moved":
+                problem = moved_back_blocker(path, was[1])
+                if problem:
+                    raise FilesError(problem)
             if was[0] in ("absent", "moved") and (path.is_symlink() or path.is_file()):
                 path.unlink()
             if was[0] == "file":
@@ -362,6 +383,43 @@ class FilesUndo:
             elif was[0] == "moved":
                 shutil.move(was[1], key)
         self._was.clear()
+
+
+def _real_dir(path: Path) -> bool:
+    return path.is_dir() and not path.is_symlink()
+
+
+def restored(path: Path, was: tuple) -> bool:
+    """Whether *path* already is what the undo entry *was* restores."""
+    kind = was[0]
+    if kind == "absent":
+        return not (path.is_symlink() or path.is_file())
+    if kind == "link":
+        return path.is_symlink() and os.readlink(path) == was[1]
+    if kind == "file":
+        return (
+            not path.is_symlink()
+            and path.is_file()
+            and path.read_bytes() == was[1]
+            and path.stat().st_mode & 0o777 == was[2]
+        )
+    if kind == "moved":
+        aside = Path(was[1])
+        return not (aside.exists() or aside.is_symlink()) and _real_dir(path)
+    return False
+
+
+def moved_back_blocker(path: Path, aside: str) -> Optional[str]:
+    """Why the directory moved aside to *aside* cannot go back to *path* (None: it can)."""
+    a = Path(aside)
+    if not (a.exists() or a.is_symlink()):
+        return f"{path}: the directory moved aside to {aside} is gone"
+    if path.exists() and not (path.is_symlink() or path.is_file()):
+        return (
+            f"{path} is a real directory now; moving {aside} back would nest it inside."
+            " Move it away first"
+        )
+    return None
 
 
 def _atomic_write(path: Path, data: bytes, mode: int) -> None:

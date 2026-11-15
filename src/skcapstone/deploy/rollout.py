@@ -30,11 +30,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+from . import files as _files
 from .files import _atomic_write
 from .files import sha256 as _sha_bytes
 from .inspect import default_unit_dir, list_dists, normalize
 from .manifest import Manifest
-from .tools import DROPIN, ToolError, ToolsChange, apply_tools, default_root, restart_targets
+from .tools import (
+    DROPIN,
+    ToolError,
+    ToolsChange,
+    apply_tools,
+    default_root,
+    displaced_blocker,
+    restart_targets,
+)
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
@@ -811,23 +820,119 @@ def _disk_state(path: Path, mode: str):
     return _sha_bytes(path.read_bytes()) if path.is_file() else None
 
 
+def _restore_targets(change: ToolsChange, unit_dir: Path) -> dict[str, Callable[[], bool]]:
+    """Each path the rollback overwrites, with a check that it already is restored."""
+    out: dict[str, Callable[[], bool]] = {}
+    for key, was in change.files.entries():
+        out[key] = lambda p=Path(key), w=was: _files.restored(p, w)
+    for unit, old in change.unit_files.items():
+        out[str(unit_dir / unit)] = lambda p=unit_dir / unit, o=old: _text_is(p, o)
+    for unit, old in change.dropins.items():
+        path = unit_dir / f"{unit}.d" / DROPIN
+        out.setdefault(str(path), lambda p=path, o=old: _text_is(p, o))
+    return out
+
+
+def _text_is(path: Path, text: Optional[str]) -> bool:
+    if text is None:
+        return not (path.exists() or path.is_symlink())
+    return path.is_file() and path.read_text(encoding="utf-8") == text
+
+
 def _edited(change: ToolsChange, unit_dir: Path) -> list[str]:
-    """Paths this rollback overwrites whose disk state is not what the change wrote."""
-    restored = list(change.files.to_dict()["entries"])
-    targets = [e["path"] for e in restored]
-    targets += [str(unit_dir / u) for u in change.unit_files]
-    targets += [str(unit_dir / f"{u}.d" / DROPIN) for u in change.dropins]
+    """Paths this rollback overwrites whose disk state is not what the change wrote.
+
+    A path already back at its previous state (a rollback that stopped partway
+    and runs again) is not an edit.
+    """
     out: list[str] = []
-    for key in dict.fromkeys(targets):
+    for key, done in _restore_targets(change, unit_dir).items():
         wrote = change.written.get(key)
-        if wrote is None:
+        if wrote is None or done():
             continue
         mode = wrote.get("mode", "")
         want = wrote.get("target") if mode == "link" else wrote.get("sha256")
         if _disk_state(Path(key), mode) != want:
             out.append(key)
-    out += [orig for orig in change.displaced if Path(orig).exists()]
+    out += [
+        orig
+        for orig, aside in change.displaced.items()
+        if Path(orig).exists() and Path(aside).exists()
+    ]
     return sorted(set(out))
+
+
+def _blockers(change: ToolsChange, root: Path, unit_dir: Path) -> list[str]:
+    """What stops *change* from being undone cleanly; checked before anything changes."""
+    out = [
+        f"{name}/{target} (the export {name}/current went back to) is gone"
+        for name, target in change.published.items()
+        if target is not None and not (root / name / target).is_dir()
+    ]
+    for original, moved in change.displaced.items():
+        problem = displaced_blocker(original, moved)
+        if problem and problem != "restored":
+            out.append(problem)
+    for key, was in change.files.entries():
+        path = Path(key)
+        if _files.restored(path, was):
+            continue
+        if was[0] == "moved":
+            problem = _files.moved_back_blocker(path, was[1])
+            if problem:
+                out.append(problem)
+        elif was[0] in ("file", "link") and path.is_dir() and not path.is_symlink():
+            out.append(f"{key} is a real directory now; restoring its {was[0]} would fail")
+    for unit, old in change.unit_files.items():
+        if old is not None and (unit_dir / unit).is_dir():
+            out.append(f"{unit_dir / unit} is a directory now")
+    return out
+
+
+def _open_record(paths: Paths, path: Path, record: dict):
+    try:
+        change = ToolsChange.from_dict(record)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DeployError(f"the tools change record {path} is unreadable: {exc}") from exc
+    root = Path(record.get("tools_root") or paths.tools_root or default_root())
+    unit_dir = Path(record.get("unit_dir") or default_unit_dir(Path.home()))
+    return change, root, unit_dir
+
+
+def pending_tools_changes(paths: Paths, since: float = 0.0) -> list[tuple[Path, dict]]:
+    """The records a rollback would undo, newest first: every live one newer than *since*."""
+    out: list[tuple[Path, dict]] = []
+    path = last_change_path(paths)
+    seen: set[str] = set()
+    while path is not None and path.name not in seen:
+        seen.add(path.name)
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            break
+        if record.get("rolled_back") or record.get("at", 0) <= since:
+            break
+        out.append((path, record))
+        name = _previous_live(paths, record.get("previous"))
+        path = _changes(paths) / name if name else None
+    return out
+
+
+def check_tools_rollback(paths: Paths, records: list[tuple[Path, dict]]) -> None:
+    """Refuse, changing nothing, when any of *records* could not be undone.
+
+    Each record is checked against the disk as it is now, so a later record's
+    check is the best estimate before the newer ones are undone.
+
+    Raises:
+        DeployError: The problems, by record.
+    """
+    problems: list[str] = []
+    for path, record in records:
+        change, root, unit_dir = _open_record(paths, path, record)
+        problems += [f"{path.name}: {p}" for p in _blockers(change, root, unit_dir)]
+    if problems:
+        raise DeployError("cannot roll back the tools change: " + "; ".join(problems))
 
 
 def rollback_tools(paths: Paths, runner: Runner = subprocess.run) -> Result:
@@ -835,6 +940,8 @@ def rollback_tools(paths: Paths, runner: Runner = subprocess.run) -> Result:
 
     The record is marked ``rolled_back`` and ``last.json`` moves to the newest
     earlier record that was not, so a second rollback steps back one more change.
+    Every undo step is idempotent: a rollback that stopped partway leaves its
+    record unmarked, and running it again finishes the job.
 
     Returns:
         The result; ``notes`` lists the paths edited since that apply (their
@@ -842,34 +949,26 @@ def rollback_tools(paths: Paths, runner: Runner = subprocess.run) -> Result:
 
     Raises:
         DeployError: No change is recorded, or something it would restore is
-            gone. Nothing was changed.
+            gone or in the way (nothing was changed); or the undo stopped
+            partway (run it again).
     """
-    path = last_change_path(paths)
-    record = last_change(paths)
-    if path is None or record is None or record.get("rolled_back"):
+    pending = pending_tools_changes(paths)
+    if not pending:
         raise DeployError(
             "no recorded tools change on this node (tools applied before change records "
             "existed cannot be rolled back; deploy an earlier manifest with --ref instead)"
         )
-    try:
-        change = ToolsChange.from_dict(record)
-    except (KeyError, TypeError, ValueError) as exc:
-        raise DeployError(f"the tools change record {path} is unreadable: {exc}") from exc
-    root = Path(record.get("tools_root") or paths.tools_root or default_root())
-    unit_dir = Path(record.get("unit_dir") or default_unit_dir(Path.home()))
-    gone = [
-        f"{name}/{target}"
-        for name, target in change.published.items()
-        if target is not None and not (root / name / target).is_dir()
-    ]
-    gone += [aside for aside in change.displaced.values() if not Path(aside).exists()]
-    gone += [aside for aside in change.files.displaced.values() if not Path(aside).exists()]
-    if gone:
-        raise DeployError(
-            f"cannot roll back {path.name}: what it would restore is gone: " + "; ".join(gone)
-        )
+    path, record = pending[0]
+    check_tools_rollback(paths, [pending[0]])
+    change, root, unit_dir = _open_record(paths, path, record)
     notes = _edited(change, unit_dir)
-    change.undo(root, unit_dir)
+    try:
+        change.undo(root, unit_dir)
+    except (OSError, ToolError) as exc:
+        raise DeployError(
+            f"the rollback of {path.name} stopped partway ({exc}); its record is kept,"
+            " run deploy rollback again to finish it"
+        ) from exc
     record.update(rolled_back=True, rolled_back_at=time.time())
     _write_record(path, record)
     _point_last(paths, _previous_live(paths, record.get("previous")))

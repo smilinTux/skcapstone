@@ -181,11 +181,17 @@ def register_deploy_commands(main: click.Group) -> None:
         """Switch back to the previous release (or tools change) and restart its services.
 
         On a node whose profile has no packages (tools only), this undoes the
-        last recorded tools change. Elsewhere the venv switches back, and a
-        tools change recorded after that venv switch is undone with it.
+        last recorded tools change. Elsewhere the venv switches back, and every
+        tools change recorded after that venv switch is undone with it, newest
+        first; all of them are checked before the venv moves.
         """
         from ..deploy import rollout
-        from ..deploy.rollout import DeployError, last_change, load_state
+        from ..deploy.rollout import (
+            DeployError,
+            check_tools_rollback,
+            load_state,
+            pending_tools_changes,
+        )
 
         paths = _paths()
         manifest, _mid = _manifest(manifest_path, None, fetch=False, node=node)
@@ -198,8 +204,11 @@ def register_deploy_commands(main: click.Group) -> None:
             _report_tools(res)
             sys.exit(0 if res.ok else 1)
         switched = (load_state(paths).get("current") or {}).get("at") or 0
-        record = last_change(paths)
+        # every tools change recorded after the venv switch goes back with it,
+        # and all of them are checked before the venv moves: never a mixed node
+        pending = pending_tools_changes(paths, since=switched)
         try:
+            check_tools_rollback(paths, pending)
             res = rollout.rollback(paths, list(manifest.services_for(node)))
         except DeployError as exc:
             console.print(f"[red]{exc}[/]")
@@ -208,7 +217,7 @@ def register_deploy_commands(main: click.Group) -> None:
             console.print(f"  [red]x[/] {p}")
         console.print(f"now on {res.release} (was {res.previous})")
         ok = res.ok
-        if record and not record.get("rolled_back") and record.get("at", 0) > switched:
+        for _ in pending:
             try:
                 tres = rollout.rollback_tools(paths)
             except DeployError as exc:
