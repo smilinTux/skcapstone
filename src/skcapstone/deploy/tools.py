@@ -299,8 +299,15 @@ def _forms(path: str, home: Path) -> list[str]:
 
 
 def rewrite_pairs(manifest: Manifest, node: Optional[str], root: Path, home: Path) -> list:
-    """``(old spelling, new path)`` substitutions, longest first."""
-    pairs: list[tuple[str, str]] = []
+    """``(old spelling, new path)`` substitutions, longest first.
+
+    Besides each checkout, a tool's own versioned exports (``<root>/<name>/<sha12>``)
+    map to ``current``: a program that regenerates its unit from its resolved path
+    (Hermes does at every boot) would otherwise leave no checkout path to rewrite,
+    the next apply would drop the managed drop-in, and the unit would keep
+    starting the old export after ``current`` moves. Those are regex pairs.
+    """
+    pairs: list[tuple] = []
     for name, tool in manifest.tools_for(node).items():
         current = root / name / "current"
         new_base = (
@@ -314,12 +321,19 @@ def rewrite_pairs(manifest: Manifest, node: Optional[str], root: Path, home: Pat
                 old = f"{checkout}/{rel}".rstrip("/")
                 new = f"{new_base}/{rel}".rstrip("/")
                 pairs += [(form, new) for form in _forms(old, home)]
-    return sorted(pairs, key=lambda p: len(p[0]), reverse=True)
+        for form in _forms(str(root / name), home):
+            pairs.append((re.compile(re.escape(form) + r"/[0-9a-f]{12}"), new_base))
+    return sorted(pairs, key=lambda p: len(_src(p[0])), reverse=True)
 
 
-def _substitute(value: str, pairs: list[tuple[str, str]]) -> str:
+def _src(old) -> str:
+    return old.pattern if isinstance(old, re.Pattern) else old
+
+
+def _substitute(value: str, pairs: list[tuple]) -> str:
     for old, new in pairs:
-        value = re.sub(re.escape(old) + r"(?=$|[/\s\"':;=])", lambda _m, n=new: n, value)
+        pattern = old.pattern if isinstance(old, re.Pattern) else re.escape(old)
+        value = re.sub(pattern + r"(?=$|[/\s\"':;=])", lambda _m, n=new: n, value)
     return value
 
 
