@@ -1,7 +1,7 @@
 # Third-party tools that live in the fleet's ~/.skenv next to the SK packages.
 #
-# Inventoried 2026-11-15 from `pip list --not-required` on chiap08, chiap01,
-# chiap02, chiap03 and ziowk01. Not every host carries every tool: the rollout
+# Inventoried 2026-11-15 from `pip list --not-required` on the five fleet
+# hosts' venvs. Not every host carries every tool: the rollout
 # pins only the lock entries a host already has installed, so a tool listed here
 # is not pushed onto a host that never had it. Listing it here is what makes its
 # version part of the lock, so it can no longer conflict with an SK package

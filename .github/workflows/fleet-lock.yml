@@ -33,7 +33,7 @@ concurrency:
 
 env:
   LOCK_PATHS: >-
-    deploy/fleet-constraints.txt deploy/fleet-requirements.in deploy/fleet-tools.in
+    deploy/fleet-constraints.txt deploy/fleet-requirements.in deploy/fleet-tools.in deploy/fleet-self.in
     deploy/dependency-caps.md pyproject.toml scripts/fleet-lock.sh
     scripts/ci/fleet_lock_gate.py src/skcapstone/fleet/dependency_parity.py
     .github/workflows/fleet-lock.yml
@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.12 on chiap*, 3.14 on ziowk01: the lock is universal for both.
+        # The fleet runs both: the lock is universal for 3.12 and 3.14.
         python: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
