@@ -247,6 +247,164 @@ names them. A node needs read access to the private config repository: use a
 read-only deploy key or a forge URL in `url:`. Drift reports a config export
 that is missing or not at the manifest's ref.
 
+## Stacks
+
+A **stack** is a public repository that ships a set of tools, the services
+that run them and the roles that group both, so that several clusters run the
+same release of it. The cluster manifest names the stacks it uses and which
+node takes which role; the stack never reaches a node any other way.
+
+```yaml
+# cluster manifest
+stacks:
+  sidekick:
+    url: https://github.com/smilinTux/sidekick   # or repo: smilinTux/sidekick
+    ref: v0.1.0            # a release tag (or commit) on the stack's main
+nodes:
+  chiap04:
+    packages: []
+    roles: {sidekick: [agent]}      # the only way a node gets a stack's tools
+  chiap02:                          # a canary: this node alone runs another ref
+    packages: []
+    roles: {sidekick: [agent]}
+    stacks: {sidekick: v0.1.1-rc.1}
+```
+
+The ref must be on the stack repository's main (a tag cut on a side branch is
+refused). The stack's `stack.yaml` is read from a bare mirror under
+`~/.local/state/sk-deploy/stacks/<name>` at that ref, and the stack repository
+itself becomes the tool `<stack>-release`, pinned to the commit `stack.yaml`
+was read at, never to the movable tag. `tools: all` and `services: all` keep
+meaning every tool the CLUSTER defines, so a stack part never lands on a node
+by accident.
+
+### A stack file
+
+```yaml
+# stack.yaml at the root of the stack repository
+stack: sidekick            # must equal the name the cluster gives it
+version: 0.1.0
+config_schema: 1
+tools:                     # the same shape as manifest tools
+  hermes:
+    repo: smilinTux/hermes-skworld
+    ref: v1.4.0
+    setup: ["@STACK:sidekick@/bin/setup-hermes"]
+  skcall: {repo: smilinTux/skcall, ref: v0.3.0}
+services:                  # in RESTART order
+  skcall.service: {smoke: "@STACK:sidekick@/bin/check skcall"}
+  hermes-gateway.service: {}
+roles:
+  agent:
+    tools: [hermes, skcall]
+    services: [skcall.service, hermes-gateway.service]
+```
+
+A tool or service that the cluster or another stack also defines is refused,
+and the error names both sides. `@STACK:<name>@` expands to the stack's
+versioned export (an absolute path) in a tool's `setup` and `setup_env`, and to
+its `current` link in smokes. Tools may omit `checkout:` (nothing to rewrite),
+and a node's config repo `instance:` may be a relative path such as
+`render/chiap04`.
+
+### Managed files: `files.yaml`
+
+A per-cluster config instance (see above) may hold `<instance>/files.yaml`
+naming files outside the unit directory that deploy writes from the instance.
+Each entry has a `path` (absolute or under `~/`) and a `mode`:
+
+```yaml
+files:
+  - path: ~/.hermes/.env
+    mode: block              # only the marked block is ours
+    source: hermes.env       # a file in the instance
+    format: env              # env (default), yaml or text: how keys are read
+    block: sk-deploy         # block name (default sk-deploy)
+  - path: ~/.config/skcall/join.env
+    mode: whole              # the whole file is ours
+    source: join.env
+    file_mode: 0o600         # permissions (default 0600)
+  - path: ~/.hermes/plugins/fw
+    mode: link               # a symlink; the target may use @TOOL:<name>@
+    target: "@TOOL:fw@/src"
+```
+
+* `whole` replaces the file with the source.
+* `block` keeps everything outside the markers and replaces what is between
+  them (the block is appended when the file has none):
+
+  ```
+  # >>> sk-deploy (managed by skcapstone deploy; edits here are overwritten) >>>
+  KEY=value
+  # <<< sk-deploy <<<
+  ```
+
+  Each marker appears once; a broken pair is refused, and the file is left for
+  you to fix by hand.
+* `link` points a symlink at `target`; a real directory in the way is moved
+  aside under the state directory (not deleted).
+
+**The duplicate-key rule.** A block that sets a key which is also set outside
+the block is refused, naming the key and line (the block would otherwise
+silently override or be overridden), as is a source that sets a key twice. Remove
+the outside lines: the block owns those keys.
+
+Files are rendered and checked before anything is published (a validation
+failure publishes nothing), written after the publish, and undone together
+with the rest of the change if the restart or smoke fails.
+
+Details worth knowing:
+
+* A managed file is replaced atomically: the new file is a new inode, gets
+  `file_mode` (default 0600), and hard links and extended attributes are not
+  kept. Undo restores the old mode.
+* Secrets still never go in a config repo; a managed file is for settings, and
+  units read credentials from 0600 files placed from skvault.
+
+### Plan, status, drift
+
+`deploy plan` (and `--json`) shows, per node: each stack and its resolved ref
+and commit, the roles, the managed file diffs, and the units that restart, in
+order. It changes nothing on the node: the config is read at its ref from the
+tool mirror (cloned or fetched like any apply) into a temporary directory that
+is removed before the command ends.
+
+`deploy status` adds the last tools change: when it ran, the manifest commit,
+and per tool the export sha now and before.
+
+`deploy drift` (and `doctor`) add `deploy:files`: a managed block or whole file
+whose sha256 differs from what the last live (not rolled back) change record
+wrote, a missing file, or a link that moved. The record stores the hashes, so
+`drift --offline` needs no network. An edit outside a managed block is not a
+finding.
+
+### The change record and rollback
+
+Every tools change that sticks is saved as
+`~/.local/state/sk-deploy/tools-changes/<epoch>.json`, with `last.json` pointing
+at the newest live one. A record holds what is needed to undo the change: the
+previous `current` target of each tool, drop-ins, unit files and moved-aside
+files, the units to restart, the manifest commit, and the sha256 of every path
+the change wrote.
+
+* The records hold the previous contents of managed files (base64), which may
+  include secrets: they are mode 0600 in a 0700 directory. Do not copy them
+  around.
+* `deploy rollback` on a node that runs only tool exports undoes the last live
+  record, restarts its units, and marks the record rolled back; running it
+  again undoes the one before. Files edited since the apply are reported and
+  overwritten.
+* On a node with a venv, `deploy rollback` undoes every newer tools change
+  first (newest to oldest) and switches the venv last. A refusal (a blocker
+  found before anything changes) changes nothing; a rollback that stops partway
+  is finished by running it again.
+* If saving a record fails (disk full, permissions), the apply still stands
+  and says so in its notes; a later rollback then undoes the older record, so
+  that change must be undone by hand.
+* Offline, `doctor` and `drift --offline` on a node with stacks report the
+  manifest as unavailable until the stack mirror has been fetched once (any
+  online `plan`, `apply`, `doctor --deep` or `drift` does it).
+
 ## Drift
 
 `skcapstone doctor` reports the `deploy:*` checks, and the
@@ -258,7 +416,9 @@ that is missing or not at the manifest's ref.
 - `deploy:exec-missing`: a live unit's program, interpreter script or working
   directory does not exist (it fails on its next start);
 - `deploy:manifest`: an installed SK version differs from the manifest;
-- `deploy:tools`: a tool export is missing or not at the manifest's ref.
+- `deploy:tools`: a tool export is missing or not at the manifest's ref;
+- `deploy:files`: a managed file or block differs from what the last tools change
+  wrote (see Stacks).
 
 A unit counts as live when it is enabled or active, when its timer, path or
 socket is, or (for a template) when any instance is. Units nothing can start
