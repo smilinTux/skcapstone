@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **The next tool apply would have dropped hermes-gateway's managed drop-in.**
+  Hermes regenerates its own unit at boot from its resolved path, so the base
+  unit names `sk-tools/hermes-agent/<sha12>` instead of the checkout. The
+  rewrite found no checkout path, would remove the drop-in, and the unit would
+  keep starting the old export after `current` moved. A tool's own versioned
+  exports (`<root>/<tool>/<sha12>`) now map to `current` like its checkouts.
+
 - **A deploy smoke could pass on the previous start of a unit.** `try-restart`
   timed out while hermes-gateway was still stopping, deploy went on, and the
   smoke matched log lines of the old start, so a gateway with 0 MCP servers

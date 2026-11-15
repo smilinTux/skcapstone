@@ -299,6 +299,39 @@ def test_stop_and_reload_lines_follow_the_export(tmp_path, origin):
     assert str(home / "src/thing") not in text
 
 
+def test_unit_pinned_to_a_versioned_export_follows_current(tmp_path, origin):
+    """A unit that names ``<tool>/<sha12>`` (Hermes regenerates its own unit from the resolved
+    export path at boot) must still get the drop-in pointing at ``current``.
+
+    Without it the next apply finds no checkout path, drops the managed drop-in, and the
+    unit keeps starting the OLD export after ``current`` moves to a new release.
+    """
+    home, units, manifest = _setup(tmp_path, origin)
+    pinned = home / ".local/share/sk-tools/thing/0123456789ab"
+    (pinned / "scripts").mkdir(parents=True)
+    (units / "gw.service").write_text(
+        "[Service]\n"
+        f'ExecStart="{pinned}/scripts/relay.py" run\n'
+        f'ExecStop=-"%h/.local/share/sk-tools/thing/0123456789ab/scripts/relay.py" stop\n'
+    )
+    pairs = tools.rewrite_pairs(manifest, None, home / ".local/share/sk-tools", home)
+    text = tools.desired_dropins(units, pairs)["gw.service"]
+    cur = "%h/.local/share/sk-tools/thing/current/scripts/relay.py"
+    assert f'ExecStart=\nExecStart="{cur}" run' in text
+    assert f'ExecStop=\nExecStop=-"{cur}" stop' in text
+    assert "0123456789ab" not in text
+
+
+def test_current_and_non_sha_dirs_are_not_rewritten(tmp_path, origin):
+    home, units, manifest = _setup(tmp_path, origin)
+    (units / "ok.service").write_text(
+        "[Service]\nExecStart=%h/.local/share/sk-tools/thing/current/scripts/relay.py\n"
+        "ExecStartPre=%h/.local/share/sk-tools/thing/notasha/x\n"
+    )
+    pairs = tools.rewrite_pairs(manifest, None, home / ".local/share/sk-tools", home)
+    assert "ok.service" not in tools.desired_dropins(units, pairs)
+
+
 def test_managed_dropin_wins_over_a_late_hand_dropin(tmp_path, origin):
     from skcapstone.deploy.inspect import _unit_settings
 
