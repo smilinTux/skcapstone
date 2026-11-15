@@ -124,8 +124,23 @@ def _abs_paths(words: Iterable[str], home: Path) -> list[str]:
     return out
 
 
-_EXEC_KEYS = ("ExecStart", "ExecStartPre", "ExecStartPost", "WorkingDirectory")
-_KEY_RE = re.compile(r"^(ExecStart(?:Pre|Post)?|WorkingDirectory|Environment)=(.*)$", re.M)
+#: Every unit setting that runs a program (or sets where it runs). ExecStop,
+#: ExecStopPost, ExecReload and ExecCondition count too: a tool rewrite that
+#: re-stated only ExecStart left hermes-gateway's stop running the checkout.
+_EXEC_KEYS = (
+    "ExecCondition",
+    "ExecStartPre",
+    "ExecStart",
+    "ExecStartPost",
+    "ExecReload",
+    "ExecStop",
+    "ExecStopPost",
+    "WorkingDirectory",
+)
+_KEY_RE = re.compile(
+    r"^(ExecCondition|ExecStart(?:Pre|Post)?|ExecReload|ExecStop(?:Post)?|WorkingDirectory|Environment)=(.*)$",
+    re.M,
+)
 
 
 def _unit_settings(unit: Path, skip: Iterable[str] = ()) -> dict[str, list[str]]:
@@ -169,7 +184,7 @@ def _unit_settings(unit: Path, skip: Iterable[str] = ()) -> dict[str, list[str]]
 
 
 def unit_exec_paths(unit_dir: Path, home: Path) -> list[ExecPath]:
-    """Absolute paths named by the effective ``ExecStart*`` lines of user units."""
+    """Absolute paths named by the effective ``Exec*``/``WorkingDirectory`` lines of units."""
     found: list[ExecPath] = []
     if not unit_dir.is_dir():
         return found

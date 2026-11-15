@@ -370,23 +370,108 @@ def switch(paths: Paths, target: Path) -> Optional[Path]:
 # ------------------------------------------------------------------ restart/smoke
 
 
-def restart_units(units: list[str], runner: Runner = subprocess.run) -> list[str]:
-    """``try-restart`` each unit (only running units restart) and confirm it.
+#: How long a restarted unit has to come back under a NEW invocation. It must
+#: cover the unit's stop budget (TimeoutStopSec, 90 s for hermes-gateway) plus
+#: its start, or a slow stop reads as a failed deploy.
+RESTART_WAIT = 300
+
+
+def _unit_show(unit: str, runner: Runner) -> dict[str, str]:
+    proc = _run(
+        [
+            "systemctl",
+            "--user",
+            "show",
+            unit,
+            "-p",
+            "ActiveState",
+            "-p",
+            "InvocationID",
+            "-p",
+            "ActiveEnterTimestamp",
+        ],
+        runner,
+        timeout=30,
+    )
+    out: dict[str, str] = {}
+    for line in (proc.stdout or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            out[key.strip()] = value.strip()
+    return out
+
+
+def restart_units(
+    units: list[str],
+    runner: Runner = subprocess.run,
+    *,
+    wait: int = RESTART_WAIT,
+    started: Optional[dict[str, dict[str, str]]] = None,
+) -> list[str]:
+    """``try-restart`` each unit (only running units restart) and prove a new start.
+
+    A restart counts only when the unit is ``active`` under a different
+    ``InvocationID`` than before: a ``try-restart`` that times out while the old
+    process is still stopping, or a unit that never really went down, must not
+    pass (hermes-gateway, 2026-11-15, where the smoke then matched the previous
+    start's log lines). A unit that reports no InvocationID keeps the plain
+    ``is-active`` check.
+
+    Args:
+        units: Units to restart.
+        runner: Command runner.
+        wait: Seconds a unit has to come back under a new invocation.
+        started: Filled with ``{unit: {"invocation", "since"}}`` for each unit
+            that started anew, for :func:`smoke`.
 
     Returns:
-        Units that were active before but are not active afterwards.
+        Units that were active before but did not come back anew.
     """
     failed: list[str] = []
     for unit in units:
         was = _run(["systemctl", "--user", "is-active", unit], runner, timeout=30).stdout.strip()
-        _run(["systemctl", "--user", "try-restart", unit], runner, timeout=120)
-        if was == "active":
+        before = _unit_show(unit, runner).get("InvocationID", "") if was == "active" else ""
+        try:
+            _run(["systemctl", "--user", "try-restart", unit], runner, timeout=120)
+        except subprocess.TimeoutExpired:
+            pass  # a long stop is not a failure; the new-start wait below decides
+        if was != "active":
+            continue
+        if not before:
             time.sleep(1)
             now = _run(
                 ["systemctl", "--user", "is-active", unit], runner, timeout=30
             ).stdout.strip()
             if now != "active":
                 failed.append(f"{unit} is {now} after restart")
+            continue
+        deadline = time.monotonic() + wait
+        show: dict[str, str] = {}
+        while True:
+            show = _unit_show(unit, runner)
+            inv = show.get("InvocationID", "")
+            if show.get("ActiveState") == "active" and inv and inv != before:
+                break
+            if time.monotonic() >= deadline:
+                same = "the same invocation" if inv == before else f"invocation {inv or 'none'}"
+                failed.append(
+                    f"{unit} did not start anew within {wait}s "
+                    f"(state {show.get('ActiveState') or 'unknown'}, {same})"
+                )
+                show = {}
+                break
+            time.sleep(2)
+        if not show:
+            continue
+        time.sleep(1)
+        now = _run(["systemctl", "--user", "is-active", unit], runner, timeout=30).stdout.strip()
+        if now != "active":
+            failed.append(f"{unit} is {now} after restart")
+        elif started is not None:
+            started[unit] = {
+                "invocation": show["InvocationID"],
+                "since": show.get("ActiveEnterTimestamp", ""),
+            }
     return failed
 
 
@@ -396,15 +481,30 @@ def smoke(
     venv: Path,
     runner: Runner = subprocess.run,
     node: Optional[str] = None,
+    started: Optional[dict[str, dict[str, str]]] = None,
 ) -> list[str]:
-    """Run the global smokes and the restarted units' smokes from *venv*."""
+    """Run the global smokes and the restarted units' smokes from *venv*.
+
+    A unit smoke runs with ``SK_DEPLOY_UNIT``, and, when *started* knows the
+    unit's new start, ``SK_DEPLOY_INVOCATION_ID`` and ``SK_DEPLOY_SINCE`` (its
+    ActiveEnterTimestamp), so it can judge that start only: for example
+    ``journalctl --user _SYSTEMD_INVOCATION_ID=$SK_DEPLOY_INVOCATION_ID`` or
+    ``journalctl --since "$SK_DEPLOY_SINCE"``.
+    """
     env = dict(os.environ, PATH=f"{venv / 'bin'}:{os.environ.get('PATH', '')}")
-    cmds = list(manifest.smoke)
     services = manifest.services_for(node)
-    cmds += [services[u].smoke for u in units if u in services and services[u].smoke]
+    jobs: list[tuple[str, dict]] = [(cmd, env) for cmd in manifest.smoke]
+    for u in units:
+        if u in services and services[u].smoke:
+            unit_env = dict(env, SK_DEPLOY_UNIT=u)
+            info = (started or {}).get(u)
+            if info:
+                unit_env["SK_DEPLOY_INVOCATION_ID"] = info["invocation"]
+                unit_env["SK_DEPLOY_SINCE"] = info["since"]
+            jobs.append((services[u].smoke, unit_env))
     bad = []
-    for cmd in cmds:
-        proc = _run(["bash", "-c", cmd], runner, timeout=180, env=env)
+    for cmd, cmd_env in jobs:
+        proc = _run(["bash", "-c", cmd], runner, timeout=180, env=cmd_env)
         if proc.returncode != 0:
             tail = (proc.stderr or proc.stdout).strip()[-300:]
             bad.append(f"smoke `{cmd}` exit {proc.returncode}: {tail}")
@@ -497,8 +597,9 @@ def apply(
     if not restart:
         return Result(ok=True, release=dest, previous=previous)
     log(f"restart: {', '.join(units) or 'nothing'}")
-    problems = restart_units(units, runner)
-    problems += smoke(manifest, units, paths.venv_link, runner, node)
+    started: dict[str, dict[str, str]] = {}
+    problems = restart_units(units, runner, started=started)
+    problems += smoke(manifest, units, paths.venv_link, runner, node, started=started)
     if not problems:
         return Result(ok=True, release=dest, previous=previous, restarted=units)
     log("smoke failed: switching back")
@@ -544,9 +645,10 @@ def apply_tools_only(
         return Result(ok=True, release=None)
     units = restart_targets(tools.units, runner)
     log(f"restart: {', '.join(units) or 'nothing'}")
-    problems = restart_units(units, runner)
+    started: dict[str, dict[str, str]] = {}
+    problems = restart_units(units, runner, started=started)
     if not problems:
-        problems = smoke(manifest, units, paths.venv_link, runner, node)
+        problems = smoke(manifest, units, paths.venv_link, runner, node, started=started)
     if not problems:
         return Result(ok=True, release=None, restarted=units)
     log("restart or smoke failed: restoring the previous tools")

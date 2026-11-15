@@ -92,8 +92,13 @@ skcapstone deploy drift [--alert]      # editable installs, exec in trees, versi
    deliberate drops with `--allow-missing-bin`);
 4. switch `~/.skenv` to it with one atomic rename (the first run moves the old
    directory venv to `~/.skenv-releases/legacy-<time>`, the rollback target);
-5. `try-restart` only the units whose packages changed;
-6. smoke; on failure switch back and restart the same units.
+5. `try-restart` only the units whose packages changed, and wait (up to 300 s)
+   until each is `active` under a NEW `InvocationID`: a restart whose stop is
+   still running, or that never really took the unit down, fails the deploy;
+6. smoke; on failure switch back and restart the same units. A unit smoke runs
+   with `SK_DEPLOY_UNIT`, `SK_DEPLOY_INVOCATION_ID` and `SK_DEPLOY_SINCE` (the
+   new start's ActiveEnterTimestamp), so it judges only that start, for example
+   `journalctl --user --since "$SK_DEPLOY_SINCE"`, never the previous one's logs.
 
 State is host-local in `~/.local/state/sk-deploy/`, never under the
 Syncthing-shared `~/.skcapstone`. Running Claude Code sessions keep their MCP
@@ -129,7 +134,7 @@ rebuild) then, for each tool:
 2. writes `git archive` of it to `~/.local/share/sk-tools/<name>/<sha12>` and
    switches `<name>/current` to it atomically;
 3. gives every user unit that names a path under `checkout` one managed drop-in,
-   `<unit>.d/zzzz-sk-deploy-tools.conf` (named to sort after every hand-written drop-in, `zz-*` included), re-stating its `ExecStart*`,
+   `<unit>.d/zzzz-sk-deploy-tools.conf` (named to sort after every hand-written drop-in, `zz-*` included), re-stating its `ExecStart*`, `ExecStop*`, `ExecReload`, `ExecCondition`,
    `WorkingDirectory` and `Environment` lines with `current` in place of the
    checkout. Unit files are never edited. Deleting the drop-in reverts a unit;
    removing the tool from the manifest removes its drop-ins on the next apply;
