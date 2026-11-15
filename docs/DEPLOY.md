@@ -205,6 +205,37 @@ nodes:
    run their manifest smokes, and on failure put back the previous exports,
    unit files and drop-ins.
 
+An instance can also own files outside systemd, listed in
+`<instance>/files.yaml` (an instance with only `files.yaml` needs no units):
+
+```yaml
+files:
+  - path: ~/.hermes/.env          # block: only the marked lines are the deploy's
+    mode: block
+    source: hermes.env            # relative to the instance
+    format: env                   # env (default), yaml or text
+  - path: ~/.config/skcall/join.env
+    mode: whole                   # the whole file is the source
+    source: join.env
+    file_mode: 0o600              # the default
+  - path: ~/.hermes/plugins/nctalk
+    mode: link
+    target: "@TOOL:nctalk@/plugin"
+```
+
+A `block` file keeps every other line; the deploy owns only the lines between
+`# >>> sk-deploy (managed by skcapstone deploy; edits here are overwritten) >>>`
+and `# <<< sk-deploy <<<` (appended at the end the first time; `block:` renames
+it). A key the block sets that is also set outside it (`KEY=` or `export KEY=`
+for `env`, a top-level key for `yaml`) refuses the apply and names the line, as
+does a marker found twice or without its pair. A `link` over a real directory
+moves the directory to `~/.local/state/sk-deploy/displaced-files/<time>/`. All
+files are rendered and checked against the new exports before anything is
+published, written atomically after publish, restart the instance's units when
+they change, and are put back (text, absence, mode, moved directory) when a
+restart or smoke fails. Nothing is substituted in a file: secrets stay in
+0600 files placed from skvault.
+
 So an instance runs exactly (framework ref, config ref), both reviewed by PR,
 and a config change ships by: PR in the config repo, merge, PR in the release
 manifest bumping that node's `configs.<tool>.ref`, `deploy tools`.
