@@ -15,15 +15,20 @@
 # 2026-11-14, released builds for the rest of the SK set (Chef: "just add the
 # packages to it"). Each pin below was dry-run (`pip install --dry-run`) in the
 # live venv of every auto-rollout host and moves only the SK package itself,
-# replacing the git and editable builds the hosts ran. Held back, because the
-# dry run showed them moving third-party packages under running services:
-#   skchat-sovereign 0.14.266: Pillow 12 -> 13 and PyJWT everywhere; on
+# replacing the git and editable builds the hosts ran.
+#
+# 2026-11-15, the four held back on 2026-11-14 are pinned too (Chef: go), at
+# their latest releases. The dry run in every auto-rollout venv showed these
+# third-party moves, all forced by the packages' own caps:
+#   skbrain 1.0.1 (click<8.2, typer<0.13): click 8.4 -> 8.1.8, typer 0.27 -> 0.12.5
+#     on every host.
+#   skchat-sovereign 0.14.266 (fastapi<0.136, Pillow>=13, PyJWT>=2.15,
+#     cryptography>=50): Pillow 12 -> 13 and PyJWT 2.13 -> 2.15 everywhere; on
 #     chiap08 also fastapi 0.141 -> 0.135 and cryptography 43 -> 50.
-#   sksecurity 1.2.8: mcp 1.29 -> 1.30; cryptography on chiap08 and ziowk01.
-#   skbrain 1.0.1: downgrades click 8.4 -> 8.1 and typer 0.27 -> 0.12.
-#   skvault 0.1.0: would install it plus ten dependencies on hosts that do
-#     not use it (only chiap03 and chiap04 have it).
-# Pin those in their own PR once the third-party moves are planned.
+#   sksecurity 1.2.8 (mcp>=1.30): mcp 1.29 -> 1.30.
+#   skvault 0.1.0: new on most hosts, with pykeepass and its dependencies.
+# Relaxing the click/typer caps in skbrain and the fastapi cap in
+# skchat-sovereign upstream is the follow-up that would undo the downgrades.
 #
 # skwhisper IS pinned as of 2026-10-20. It could not be until then: the index
 # carried only 0.1.0 while every chi host ran 0.6.2 from git, because that repo
@@ -45,3 +50,7 @@ skdashboard==0.1.109
 skharness==0.3.45
 skskills==1.2.0
 skcomms==0.2.22
+skchat-sovereign==0.14.266
+sksecurity==1.2.8
+skbrain==1.0.1
+skvault==0.1.0
