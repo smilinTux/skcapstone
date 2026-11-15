@@ -199,9 +199,11 @@ def test_rollback_reports_hand_edits(world):
 
     res = rollout.rollback_tools(paths, runner=Calls())
     assert res.ok, res.problems
-    assert sorted(res.notes) == sorted([str(env), str(join)])
+    # I1: the line added outside the block is kept, so it is not an overwrite;
+    # the edited whole file is restored and its edited copy named
+    assert len(res.notes) == 1 and str(join) in res.notes[0], res.notes
     assert join.read_text() == "JOIN=a\n"
-    assert "LATER=1" not in env.read_text() and "HERMES_MEMORY_OWNER=a" in env.read_text()
+    assert "LATER=1" in env.read_text() and "HERMES_MEMORY_OWNER=a" in env.read_text()
 
 
 def test_rollback_without_record_refuses(world):
@@ -566,3 +568,110 @@ def test_venv_switch_fails_after_tools_and_a_retry_only_switches(world, monkeypa
     assert tool_runs == [1]  # nothing left to undo: only the venv moved
     assert os.readlink(paths.venv_link) == str(paths.releases / "r1")
     assert _snapshot(home) == original
+
+
+# ------------------------------------------------- final review: I1 (block-region rollback)
+
+BEGIN = "# >>> sk-deploy (managed by skcapstone deploy; edits here are overwritten) >>>"
+END = "# <<< sk-deploy <<<"
+
+
+def test_rollback_keeps_a_line_added_outside_the_block(world):
+    fw, cfg, home, units, paths = world
+    manifest = _manifest(fw, cfg)
+    env = home / ".hermes/.env"
+    _apply(manifest, paths, mid="a" * 40)
+    _bump_to_b(fw, cfg)
+    _apply(manifest, paths, mid="b" * 40)
+    # Jarvis rotates a key by hand, above and below the block
+    text = env.read_text().replace("OPENAI_API_KEY=x", "OPENAI_API_KEY=rotated")
+    env.write_text("# top\n" + text + "LATER=1\n")
+    res = rollout.rollback_tools(paths, runner=Calls())
+    assert res.ok, res.problems
+    assert env.read_text() == (
+        f"# top\nOPENAI_API_KEY=rotated\n{BEGIN}\nHERMES_MEMORY_OWNER=a\n{END}\nLATER=1\n"
+    )
+    assert not any(str(env) in n for n in res.notes), res.notes
+
+
+def test_rollback_removes_the_block_when_the_file_had_none(world):
+    fw, cfg, home, units, paths = world
+    env = home / ".hermes/.env"
+    env.write_text("OPENAI_API_KEY=x")  # no trailing newline: the apply adds one
+    _apply(_manifest(fw, cfg), paths)
+    assert BEGIN in env.read_text()
+    res = rollout.rollback_tools(paths, runner=Calls())
+    assert res.ok, res.problems
+    assert env.read_bytes() == b"OPENAI_API_KEY=x"
+    _apply(_manifest(fw, cfg), paths)
+    env.write_text(env.read_text() + "ROTATED=1\n")
+    rollout.rollback_tools(paths, runner=Calls())
+    assert env.read_text() == "OPENAI_API_KEY=x\nROTATED=1\n"
+
+
+def test_rollback_of_a_created_block_file_keeps_lines_added_outside(world):
+    fw, cfg, home, units, paths = world
+    env = home / ".hermes/.env"
+    env.unlink()
+    _apply(_manifest(fw, cfg), paths)
+    env.write_text(env.read_text() + "MINE=1\n")
+    res = rollout.rollback_tools(paths, runner=Calls())
+    assert res.ok, res.problems
+    assert env.read_text() == "MINE=1\n"
+    assert any(str(env) in n and "kept" in n for n in res.notes), res.notes
+    # with nothing outside the block, the file goes as it came
+    env.unlink()
+    _apply(_manifest(fw, cfg), paths)
+    res = rollout.rollback_tools(paths, runner=Calls())
+    assert not env.exists() and res.notes == []
+
+
+def test_rollback_note_for_an_edit_inside_the_block(world):
+    fw, cfg, home, units, paths = world
+    env = home / ".hermes/.env"
+    _apply(_manifest(fw, cfg), paths)
+    env.write_text(env.read_text().replace("OWNER=a", "OWNER=hand") + "LATER=1\n")
+    res = rollout.rollback_tools(paths, runner=Calls())
+    assert env.read_text() == "OPENAI_API_KEY=x\nLATER=1\n"
+    assert any(str(env) in n and "block" in n for n in res.notes), res.notes
+
+
+def test_rollback_copies_an_edited_whole_file_aside(world):
+    fw, cfg, home, units, paths = world
+    manifest = _manifest(fw, cfg)
+    join = home / ".config/skcall/join.env"
+    _apply(manifest, paths, mid="a" * 40)
+    _bump_to_b(fw, cfg)
+    _apply(manifest, paths, mid="b" * 40)
+    join.write_text("JOIN=b\nMINE=1\n")
+    res = rollout.rollback_tools(paths, runner=Calls())
+    assert res.ok, res.problems
+    assert join.read_text() == "JOIN=a\n"
+    copies = [p for p in (paths.state_dir / "rolled-over").rglob("*") if p.is_file()]
+    assert len(copies) == 1
+    copy = copies[0]
+    assert copy.read_text() == "JOIN=b\nMINE=1\n"
+    assert stat.S_IMODE(copy.stat().st_mode) == 0o600
+    assert stat.S_IMODE(copy.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE((paths.state_dir / "rolled-over").stat().st_mode) == 0o700
+    assert [n for n in res.notes if str(join) in n and str(copy) in n], res.notes
+    # an unedited whole file is restored without a copy
+    _apply(manifest, paths, mid="c" * 40)
+    res = rollout.rollback_tools(paths, runner=Calls())
+    assert len([p for p in (paths.state_dir / "rolled-over").rglob("*") if p.is_file()]) == 1
+
+
+def test_rollback_refuses_broken_block_markers_and_changes_nothing(world):
+    fw, cfg, home, units, paths = world
+    env = home / ".hermes/.env"
+    _apply(_manifest(fw, cfg), paths)
+    env.write_text(env.read_text().replace(END + "\n", ""))  # the end marker deleted by hand
+    before = _snapshot(home)
+    calls = Calls()
+    with pytest.raises(rollout.DeployError, match="markers are broken"):
+        rollout.rollback_tools(paths, runner=calls)
+    assert _snapshot(home) == before and calls.cmds == []
+    rec = json.loads((paths.state_dir / "tools-changes/last.json").read_text())
+    assert [e.get("block") for e in rec["files"]["entries"] if e["path"] == str(env)] == [
+        "sk-deploy"
+    ]

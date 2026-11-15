@@ -822,11 +822,19 @@ def _disk_state(path: Path, mode: str):
     return _sha_bytes(path.read_bytes()) if path.is_file() else None
 
 
+def _block_state(path: Path, block: str) -> Optional[str]:
+    if path.is_symlink() or not path.is_file():
+        return None
+    body = _files.block_body(_files._decode(path.read_bytes()), block)
+    return None if body is None else _sha_bytes(_files._encode(body))
+
+
 def _restore_targets(change: ToolsChange, unit_dir: Path) -> dict[str, Callable[[], bool]]:
     """Each path the rollback overwrites, with a check that it already is restored."""
     out: dict[str, Callable[[], bool]] = {}
     for key, was in change.files.entries():
-        out[key] = lambda p=Path(key), w=was: _files.restored(p, w)
+        block = change.files.blocks.get(key)
+        out[key] = lambda p=Path(key), w=was, b=block: _files.restored(p, w, b)
     for unit, old in change.unit_files.items():
         out[str(unit_dir / unit)] = lambda p=unit_dir / unit, o=old: _text_is(p, o)
     for unit, old in change.dropins.items():
@@ -853,6 +861,11 @@ def _edited(change: ToolsChange, unit_dir: Path) -> list[str]:
         if wrote is None or done():
             continue
         mode = wrote.get("mode", "")
+        if mode == "block":
+            # only the block is put back: an edit outside it is kept, not overwritten
+            if _block_state(Path(key), wrote.get("block", "")) != wrote.get("block_sha256"):
+                out.append(key)
+            continue
         want = wrote.get("target") if mode == "link" else wrote.get("sha256")
         if _disk_state(Path(key), mode) != want:
             out.append(key)
@@ -885,6 +898,10 @@ def _blockers(change: ToolsChange, root: Path, unit_dir: Path) -> list[str]:
                 out.append(problem)
         elif was[0] in ("file", "link") and path.is_dir() and not path.is_symlink():
             out.append(f"{key} is a real directory now; restoring its {was[0]} would fail")
+        block = change.files.blocks.get(key)
+        if block and path.is_file() and not path.is_symlink():
+            if _files.broken_markers(_files._decode(path.read_bytes()), block):
+                out.append(f"{key}: the {block} block markers are broken; fix the file by hand")
     for unit, old in change.unit_files.items():
         if old is not None and (unit_dir / unit).is_dir():
             out.append(f"{unit_dir / unit} is a directory now")
@@ -957,9 +974,15 @@ def rollback_tools(paths: Paths, runner: Runner = subprocess.run) -> Result:
     Every undo step is idempotent: a rollback that stopped partway leaves its
     record unmarked, and running it again finishes the job.
 
+    A ``block`` file gets back only its block region (see
+    :meth:`.files.FilesUndo.restore`): lines added outside the block since the
+    apply stay. A ``whole`` file edited since the apply is copied to
+    ``state_dir/rolled-over/<time>/`` first, then restored.
+
     Returns:
-        The result; ``notes`` lists the paths edited since that apply (their
-        text was overwritten with the recorded one all the same).
+        The result; ``notes`` names each path edited since that apply and what
+        happened to the edit (the copy of a whole file, a block put back, a
+        created block file kept for its other lines).
 
     Raises:
         DeployError: No change is recorded, or something it would restore is
@@ -975,9 +998,27 @@ def rollback_tools(paths: Paths, runner: Runner = subprocess.run) -> Result:
     path, record = pending[0]
     check_tools_rollback(paths, [pending[0]])
     change, root, unit_dir = _open_record(paths, path, record)
-    notes = _edited(change, unit_dir)
+    edited = _edited(change, unit_dir)
+    notes: list[str] = []
     try:
-        change.undo(root, unit_dir)
+        copies = _roll_over(paths, change, edited)
+        for key in edited:
+            wrote = change.written.get(key) or {}
+            if key in copies:
+                notes.append(
+                    f"{key} was edited since the apply; restored to its previous text,"
+                    f" the edited copy is at {copies[key]}"
+                )
+            elif wrote.get("mode") == "block":
+                notes.append(
+                    f"{key}: the {wrote.get('block')} block was edited since the apply;"
+                    " the block is back to its previous text, every line outside it kept"
+                )
+            else:
+                notes.append(
+                    f"{key} was edited since the apply; overwritten with its previous state"
+                )
+        notes += change.undo(root, unit_dir)
     except (OSError, ToolError) as exc:
         raise DeployError(
             f"the rollback of {path.name} stopped partway ({exc}); its record is kept,"
@@ -990,6 +1031,38 @@ def rollback_tools(paths: Paths, runner: Runner = subprocess.run) -> Result:
     units = restart_targets(change.units, runner)
     problems = restart_units(units, runner)
     return Result(ok=not problems, restarted=units, problems=problems, notes=notes)
+
+
+#: Under ``state_dir``: the edited copies of whole files a rollback overwrote.
+ROLLED_OVER = "rolled-over"
+
+
+def _roll_over(paths: Paths, change: ToolsChange, edited: list[str]) -> dict[str, str]:
+    """Copy each edited ``whole`` managed file aside before the rollback overwrites it.
+
+    The copy is ``state_dir/rolled-over/<time>/<path with / as %>``, mode 0600 in
+    0700 directories (the file may hold secrets). Returns path to its copy.
+    """
+    out: dict[str, str] = {}
+    keys = {k for k, _was in change.files.entries()}
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    for key in edited:
+        wrote = change.written.get(key) or {}
+        path = Path(key)
+        if key not in keys or wrote.get("mode") != "whole":
+            continue
+        if path.is_symlink() or not path.is_file():
+            continue
+        base = paths.state_dir / ROLLED_OVER
+        dest_dir = base / stamp
+        for d in (paths.state_dir, base, dest_dir):
+            d.mkdir(parents=True, exist_ok=True)
+        for d in (base, dest_dir):
+            os.chmod(d, 0o700)
+        dest = dest_dir / key.lstrip("/").replace("/", "%")
+        _atomic_write(dest, path.read_bytes(), 0o600)
+        out[key] = str(dest)
+    return out
 
 
 def _previous_live(paths: Paths, name: Optional[str]) -> Optional[str]:

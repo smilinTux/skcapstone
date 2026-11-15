@@ -80,6 +80,42 @@ def block_body(text: str, block: str) -> Optional[str]:
     return "\n".join(inner) + ("\n" if inner else "")
 
 
+def _markers(parts: list[str], block: str) -> tuple[list[int], list[int]]:
+    begin, end = begin_marker(block), end_marker(block)
+    starts = [i for i, line in enumerate(parts) if line.rstrip() == begin]
+    ends = [i for i, line in enumerate(parts) if line.rstrip() == end]
+    return starts, ends
+
+
+def broken_markers(text: str, block: str) -> bool:
+    """Whether *block*'s markers in *text* cannot be told apart (not one pair, or reversed)."""
+    starts, ends = _markers(text.split("\n"), block)
+    return len(starts) > 1 or len(ends) > 1 or len(starts) != len(ends) or starts > ends
+
+
+def put_block(text: str, block: str, body: Optional[str]) -> str:
+    """*text* with *block*'s region set to *body*, or removed (both markers) when None.
+
+    Every line outside the region stays byte for byte. A file without the
+    block gets it appended (body) or is left alone (None).
+
+    Raises:
+        FilesError: The markers are broken.
+    """
+    if broken_markers(text, block):
+        raise FilesError(f"the {block} block markers are broken; fix the file by hand")
+    parts = text.split("\n")
+    starts, ends = _markers(parts, block)
+    region = "" if body is None else f"{begin_marker(block)}\n{body}{end_marker(block)}\n"
+    if not starts:
+        if not region:
+            return text
+        return text + ("\n" if text and not text.endswith("\n") else "") + region
+    b, e = starts[0], ends[0]
+    head = "\n".join(parts[:b]) + ("\n" if b else "")
+    return head + region + "\n".join(parts[e + 1 :])
+
+
 class FileSpec(BaseModel):
     """One file a config instance manages."""
 
@@ -292,6 +328,8 @@ class FilesUndo:
     displaced: dict[str, str] = field(default_factory=dict)
     #: path -> ("absent",) | ("file", bytes, mode) | ("link", target) | ("moved", aside)
     _was: dict[str, tuple] = field(default_factory=dict)
+    #: path of a ``block`` file -> its block name: only that region is restored
+    blocks: dict[str, str] = field(default_factory=dict)
 
     @property
     def empty(self) -> bool:
@@ -313,6 +351,8 @@ class FilesUndo:
                 entry["target"] = was[1]
             elif was[0] == "moved":
                 entry["aside"] = was[1]
+            if key in self.blocks:
+                entry["block"] = self.blocks[key]
             out.append(entry)
         return {"entries": out}
 
@@ -323,6 +363,8 @@ class FilesUndo:
         for entry in (data or {}).get("entries") or []:
             key, kind = entry["path"], entry["was"]
             undo.previous[key] = None
+            if entry.get("block"):
+                undo.blocks[key] = entry["block"]
             if kind == "file":
                 raw = base64.b64decode(entry["data"])
                 undo._was[key] = ("file", raw, int(entry["mode"]))
@@ -353,22 +395,39 @@ class FilesUndo:
             self._was[key] = ("absent",)
             self.previous[key] = None
 
-    def restore(self) -> None:
+    def restore(self) -> list[str]:
         """Put every path back as it was, last change first.
 
+        A ``block`` file gets back only its block region: the previous block
+        body, or no block at all when it had none, and every line outside the
+        block stays as it is now (a key rotated by hand after the apply
+        survives). A block file the apply created is removed only when nothing
+        is left outside the block; otherwise it is kept, with a note.
+
         Each step is idempotent, so a restore that stopped partway can run again:
-        a file already at its previous bytes and mode, a link already at its
-        previous target, and a moved directory already back (its aside gone, a
-        real directory at the path) are left alone.
+        a file already at its previous bytes and mode (a block file: at its
+        previous block), a link already at its previous target, and a moved
+        directory already back (its aside gone, a real directory at the path)
+        are left alone.
+
+        Returns:
+            Notes on what was kept rather than restored.
 
         Raises:
             FilesError: A moved directory cannot go back: a real directory is
-                already at its path, or its aside is gone. Nothing of that entry
-                was changed.
+                already at its path, or its aside is gone; or a block file's
+                markers are broken. Nothing of that entry was changed.
         """
+        notes: list[str] = []
         for key, was in reversed(list(self._was.items())):
             path = Path(key)
-            if restored(path, was):
+            block = self.blocks.get(key)
+            if restored(path, was, block):
+                continue
+            if block and was[0] in ("file", "absent"):
+                note = _restore_block(path, was, block)
+                if note:
+                    notes.append(note)
                 continue
             if was[0] == "moved":
                 problem = moved_back_blocker(path, was[1])
@@ -383,15 +442,73 @@ class FilesUndo:
             elif was[0] == "moved":
                 shutil.move(was[1], key)
         self._was.clear()
+        return notes
+
+
+def _current_text(path: Path) -> Optional[str]:
+    if path.is_symlink() or not path.is_file():
+        return None
+    return _decode(path.read_bytes())
+
+
+def _previous_block(was: tuple, block: str) -> tuple[Optional[str], Optional[str]]:
+    """The previous whole text (None: absent) and its block body (None: it had none)."""
+    if was[0] != "file":
+        return None, None
+    prev = _decode(was[1])
+    return prev, block_body(prev, block)
+
+
+def _restore_block(path: Path, was: tuple, block: str) -> Optional[str]:
+    """Put back only *block*'s region of *path*; a note when a created file is kept."""
+    text = _current_text(path)
+    if text is None:
+        if was[0] == "file":
+            _atomic_write(path, was[1], was[2])
+        return None
+    prev, body = _previous_block(was, block)
+    try:
+        new = put_block(text, block, body)
+    except FilesError as exc:
+        raise FilesError(f"{path}: {exc}") from exc
+    if was[0] == "absent":
+        if new == "":
+            path.unlink()
+            return None
+        _atomic_write(path, _encode(new), path.stat().st_mode & 0o777)
+        return (
+            f"{path}: kept; it did not exist before the apply, but it has lines outside"
+            f" the {block} block now (only the block was removed)"
+        )
+    if body is None and new == prev + "\n" and not prev.endswith("\n"):
+        new = prev  # the newline the apply added before the block
+    _atomic_write(path, _encode(new), was[2])
+    return None
 
 
 def _real_dir(path: Path) -> bool:
     return path.is_dir() and not path.is_symlink()
 
 
-def restored(path: Path, was: tuple) -> bool:
-    """Whether *path* already is what the undo entry *was* restores."""
+def restored(path: Path, was: tuple, block: Optional[str] = None) -> bool:
+    """Whether *path* already is what the undo entry *was* restores.
+
+    With *block* (a ``block`` file), only the block region counts: it holds the
+    previous block body, or there is no block when the file had none.
+    """
     kind = was[0]
+    if block and kind in ("file", "absent"):
+        text = _current_text(path)
+        if text is None:
+            return kind == "absent"
+        if broken_markers(text, block):
+            return False
+        _prev, body = _previous_block(was, block)
+        if block_body(text, block) != body:
+            return False
+        if kind == "absent":
+            return text != ""
+        return path.stat().st_mode & 0o777 == was[2]
     if kind == "absent":
         return not (path.is_symlink() or path.is_file())
     if kind == "link":
@@ -516,6 +633,8 @@ def apply_files(
         if have == data and path.stat().st_mode & 0o777 == r.spec.file_mode:
             continue
         undo._note(path)
+        if r.spec.mode == "block":
+            undo.blocks.setdefault(key, r.spec.block)
         changed[key] = undo.previous[key]
         _atomic_write(path, data, r.spec.file_mode)
     return changed

@@ -113,6 +113,9 @@ class ToolsChange:
         change = cls(**{k: data[k] for k in cls._PLAIN if data.get(k) is not None})
         change.files = FilesUndo.from_dict(data.get("files") or {})
         change.written = dict(data.get("written") or {})
+        for key, wrote in change.written.items():  # a record from before ``block`` entries
+            if wrote.get("mode") == "block" and wrote.get("block"):
+                change.files.blocks.setdefault(key, wrote["block"])
         return change
 
     @property
@@ -125,13 +128,17 @@ class ToolsChange:
             or not self.files.empty
         )
 
-    def undo(self, root: Path, unit_dir: Path) -> None:
+    def undo(self, root: Path, unit_dir: Path) -> list[str]:
         """Restore the previous ``current`` links, drop-ins, units and managed files.
 
         Every step is idempotent (see :meth:`.files.FilesUndo.restore`), so an
         undo that stopped partway can run again and finish.
+
+        Returns:
+            Notes from the managed files (a created block file kept for the
+            lines outside its block).
         """
-        self.files.restore()
+        notes = self.files.restore()
         for name, previous in self.published.items():
             link = root / name / "current"
             if previous is None:
@@ -160,6 +167,7 @@ class ToolsChange:
                 raise ToolError(problem)
             Path(original).parent.mkdir(parents=True, exist_ok=True)
             shutil.move(moved, original)
+        return notes
 
 
 def displaced_blocker(original: str, moved: str) -> Optional[str]:

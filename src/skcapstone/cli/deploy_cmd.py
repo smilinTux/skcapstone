@@ -260,7 +260,7 @@ def register_deploy_commands(main: click.Group) -> None:
         for p in res.problems:
             console.print(f"  [red]x[/] {p}")
         for n in res.notes:
-            console.print(f"  [yellow]edited since the apply, overwritten:[/] {n}")
+            console.print(f"  [yellow]![/] {n}")
         console.print(f"tools change rolled back; restarted: {', '.join(res.restarted) or '-'}")
 
     @deploy.command("status")
