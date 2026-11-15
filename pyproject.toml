@@ -154,6 +154,12 @@ comm = [
 consciousness = [
     "skwhisper>=0.6.2",
 ]
+brain = [
+    "skbrain>=1.0.1",
+]
+vault = [
+    "skvault>=0.1.0",
+]
 cloud = [
     "boto3>=1.34",
     "google-cloud-compute>=1.18",
@@ -170,6 +176,8 @@ all = [
     "skchat-sovereign>=0.1.1",
     "skcomms>=0.1.0",
     "skdashboard>=0.1.0",
+    "skbrain>=1.0.1",
+    "skvault>=0.1.0",
     "fusepy>=3.0.1",
     "boto3>=1.34",
     "google-cloud-compute>=1.18",
