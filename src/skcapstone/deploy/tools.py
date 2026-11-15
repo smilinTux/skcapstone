@@ -233,6 +233,31 @@ def _home_form(path: Path, home: Path) -> str:
     return "%h" + text[len(str(home)) :] if text.startswith(str(home) + "/") else text
 
 
+_TOOL_REF = re.compile(r"@TOOL:([A-Za-z0-9][A-Za-z0-9_.-]*)@")
+
+
+def expand_tool_refs(text: str, tools_on_node, home_form_root: str, where: str = "") -> str:
+    """Replace ``@TOOL:<name>@`` with ``<home_form_root>/<name>/current``.
+
+    Args:
+        text: Unit file text (or a symlink target).
+        tools_on_node: Names of the tools the node runs (any container of names).
+        home_form_root: The tools root in unit-file form, e.g. ``%h/.local/share/sk-tools``.
+        where: What the text belongs to, for the error message.
+
+    Raises:
+        ToolError: The name is not a tool the node runs.
+    """
+
+    def _sub(m: re.Match) -> str:
+        name = m.group(1)
+        if name not in tools_on_node:
+            raise ToolError(f"unknown tool {name}" + (f" in {where}" if where else ""))
+        return f"{home_form_root}/{name}/current"
+
+    return _TOOL_REF.sub(_sub, text)
+
+
 def render_units(
     manifest: Manifest, node: Optional[str], root: Path, home: Path, exports: dict[str, Path]
 ) -> dict[str, str]:
@@ -257,9 +282,11 @@ def render_units(
         meta = json.loads((dest / _META).read_text(encoding="utf-8"))
         tool_cur = _home_form(root / tool / "current", home)
         cfg_cur = _home_form(root / cname / "current" / cfg.instance, home)
+        node_tools = manifest.tools_for(node)
+        tools_root = _home_form(root, home)
         for f in files:
             text = (
-                f.read_text(encoding="utf-8")
+                expand_tool_refs(f.read_text(encoding="utf-8"), node_tools, tools_root, f.name)
                 .replace("@TOOL@", tool_cur)
                 .replace("@CONFIG@", cfg_cur)
             )

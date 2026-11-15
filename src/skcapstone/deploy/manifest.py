@@ -141,7 +141,7 @@ class ToolSpec(BaseModel):
     url: Optional[str] = None
     ref: Optional[str] = None
     branch: Optional[str] = None
-    checkout: Union[str, list[str]]
+    checkout: Union[str, list[str]] = Field(default_factory=list)
     paths: list[str] = Field(default_factory=list)
     reason: Optional[str] = None
     setup: list[str] = Field(default_factory=list)
@@ -160,8 +160,10 @@ class ToolSpec(BaseModel):
 
     @property
     def checkouts(self) -> list[str]:
-        """Every checkout location, as a list."""
-        return [self.checkout] if isinstance(self.checkout, str) else list(self.checkout)
+        """Every checkout location, as a list (empty for a tool with none)."""
+        if isinstance(self.checkout, str):
+            return [self.checkout] if self.checkout else []
+        return list(self.checkout)
 
 
 class ToolConfigSpec(BaseModel):
@@ -186,7 +188,8 @@ class ToolConfigSpec(BaseModel):
         url: Any git URL (a private forge); overrides ``repo``.
         ref: Commit or tag to export; must be on ``branch``.
         branch: The default branch.
-        instance: The instance directory to export and render.
+        instance: The instance directory to export and render, relative to the
+            repo root (``node1`` or ``render/chiap04``); no ``..``.
     """
 
     repo: Optional[str] = None
@@ -199,8 +202,16 @@ class ToolConfigSpec(BaseModel):
     def _has_source(self) -> "ToolConfigSpec":
         if not (self.repo or self.url):
             raise ValueError("a tool config needs a repo or url")
-        if "/" in self.instance or self.instance in ("", ".", ".."):
-            raise ValueError("instance is one directory name")
+        parts = Path(self.instance).parts
+        if (
+            not self.instance
+            or self.instance.startswith("/")
+            or not parts
+            or any(p in ("", ".", "..") for p in parts)
+        ):
+            raise ValueError(
+                "instance is one directory inside the config repo (no '..', not absolute)"
+            )
         return self
 
     def source(self) -> tuple[str, str, str]:
