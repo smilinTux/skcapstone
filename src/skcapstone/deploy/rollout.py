@@ -40,6 +40,7 @@ from .tools import (
     DROPIN,
     ToolError,
     ToolsChange,
+    UndoFailedError,
     apply_tools,
     default_root,
     displaced_blocker,
@@ -596,6 +597,15 @@ def apply(
             tools = apply_tools(
                 manifest, node, paths.state_dir, paths.tools_root, unit_dir, runner=runner, log=log
             )
+        except UndoFailedError as exc:
+            return Result(
+                ok=False,
+                release=dest,
+                problems=[
+                    str(exc),
+                    *_record_partial(paths, exc.change, manifest_id, unit_dir, log),
+                ],
+            )
         except ToolError as exc:
             return Result(ok=False, release=dest, problems=[str(exc)])
     log(f"switch: {paths.venv_link} -> {dest}")
@@ -634,9 +644,7 @@ def apply(
             notes=tools.notes + _record(paths, tools, manifest_id, unit_dir, log),
         )
     log("smoke failed: switching back")
-    if not tools.empty:
-        tools.undo(paths.tools_root or default_root(), unit_dir)
-        _run(["systemctl", "--user", "daemon-reload"], runner, timeout=60)
+    undo_error = _undo(paths, tools, unit_dir, runner) if not tools.empty else None
     if previous is not None:
         switch(paths, previous)
         restart_units(units, runner)
@@ -646,6 +654,10 @@ def apply(
             "at": time.time(),
         }, None
         save_state(paths, state)
+    if undo_error:
+        # recorded after the switch back, so a venv rollback sees it as pending
+        problems.append(undo_error)
+        problems += _record_partial(paths, tools, manifest_id, unit_dir, log)
     return Result(
         ok=False,
         release=dest,
@@ -675,6 +687,12 @@ def apply_tools_only(
         tools = apply_tools(
             manifest, node, paths.state_dir, paths.tools_root, unit_dir, runner=runner, log=log
         )
+    except UndoFailedError as exc:
+        return Result(
+            ok=False,
+            release=None,
+            problems=[str(exc), *_record_partial(paths, exc.change, manifest_id, unit_dir, log)],
+        )
     except ToolError as exc:
         return Result(ok=False, release=None, problems=[str(exc)])
     if tools.empty:
@@ -700,10 +718,41 @@ def apply_tools_only(
             notes=notes + _record(paths, tools, manifest_id, unit_dir, log),
         )
     log("restart or smoke failed: restoring the previous tools")
-    tools.undo(paths.tools_root or default_root(), unit_dir)
-    _run(["systemctl", "--user", "daemon-reload"], runner, timeout=60)
+    undo_error = _undo(paths, tools, unit_dir, runner)
     restart_units(units, runner)
+    if undo_error:
+        problems.append(undo_error)
+        problems += _record_partial(paths, tools, manifest_id, unit_dir, log)
     return Result(ok=False, release=None, restarted=units, problems=problems, rolled_back=True)
+
+
+def _undo(paths: Paths, tools: ToolsChange, unit_dir: Path, runner: Runner) -> Optional[str]:
+    """Undo a failed apply's tools step; the problem when the undo stopped partway."""
+    try:
+        tools.undo(paths.tools_root or default_root(), unit_dir)
+        return None
+    except (OSError, ToolError) as exc:
+        return f"undoing the tools change stopped partway ({exc})"
+    finally:
+        _run(["systemctl", "--user", "daemon-reload"], runner, timeout=60)
+
+
+def _record_partial(
+    paths: Paths, change: ToolsChange, manifest_id: str, unit_dir: Path, log
+) -> list[str]:
+    """Record a change whose undo stopped partway, so ``deploy rollback`` can finish it.
+
+    Every undo step is idempotent: the rollback re-runs the whole record and
+    finishes what is left.
+    """
+    if change.empty:
+        return []
+    notes = _record(paths, change, manifest_id, unit_dir, log)
+    if notes:
+        return notes  # not recorded either: the note says so
+    msg = "the partial tools change is recorded; run deploy rollback to finish undoing it"
+    log(msg)
+    return [msg]
 
 
 def rollback(paths: Paths, units: list[str], runner: Runner = subprocess.run) -> Result:

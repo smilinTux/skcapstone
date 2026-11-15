@@ -70,6 +70,14 @@ class ToolError(RuntimeError):
     """A tool could not be exported; nothing was published."""
 
 
+class UndoFailedError(ToolError):
+    """A failed step's undo stopped partway; :attr:`change` is what is left to undo."""
+
+    def __init__(self, message: str, change: "ToolsChange"):
+        super().__init__(message)
+        self.change = change
+
+
 def _files_undo():
     from .files import FilesUndo
 
@@ -741,7 +749,13 @@ def apply_tools(
                 for note in notes:
                     log(note)
     except (OSError, ToolError) as exc:
-        change.undo(root, unit_dir)
+        try:
+            change.undo(root, unit_dir)
+        except (OSError, ToolError) as undo_exc:
+            runner(["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=60)
+            raise UndoFailedError(
+                f"managed files: {exc}; undoing the step stopped partway ({undo_exc})", change
+            ) from undo_exc
         if change.dropins or change.unit_files or change.displaced:
             runner(["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=60)
         raise ToolError(f"managed files: {exc}; every change was undone") from exc

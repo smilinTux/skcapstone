@@ -809,3 +809,89 @@ def test_cli_rollback_without_a_manifest_on_a_tools_only_node(world, monkeypatch
     out = run("--node", "n1")
     assert out.exit_code == 2 and "manifest unavailable" in out.output
     assert (paths.tools_root / "fw/current").is_symlink()
+
+
+# ------------------------------------------------- final review: M1 (undo that fails)
+
+
+class SmokeFails(Calls):
+    def __call__(self, cmd, **kw):
+        if cmd[:1] == ["bash"]:
+            self.cmds.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 1, "", "smoke said no")
+        return super().__call__(cmd, **kw)
+
+
+def _undo_fails_once(monkeypatch):
+    real = tools.ToolsChange.undo
+    hits: list[int] = []
+
+    def undo(self, root, unit_dir):
+        if not hits:
+            hits.append(1)
+            raise OSError("disk said no")
+        return real(self, root, unit_dir)
+
+    monkeypatch.setattr(tools.ToolsChange, "undo", undo)
+    return hits
+
+
+def test_failed_undo_after_a_failed_smoke_is_recorded(world, monkeypatch):
+    fw, cfg, home, units, paths = world
+    original = _snapshot(home)
+    hits = _undo_fails_once(monkeypatch)
+    res = rollout.apply_tools_only(_manifest(fw, cfg), paths, runner=SmokeFails(), node="n1")
+    assert hits and not res.ok
+    assert any("deploy rollback" in p for p in res.problems), res.problems
+    assert rollout.last_change(paths) is not None
+    assert rollout.rollback_tools(paths, runner=Calls()).ok
+    assert _snapshot(home) == original
+
+
+def test_failed_undo_of_a_failed_files_step_is_recorded(world, monkeypatch):
+    from skcapstone.deploy import files as files_mod
+
+    fw, cfg, home, units, paths = world
+    original = _snapshot(home)
+
+    def boom(*_a, **_k):
+        raise OSError("files said no")
+
+    real_apply, real_undo = files_mod.apply_files, tools.ToolsChange.undo
+    monkeypatch.setattr(files_mod, "apply_files", boom)
+    _undo_fails_once(monkeypatch)
+    res = rollout.apply_tools_only(_manifest(fw, cfg), paths, runner=Calls(), node="n1")
+    assert not res.ok
+    assert any("deploy rollback" in p for p in res.problems), res.problems
+    assert rollout.last_change(paths) is not None
+    monkeypatch.setattr(files_mod, "apply_files", real_apply)
+    monkeypatch.setattr(tools.ToolsChange, "undo", real_undo)
+    assert rollout.rollback_tools(paths, runner=Calls()).ok
+    assert _snapshot(home) == original
+
+
+def test_failed_undo_in_a_venv_apply_is_recorded_for_the_rollback(world, monkeypatch):
+    from skcapstone.deploy.inspect import Dist
+
+    fw, cfg, home, units, paths = world
+    manifest = _venv_world(world)
+    original = _snapshot(home)
+
+    def build(_m, dest, *_a, **_k):
+        (dest / "bin").mkdir(parents=True)
+
+    monkeypatch.setattr(rollout, "build_venv", build)
+    monkeypatch.setattr(rollout, "verify_venv", lambda *a, **k: [])
+    monkeypatch.setattr(rollout, "preflight", lambda *a, **k: None)
+    monkeypatch.setattr(rollout, "list_dists", lambda _p: [Dist("skmemory", "0", False, "")])
+    _undo_fails_once(monkeypatch)
+    res = rollout.apply(manifest, "d" * 40, paths, "3.12", SmokeFails(), node="n1")
+    assert not res.ok and res.rolled_back
+    assert any("deploy rollback" in p for p in res.problems), res.problems
+    assert os.readlink(paths.venv_link) == str(paths.releases / "r2")
+    pending = rollout.pending_tools_changes(
+        paths, since=rollout.load_state(paths)["current"]["at"]
+    )
+    assert len(pending) == 1, "the record is newer than the switch back"
+    assert rollout.rollback_tools(paths, runner=Calls()).ok
+    assert _snapshot(home) == original
