@@ -1,0 +1,1 @@
+- deploy: `SK_DEPLOY_MANIFEST_URL` names the manifest repo by any git URL (for example an ssh host alias bound to a read-only deploy key), so each cluster can have its own manifest repo (`sk-release` for nor, `sk-release-chi` for chi). An existing clone follows a changed URL.

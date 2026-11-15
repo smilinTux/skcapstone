@@ -4268,7 +4268,8 @@ def _check_deploy(deep: bool = False) -> list[Check]:
                 unknown=True,
                 detail=(
                     "UNKNOWN: no release manifest on this node "
-                    "(SK_DEPLOY_MANIFEST_REPO in ~/.config/sk-deploy/env)"
+                    "(SK_DEPLOY_MANIFEST_URL or SK_DEPLOY_MANIFEST_REPO"
+                    " in ~/.config/sk-deploy/env)"
                 ),
                 category="deploy",
             )

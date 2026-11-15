@@ -13,10 +13,14 @@ Where the manifest comes from, first match wins:
 
 1. ``--manifest PATH`` / ``SK_DEPLOY_MANIFEST`` (a local file, for tests and
    emergencies; its id is the file's sha256);
-2. ``SK_DEPLOY_MANIFEST_REPO=owner/name`` (default file ``manifest.yaml``),
-   cloned into the host-local state dir and always read at ``origin/main``,
-   so only a merged manifest can deploy. ``--ref`` picks an earlier commit
-   of main for a deliberate rollback, and is refused if it is not on main.
+2. ``SK_DEPLOY_MANIFEST_URL=<git url>`` (any URL git can clone, for example
+   an ssh host alias bound to a read-only deploy key), else
+   ``SK_DEPLOY_MANIFEST_REPO=owner/name`` (``https://github.com/owner/name``).
+   The repo (file ``manifest.yaml``) is cloned into the host-local state dir
+   and always read at ``origin/main``, so only a merged manifest can deploy.
+   ``--ref`` picks an earlier commit of main for a deliberate rollback, and
+   is refused if it is not on main. One manifest repo per cluster: a node
+   names only its own cluster's repo.
 """
 
 from __future__ import annotations
@@ -53,6 +57,28 @@ def node_config(path: Optional[Path] = None) -> dict[str, str]:
     except OSError:
         pass
     return out
+
+
+def manifest_url(conf: Optional[dict[str, str]] = None) -> Optional[str]:
+    """The manifest repo's git URL, or ``None`` when none is configured.
+
+    The environment wins over ``~/.config/sk-deploy/env`` (so a one-off
+    override on the command line always takes effect); within each,
+    ``SK_DEPLOY_MANIFEST_URL`` wins over ``SK_DEPLOY_MANIFEST_REPO``.
+
+    Args:
+        conf: The node config (read from disk when omitted).
+
+    Returns:
+        A URL git can clone.
+    """
+    conf = node_config() if conf is None else conf
+    for source in (os.environ, conf):
+        if source.get("SK_DEPLOY_MANIFEST_URL"):
+            return source["SK_DEPLOY_MANIFEST_URL"]
+        if source.get("SK_DEPLOY_MANIFEST_REPO"):
+            return f"https://github.com/{source['SK_DEPLOY_MANIFEST_REPO']}.git"
+    return None
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -92,10 +118,11 @@ def resolve_manifest(
             load_manifest(Path(path).expanduser()),
             "file-" + hashlib.sha256(data).hexdigest()[:12],
         )
-    repo = os.environ.get("SK_DEPLOY_MANIFEST_REPO") or conf.get("SK_DEPLOY_MANIFEST_REPO")
-    if not repo:
+    url = manifest_url(conf)
+    if not url:
         raise ManifestUnavailableError(
-            "set SK_DEPLOY_MANIFEST_REPO (owner/name) or pass --manifest"
+            "set SK_DEPLOY_MANIFEST_URL (git url) or SK_DEPLOY_MANIFEST_REPO (owner/name),"
+            " or pass --manifest"
         )
     clone = state_dir / "manifest-repo"
     if not (clone / ".git").exists():
@@ -103,16 +130,20 @@ def resolve_manifest(
             raise ManifestUnavailableError(f"{clone} not cloned yet")
         state_dir.mkdir(parents=True, exist_ok=True)
         proc = subprocess.run(
-            ["git", "clone", "--quiet", f"https://github.com/{repo}.git", str(clone)],
+            ["git", "clone", "--quiet", url, str(clone)],
             capture_output=True,
             text=True,
             timeout=300,
             check=False,
         )
         if proc.returncode != 0:
-            raise ManifestUnavailableError(f"clone {repo}: {proc.stderr.strip()[-300:]}")
+            raise ManifestUnavailableError(f"clone {url}: {proc.stderr.strip()[-300:]}")
     elif fetch:
-        _git(clone, "fetch", "--quiet", "origin", "main")
+        if _git(clone, "remote", "get-url", "origin") != url:
+            # The node was pointed at another manifest repo: follow it, never
+            # keep reading the old one.
+            _git(clone, "remote", "set-url", "origin", url)
+        _git(clone, "fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main")
     tip = _git(clone, "rev-parse", "origin/main")
     commit = tip
     if ref:
@@ -130,4 +161,10 @@ def resolve_manifest(
         tmp.unlink(missing_ok=True)
 
 
-__all__ = ["Manifest", "ManifestUnavailableError", "load_manifest", "resolve_manifest"]
+__all__ = [
+    "Manifest",
+    "ManifestUnavailableError",
+    "load_manifest",
+    "manifest_url",
+    "resolve_manifest",
+]
