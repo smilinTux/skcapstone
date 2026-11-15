@@ -38,7 +38,7 @@ The parser reads the first three columns; keep the cap in backticks.
 | skskills | mcp | `<2.0` | proven | The aggregator registers with `Server.list_tools`, gone in mcp 2.x. | skskills test suite on mcp 2.3.0: `AttributeError` in the aggregator test (skskills #12). | 2026-11-15 |
 | skdashboard | mcp | `<2.0` | open | No MCP server module found to probe; presumed the same API. | none yet: lift PR will tell. | 2026-11-15 |
 | skcapstone | ansible-core | `==2.21.3` | pin | The sealed qualify env (`data/qualify-env.json`) builds this exact ansible-core for Python >= 3.12. | `tests/fleet/test_qualified_runtime_dependencies.py`. | 2026-11-15 |
-| skcapstone | ansible-core | `==2.19.5` | pin | Same, for Python < 3.12 (2.21 needs 3.12). | `tests/fleet/test_qualified_runtime_dependencies.py`. | 2026-11-15 |
+| skcapstone | ansible-core | `==2.19.11` | pin | Same, for Python < 3.12 (2.21 needs 3.12). 2.19.11 fixes CVE-2026-11332 (GHSA-w8p5-mx5w-cpqj, `ansible-galaxy role install` argument injection), which 2.19.5 carried; the 2.21.3 pin was never affected (fixed in 2.21.1). No fleet host runs Python < 3.12. | `tests/fleet/test_qualified_runtime_dependencies.py`. | 2026-11-15 |
 | sksecurity | cryptography | `<51.0.0` | open | Major-version guard on a crypto library; no test. Not binding: 50.0.2 is the newest release. | none: lift PR when 51 ships. | 2026-11-15 |
 | skcomms | cryptography | `<51.0` | open | Same major-version guard (pqc, nostr, all and dev extras). Not binding. | none: lift PR when 51 ships. | 2026-11-15 |
 | skcomms | fastapi | `<1.0.0` | open | Pre-1.0 guard (api, all and dev extras). Not binding: newest is 0.163.1. | none. | 2026-11-15 |
