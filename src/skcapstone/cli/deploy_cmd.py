@@ -181,9 +181,9 @@ def register_deploy_commands(main: click.Group) -> None:
         """Switch back to the previous release (or tools change) and restart its services.
 
         On a node whose profile has no packages (tools only), this undoes the
-        last recorded tools change. Elsewhere the venv switches back, and every
-        tools change recorded after that venv switch is undone with it, newest
-        first; all of them are checked before the venv moves.
+        last recorded tools change. Elsewhere every tools change recorded after
+        the venv switch is undone first, newest first, and the venv switches
+        back last, only once all of them are.
         """
         from ..deploy import rollout
         from ..deploy.rollout import (
@@ -203,29 +203,39 @@ def register_deploy_commands(main: click.Group) -> None:
                 sys.exit(1)
             _report_tools(res)
             sys.exit(0 if res.ok else 1)
+        # Tools first, venv last. The pending set is every tools change recorded
+        # after the venv switch that state.json records, and that time only moves
+        # when the venv actually switches back: a rollback that stops partway
+        # finds the same remaining records on the next run and leaves the venv
+        # alone until every one of them is undone. Never a mixed node.
         switched = (load_state(paths).get("current") or {}).get("at") or 0
-        # every tools change recorded after the venv switch goes back with it,
-        # and all of them are checked before the venv moves: never a mixed node
         pending = pending_tools_changes(paths, since=switched)
         try:
             check_tools_rollback(paths, pending)
-            res = rollout.rollback(paths, list(manifest.services_for(node)))
         except DeployError as exc:
             console.print(f"[red]{exc}[/]")
             sys.exit(1)
-        for p in res.problems:
-            console.print(f"  [red]x[/] {p}")
-        console.print(f"now on {res.release} (was {res.previous})")
-        ok = res.ok
+        ok = True
         for _ in pending:
             try:
                 tres = rollout.rollback_tools(paths)
             except DeployError as exc:
                 console.print(f"[red]{exc}[/]")
+                console.print("the venv was not switched; run deploy rollback again")
                 sys.exit(1)
             _report_tools(tres)
             ok = ok and tres.ok
-        sys.exit(0 if ok else 1)
+        try:
+            res = rollout.rollback(paths, list(manifest.services_for(node)))
+        except DeployError as exc:
+            console.print(f"[red]{exc}[/]")
+            if pending:
+                console.print("the tools changes were rolled back; the venv was not switched")
+            sys.exit(1)
+        for p in res.problems:
+            console.print(f"  [red]x[/] {p}")
+        console.print(f"now on {res.release} (was {res.previous})")
+        sys.exit(0 if ok and res.ok else 1)
 
     def _report_tools(res) -> None:
         for p in res.problems:

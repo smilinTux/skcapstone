@@ -922,15 +922,27 @@ def check_tools_rollback(paths: Paths, records: list[tuple[Path, dict]]) -> None
     """Refuse, changing nothing, when any of *records* could not be undone.
 
     Each record is checked against the disk as it is now, so a later record's
-    check is the best estimate before the newer ones are undone.
+    check is the best estimate before the newer ones are undone. Two records
+    that both moved something aside at the same path are refused outright:
+    that is the case where today's disk says nothing about the older one.
 
     Raises:
         DeployError: The problems, by record.
     """
     problems: list[str] = []
+    moved_by: dict[str, str] = {}
     for path, record in records:
         change, root, unit_dir = _open_record(paths, path, record)
         problems += [f"{path.name}: {p}" for p in _blockers(change, root, unit_dir)]
+        moved = [k for k, was in change.files.entries() if was[0] == "moved"]
+        for key in dict.fromkeys(moved + list(change.displaced)):
+            if key in moved_by:
+                problems.append(
+                    f"{key} was moved aside by both {moved_by[key]} and {path.name}; "
+                    "undoing both would put one directory back over the other. "
+                    "Restore it by hand from the state directory"
+                )
+            moved_by.setdefault(key, path.name)
     if problems:
         raise DeployError("cannot roll back the tools change: " + "; ".join(problems))
 

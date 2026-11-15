@@ -453,3 +453,116 @@ def test_venv_rollback_refuses_before_switching_when_tools_cannot_go_back(world,
     assert out.exit_code == 1 and "is gone" in out.output
     assert os.readlink(paths.venv_link) == str(paths.releases / "r2")
     assert _snapshot(home) == before
+
+
+# ------------------------------------------------------------- fix round 2
+
+
+def _venv_world(world):
+    fw, cfg, home, units, paths = world
+    manifest = _manifest(fw, cfg, packages={"skmemory": {"repo": "o/skmemory", "version": "1"}})
+    _venv_node(paths)
+    rollout.save_state(
+        paths,
+        {
+            "current": {"release": str(paths.releases / "r2"), "at": 1.0},
+            "previous": {"release": str(paths.releases / "r1")},
+        },
+    )
+    return manifest
+
+
+def _bump(fw: Path, cfg: Path, tag: str) -> None:
+    _commit(fw, {"src/index.mjs": f"// {tag}\n"})
+    _commit(cfg, {"node1/join.env": f"JOIN={tag}\n"})
+
+
+def _count(monkeypatch, name: str) -> list[int]:
+    real = getattr(rollout, name)
+    calls: list[int] = []
+
+    def wrapped(*a, **k):
+        calls.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(rollout, name, wrapped)
+    return calls
+
+
+def test_venv_rollback_refuses_stacked_moves_and_changes_nothing(world, monkeypatch):
+    fw, cfg, home, units, paths = world
+    manifest = _venv_world(world)
+    plug = _with_real_plugin_dir(home)  # D0
+    _apply(manifest, paths, mid="a" * 40)  # A moves D0 aside, links
+    plug.unlink()
+    plug.mkdir()  # D1 replaces the link
+    (plug / "d1.py").write_text("d1\n")
+    _bump(fw, cfg, "b")
+    _apply(manifest, paths, mid="b" * 40)  # B moves D1 aside, links again
+    before = _snapshot(home)
+    out = _cli(monkeypatch, paths, manifest)("--node", "n1")
+    assert out.exit_code == 1 and "moved aside by both" in out.output
+    assert str(plug) in out.output.replace("\n", "")
+    assert os.readlink(paths.venv_link) == str(paths.releases / "r2")
+    assert _snapshot(home) == before
+    assert len(rollout.pending_tools_changes(paths, since=1.0)) == 2
+
+
+def test_venv_rollback_stopped_on_record_2_of_3_finishes_then_switches_once(world, monkeypatch):
+    fw, cfg, home, units, paths = world
+    manifest = _venv_world(world)
+    original = _snapshot(home)
+    _apply(manifest, paths, mid="a" * 40)
+    _bump(fw, cfg, "b")
+    _apply(manifest, paths, mid="b" * 40)
+    _bump(fw, cfg, "c")
+    _apply(manifest, paths, mid="c" * 40)
+    run = _cli(monkeypatch, paths, manifest)
+    switches = _count(monkeypatch, "rollback")
+    real_link = tools._atomic_link
+    links: list[Path] = []
+
+    def flaky(link, target):  # C re-points fw and fw-config; the 3rd call is in B
+        links.append(link)
+        if len(links) == 3:
+            raise OSError("disk said no")
+        return real_link(link, target)
+
+    monkeypatch.setattr(tools, "_atomic_link", flaky)
+    out = run("--node", "n1")
+    assert out.exit_code == 1 and "stopped partway" in out.output, out.output
+    assert switches == [] and os.readlink(paths.venv_link) == str(paths.releases / "r2")
+    assert [r["manifest"][0] for _p, r in rollout.pending_tools_changes(paths, 1.0)] == [
+        "b",
+        "a",
+    ]
+    monkeypatch.setattr(tools, "_atomic_link", real_link)
+    out = run("--node", "n1")
+    assert out.exit_code == 0, out.output
+    assert switches == [1]
+    assert os.readlink(paths.venv_link) == str(paths.releases / "r1")
+    assert _snapshot(home) == original
+    assert rollout.last_change(paths) is None
+
+
+def test_venv_switch_fails_after_tools_and_a_retry_only_switches(world, monkeypatch):
+    import shutil
+
+    fw, cfg, home, units, paths = world
+    manifest = _venv_world(world)
+    original = _snapshot(home)
+    _apply(manifest, paths, mid="a" * 40)
+    shutil.rmtree(paths.releases / "r1")  # the venv rollback will refuse
+    run = _cli(monkeypatch, paths, manifest)
+    tool_runs = _count(monkeypatch, "rollback_tools")
+    out = run("--node", "n1")
+    assert out.exit_code == 1 and "no previous release" in out.output
+    assert "tools changes were rolled back" in out.output.replace("\n", " ")
+    assert _snapshot(home) == original and tool_runs == [1]
+    assert os.readlink(paths.venv_link) == str(paths.releases / "r2")
+    (paths.releases / "r1").mkdir()
+    out = run("--node", "n1")
+    assert out.exit_code == 0, out.output
+    assert tool_runs == [1]  # nothing left to undo: only the venv moved
+    assert os.readlink(paths.venv_link) == str(paths.releases / "r1")
+    assert _snapshot(home) == original
