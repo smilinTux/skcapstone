@@ -81,6 +81,7 @@ def register_deploy_commands(main: click.Group) -> None:
                         "editable": plan.editable,
                         "stacks": extra["stacks"],
                         "roles": extra["roles"],
+                        "tools": extra["tools"],
                         "files": extra["files"],
                         "restarts": extra["restarts"],
                     },
@@ -93,13 +94,15 @@ def register_deploy_commands(main: click.Group) -> None:
             console.print(f"  stack {name}: {st['ref']} ({(st['sha'] or '-')[:12]})")
         for name, roles in sorted(extra["roles"].items()):
             console.print(f"  roles from {name}: {', '.join(roles)}")
+        for name, mv in sorted(extra["tools"].items()):
+            console.print(f"  tool {name}: {mv['from'] or '-'} -> {mv['to']}")
         for cname, cfg in sorted(extra["files"].items()):
             if cfg.get("error"):
                 console.print(f"  [red]files of {cname}: {cfg['error']}[/]")
             for text in cfg["diffs"]:
                 console.print(f"  files of {cname}:")
                 click.echo(text.rstrip("\n"))
-        if plan.empty and not diffs and not extra["restarts"]:
+        if plan.empty and not diffs and not extra["restarts"] and not extra["tools"]:
             console.print("[green]nothing to do: this node runs the manifest[/]")
             return
         for name, (have, want) in sorted(plan.changed.items()):

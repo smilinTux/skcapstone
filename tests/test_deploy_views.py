@@ -18,7 +18,7 @@ from skcapstone.deploy.tools import ToolsChange
 from tests.test_deploy_stacks import _cluster, _sh, _stack_yaml
 
 FILES_YAML = "files:\n  - path: ~/.hermes/.env\n    mode: block\n    source: hermes.env\n"
-UNIT = "[Service]\nExecStart=/bin/true\n"
+UNIT = "[Service]\nExecStart=@TOOL@/bin/run\n"
 BLOCK = "sk-deploy"
 
 
@@ -177,3 +177,144 @@ def test_status_shows_last_tools_change(world, monkeypatch):
     assert last["manifest"] == "c" * 40
     assert last["tools"]["hermes"] == {"now": "bbbbbbbbbbbb", "before": "aaaaaaaaaaaa"}
     assert last["when"] and last["at"] > 0
+
+
+def _install_meta(root: Path, name: str, ref: str) -> None:
+    """A published export of *name* at *ref* (just its metadata)."""
+    dest = root / name / "aaaaaaaaaaaa"
+    dest.mkdir(parents=True)
+    (dest / ".sk-tool.json").write_text(json.dumps({"name": name, "ref": ref}))
+    os.symlink("aaaaaaaaaaaa", root / name / "current")
+
+
+def test_plan_lists_tool_moves_and_their_units(world, monkeypatch):
+    manifest, home, paths, *_ = world
+    args = ("plan", "--manifest", str(manifest), "--node", "chiap04")
+    out = _run(monkeypatch, paths, *args)
+    assert "tool hermes: - -> v1" in out.output
+    assert "nothing to do" not in out.output
+    _install_meta(paths.tools_root, "hermes", "v0")  # a stack bump moves hermes
+    data = json.loads(_run(monkeypatch, paths, *args, "--json").output)
+    assert data["tools"]["hermes"] == {"from": "v0", "to": "v1"}
+    assert "hermes-gateway.service" in data["restarts"]
+
+
+def _settle(world_) -> None:
+    """Put the node where an apply of the world would leave it, except the tool exports."""
+    from skcapstone.deploy import views
+    from skcapstone.deploy.manifest import Manifest
+    from skcapstone.deploy.tools import render_units
+
+    manifest_path, home, paths, _stack, cfg = world_
+    from skcapstone.deploy import resolve_manifest
+
+    m, _ = resolve_manifest(paths.state_dir, path=str(manifest_path), node="chiap04")
+    cfg_spec = m.configs_for("chiap04")["hermes"]
+    tmp, _sha, _ref = views._unpack(
+        "hermes-config", cfg_spec, paths.state_dir / "x.git", subprocess.run
+    )
+    try:
+        for unit, text in render_units(
+            m, "chiap04", paths.tools_root, home, {"hermes-config": tmp}
+        ).items():
+            (home / ".config/systemd/user" / unit).write_text(text)
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp)
+    _record(world_)
+    assert isinstance(m, Manifest)
+
+
+def test_plan_restarts_only_what_apply_would(world, monkeypatch):
+    manifest, home, paths, *_ = world
+    args = ("plan", "--manifest", str(manifest), "--node", "chiap04", "--json")
+    _settle(world)
+    _install_meta(paths.tools_root, "hermes", "v1")
+    data = json.loads(_run(monkeypatch, paths, *args).output)
+    assert data["tools"].get("hermes") is None and data["restarts"] == []
+    # the config's units do not restart just because a tool of the node moves
+    # unless they name its current link: this one does
+    (paths.tools_root / "hermes/current").unlink()
+    _install_meta_again = paths.tools_root / "hermes/bbbbbbbbbbbb"
+    _install_meta_again.mkdir()
+    (_install_meta_again / ".sk-tool.json").write_text(json.dumps({"ref": "v0"}))
+    os.symlink("bbbbbbbbbbbb", paths.tools_root / "hermes/current")
+    data = json.loads(_run(monkeypatch, paths, *args).output)
+    assert data["tools"]["hermes"]["from"] == "v0"
+    assert data["restarts"] == ["hermes-gateway.service"]
+
+
+# ------------------------------------------------- plan and apply restart the same units
+
+
+def _tool_repo(path: Path) -> Path:
+    path.mkdir()
+    (path / "bin").mkdir()
+    (path / "bin/run").write_text("#!/bin/sh\n")
+    _sh(path, "init", "-q", "-b", "main")
+    _sh(path, "add", ".")
+    _sh(path, "commit", "-qm", "v1")
+    _sh(path, "tag", "v1")
+    (path / "bin/run").write_text("#!/bin/sh\n# 2\n")
+    _sh(path, "commit", "-qam", "v2")
+    _sh(path, "tag", "v2")
+    return path
+
+
+def _ordered_manifest(fw: Path, cfg: Path, ref: str):
+    from skcapstone.deploy.manifest import Manifest
+
+    return Manifest.model_validate(
+        {
+            "packages": {},
+            "tools": {"fw": {"url": f"file://{fw}", "ref": ref}},
+            # stack order: skcall first, the gateway last (sorted() would flip them)
+            "services": {"skcall.service": {}, "hermes-gateway.service": {}},
+            "nodes": {
+                "n1": {
+                    "tools": ["fw"],
+                    "configs": {"fw": {"url": f"file://{cfg}", "ref": "main", "instance": "i"}},
+                }
+            },
+        }
+    )
+
+
+def test_apply_restarts_in_stack_order_and_plan_matches(tmp_path, monkeypatch):
+    from skcapstone.deploy import tools, views
+
+    fw = _tool_repo(tmp_path / "fw")
+    cfg = tmp_path / "cfg"
+    (cfg / "i/systemd").mkdir(parents=True)
+    for unit in ("hermes-gateway.service", "skcall.service"):
+        (cfg / "i/systemd" / unit).write_text(UNIT)
+    _sh(cfg, "init", "-q", "-b", "main")
+    _sh(cfg, "add", ".")
+    _sh(cfg, "commit", "-qm", "i")
+    home = tmp_path / "home"
+    units = home / ".config/systemd/user"
+    units.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    state, root = tmp_path / "state", home / ".local/share/sk-tools"
+    ok = lambda cmd, **kw: (  # noqa: E731
+        subprocess.run(cmd, **kw)
+        if cmd[0] == "git"
+        else subprocess.CompletedProcess(cmd, 0, "", "")
+    )
+
+    def both(manifest):
+        plan = views.tools_plan(manifest, "n1", state, [], home=home, root=root, runner=ok)
+        change = tools.apply_tools(manifest, "n1", state, root, units, home, ok)
+        return plan["restarts"], change.units
+
+    planned, applied = both(_ordered_manifest(fw, cfg, "v1"))
+    assert applied == ["skcall.service", "hermes-gateway.service"]
+    assert planned == applied
+    # the tool moves, no unit text changes: both name its current link
+    planned, applied = both(_ordered_manifest(fw, cfg, "v2"))
+    assert applied == ["skcall.service", "hermes-gateway.service"]
+    assert planned == applied
+    # nothing moves: nothing restarts, in both
+    planned, applied = both(_ordered_manifest(fw, cfg, "v2"))
+    assert planned == applied == []

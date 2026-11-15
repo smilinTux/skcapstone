@@ -364,10 +364,18 @@ Details worth knowing:
 ### Plan, status, drift
 
 `deploy plan` (and `--json`) shows, per node: each stack and its resolved ref
-and commit, the roles, the managed file diffs, and the units that restart, in
-order. It changes nothing on the node: the config is read at its ref from the
-tool mirror (cloned or fetched like any apply) into a temporary directory that
-is removed before the command ends.
+and commit, the roles, each tool export that would move (`tool <name>: <old>
+-> <new>`, from the installed ref to the manifest's), the managed file diffs,
+and the units that restart. It changes nothing on the node: the config is read
+at its ref from the tool mirror (cloned or fetched like any apply) into a
+temporary directory that is removed before the command ends.
+
+The restart list is the one apply restarts, by the same rule and in the same
+order. A unit restarts when its rendered unit file or managed drop-in would
+change, when a hand-written drop-in of it is moved aside, when a managed file
+of its config changes, or when it names the `current` link of a tool that
+moves. The order is the manifest's service order (a stack lists its services
+first and the agent last); a unit the manifest does not list follows, sorted.
 
 `deploy status` adds the last tools change: when it ran, the manifest commit,
 and per tool the export sha now and before.

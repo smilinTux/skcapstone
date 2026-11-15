@@ -549,6 +549,33 @@ def _missing_in_exports(
     return sorted(set(gone))
 
 
+def restart_units_for(
+    manifest: Manifest,
+    node: Optional[str],
+    *,
+    changed: set[str],
+    displaced: list[str],
+    texts: dict[str, str],
+    moved: set[str],
+) -> list[str]:
+    """The units a tools change restarts, in restart order. Shared by plan and apply.
+
+    A unit restarts when its rendered text, drop-in or a managed file of its
+    config changed (*changed*), when a drop-in of it was moved aside
+    (*displaced*, drop-in paths), or when its text (*texts*, the managed
+    drop-in or the rendered unit) names the ``current`` link of a tool in
+    *moved*. The order is the manifest's service order (a stack lists services
+    first and the agent last); units the manifest does not list follow, sorted.
+    """
+    affected = set(changed)
+    affected |= {Path(p).parent.name.removesuffix(".d") for p in displaced}
+    for unit, text in texts.items():
+        if any(f"/sk-tools/{name}/current" in text for name in moved):
+            affected.add(unit)
+    order = [u for u in manifest.services_for(node) if u in affected]
+    return order + sorted(affected - set(order))
+
+
 def apply_tools(
     manifest: Manifest,
     node: Optional[str],
@@ -682,12 +709,14 @@ def apply_tools(
         if change.dropins or change.unit_files or change.displaced:
             runner(["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=60)
         raise ToolError(f"managed files: {exc}; every change was undone") from exc
-    affected = set(change.dropins) | set(change.unit_files) | file_units
-    affected |= {Path(p).parent.name.removesuffix(".d") for p in change.displaced}
-    for unit, text in {**want, **rendered}.items():
-        if any(f"/sk-tools/{name}/current" in text for name in moved):
-            affected.add(unit)
-    change.units = sorted(affected)
+    change.units = restart_units_for(
+        manifest,
+        node,
+        changed=set(change.dropins) | set(change.unit_files) | file_units,
+        displaced=list(change.displaced),
+        texts={**want, **rendered},
+        moved=moved,
+    )
     if change.dropins or change.unit_files or change.displaced:
         runner(
             ["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=60, check=False
