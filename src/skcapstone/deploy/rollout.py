@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -76,6 +77,10 @@ print(json.dumps(bad))
 
 class DeployError(RuntimeError):
     """A rollout step refused or failed; production was not switched."""
+
+
+class RollbackRefusedError(DeployError):
+    """A rollback pre-check refused; nothing was changed."""
 
 
 @dataclass
@@ -720,6 +725,8 @@ def rollback(paths: Paths, units: list[str], runner: Runner = subprocess.run) ->
 #: Under ``state_dir``: one record per tools change that stuck, plus ``last.json``.
 CHANGES_DIR = "tools-changes"
 LAST = "last.json"
+#: Written when a tools change stuck but its record could not be saved.
+UNRECORDED = "unrecorded.json"
 
 
 def _changes(paths: Paths) -> Path:
@@ -767,6 +774,7 @@ def save_change(
     }
     _write_record(path, record)
     _point_last(paths, path.name)
+    (d / UNRECORDED).unlink(missing_ok=True)  # this record starts after the gap
     return path
 
 
@@ -811,7 +819,42 @@ def _record(paths: Paths, change: ToolsChange, manifest_id: str, unit_dir: Path,
     except OSError as exc:
         note = f"the tools change was not recorded ({exc}); deploy rollback cannot undo it"
         log(note)
+        _mark_gap(paths, str(exc))
         return [note]
+
+
+def _mark_gap(paths: Paths, error: str) -> None:
+    """Make the next rollback refuse: the record it would undo is older than the node.
+
+    ``last.json`` goes (so nothing points at the older record) and a marker
+    says why. Both are best effort: the save just failed for a reason.
+    """
+    d = _changes(paths)
+    try:
+        (d / LAST).unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        _write_record(d / UNRECORDED, {"at": time.time(), "error": error})
+    except OSError:
+        pass
+
+
+def _refuse_gap(paths: Paths, since: float = 0.0) -> None:
+    marker = _changes(paths) / UNRECORDED
+    if not marker.is_file():
+        return
+    try:
+        at = float(json.loads(marker.read_text(encoding="utf-8")).get("at") or 0)
+    except (OSError, ValueError, AttributeError):
+        at = time.time()
+    if at > since:
+        raise RollbackRefusedError(
+            "the last tools change was not recorded; rollback would undo an older one"
+            f" against newer files. Roll forward with deploy tools (or restore by hand),"
+            f" then remove {marker}"
+        )
 
 
 def _disk_state(path: Path, mode: str):
@@ -937,7 +980,9 @@ def pending_tools_changes(paths: Paths, since: float = 0.0) -> list[tuple[Path, 
     return out
 
 
-def check_tools_rollback(paths: Paths, records: list[tuple[Path, dict]]) -> None:
+def check_tools_rollback(
+    paths: Paths, records: list[tuple[Path, dict]], since: float = 0.0
+) -> None:
     """Refuse, changing nothing, when any of *records* could not be undone.
 
     Each record is checked against the disk as it is now, so a later record's
@@ -945,9 +990,13 @@ def check_tools_rollback(paths: Paths, records: list[tuple[Path, dict]]) -> None
     that both moved something aside at the same path are refused outright:
     that is the case where today's disk says nothing about the older one.
 
+    A tools change newer than *since* whose record could not be saved refuses
+    too: undoing the older records would leave its files half restored.
+
     Raises:
-        DeployError: The problems, by record.
+        RollbackRefusedError: The problems, by record.
     """
+    _refuse_gap(paths, since)
     problems: list[str] = []
     moved_by: dict[str, str] = {}
     for path, record in records:
@@ -963,7 +1012,7 @@ def check_tools_rollback(paths: Paths, records: list[tuple[Path, dict]]) -> None
                 )
             moved_by.setdefault(key, path.name)
     if problems:
-        raise DeployError("cannot roll back the tools change: " + "; ".join(problems))
+        raise RollbackRefusedError("cannot roll back the tools change: " + "; ".join(problems))
 
 
 def rollback_tools(paths: Paths, runner: Runner = subprocess.run) -> Result:
@@ -989,6 +1038,7 @@ def rollback_tools(paths: Paths, runner: Runner = subprocess.run) -> Result:
             gone or in the way (nothing was changed); or the undo stopped
             partway (run it again).
     """
+    _refuse_gap(paths)
     pending = pending_tools_changes(paths)
     if not pending:
         raise DeployError(
@@ -1018,6 +1068,7 @@ def rollback_tools(paths: Paths, runner: Runner = subprocess.run) -> Result:
                 notes.append(
                     f"{key} was edited since the apply; overwritten with its previous state"
                 )
+        retired = _retire_new_units(change, unit_dir, runner)
         notes += change.undo(root, unit_dir)
     except (OSError, ToolError) as exc:
         raise DeployError(
@@ -1028,9 +1079,40 @@ def rollback_tools(paths: Paths, runner: Runner = subprocess.run) -> Result:
     _write_record(path, record)
     _point_last(paths, _previous_live(paths, record.get("previous")))
     _run(["systemctl", "--user", "daemon-reload"], runner, timeout=60)
-    units = restart_targets(change.units, runner)
+    units = [u for u in restart_targets(change.units, runner) if not _is_retired(u, retired)]
     problems = restart_units(units, runner)
     return Result(ok=not problems, restarted=units, problems=problems, notes=notes)
+
+
+def _template_of(unit: str) -> str:
+    return re.sub(r"@[^@]*\.service$", "@.service", unit)
+
+
+def _is_retired(unit: str, retired: set[str]) -> bool:
+    return unit in retired or _template_of(unit) in retired
+
+
+def _retire_new_units(change: ToolsChange, unit_dir: Path, runner: Runner) -> set[str]:
+    """Stop (and disable) each unit whose file the change created, before undo removes it.
+
+    A unit whose file is about to go cannot be try-restarted afterwards (it is
+    not found while its old process keeps running), so it is stopped first and
+    left out of the restarts.
+
+    Returns:
+        The unit files retired (templates as ``name@.service``).
+    """
+    out: set[str] = set()
+    for unit, old in change.unit_files.items():
+        if old is not None or not (unit_dir / unit).is_file():
+            continue
+        out.add(unit)
+        for target in restart_targets([unit], runner) if unit.endswith("@.service") else [unit]:
+            state = _run(["systemctl", "--user", "is-enabled", target], runner, timeout=30)
+            if (state.stdout or "").strip() == "enabled":
+                _run(["systemctl", "--user", "disable", target], runner, timeout=60)
+            _run(["systemctl", "--user", "stop", target], runner, timeout=120)
+    return out
 
 
 #: Under ``state_dir``: the edited copies of whole files a rollback overwrote.

@@ -26,14 +26,24 @@ def _paths():
     return Paths.default()
 
 
+def _try_manifest(path, ref, fetch=True, node=None):
+    """The manifest and its id; raises when it cannot be resolved."""
+    from ..deploy import resolve_manifest
+
+    return resolve_manifest(_paths().state_dir, path=path, ref=ref, fetch=fetch, node=node)
+
+
 def _manifest(path, ref, fetch=True, node=None):
-    from ..deploy import ManifestUnavailableError, resolve_manifest
+    from ..deploy import ManifestUnavailableError
 
     try:
-        return resolve_manifest(_paths().state_dir, path=path, ref=ref, fetch=fetch, node=node)
+        return _try_manifest(path, ref, fetch=fetch, node=node)
     except (ManifestUnavailableError, OSError, ValueError) as exc:
         console.print(f"[red]manifest unavailable:[/] {exc}")
         sys.exit(2)
+
+
+_AGAIN = "fix the problem above, then run deploy rollback again"
 
 
 def register_deploy_commands(main: click.Group) -> None:
@@ -204,19 +214,37 @@ def register_deploy_commands(main: click.Group) -> None:
         the venv switch is undone first, newest first, and the venv switches
         back last, only once all of them are.
         """
-        from ..deploy import rollout
+        from ..deploy import ManifestUnavailableError, rollout
         from ..deploy.rollout import (
             DeployError,
+            RollbackRefusedError,
             check_tools_rollback,
             load_state,
             pending_tools_changes,
         )
 
         paths = _paths()
-        manifest, _mid = _manifest(manifest_path, None, fetch=False, node=node)
-        if not manifest.packages_for(node):
+        try:
+            manifest, _mid = _try_manifest(manifest_path, None, fetch=False, node=node)
+        except (ManifestUnavailableError, OSError, ValueError) as exc:
+            # A bad manifest commit must not block undoing the last good change:
+            # a node whose state records no venv release is tools only, and its
+            # rollback needs nothing but the change record.
+            if (load_state(paths).get("current") or {}).get("release"):
+                console.print(f"[red]manifest unavailable:[/] {exc}")
+                sys.exit(2)
+            console.print(
+                f"[yellow]manifest unavailable[/] ({exc}); this node records no venv"
+                " release, so the last recorded tools change is rolled back without it"
+            )
+            manifest = None
+        if manifest is None or not manifest.packages_for(node):
             try:
                 res = rollout.rollback_tools(paths)
+            except RollbackRefusedError as exc:
+                console.print(f"[red]{exc}[/]")
+                console.print(_AGAIN)
+                sys.exit(1)
             except DeployError as exc:
                 console.print(f"[red]{exc}[/]")
                 sys.exit(1)
@@ -230,9 +258,10 @@ def register_deploy_commands(main: click.Group) -> None:
         switched = (load_state(paths).get("current") or {}).get("at") or 0
         pending = pending_tools_changes(paths, since=switched)
         try:
-            check_tools_rollback(paths, pending)
+            check_tools_rollback(paths, pending, since=switched)
         except DeployError as exc:
             console.print(f"[red]{exc}[/]")
+            console.print(_AGAIN)
             sys.exit(1)
         ok = True
         for _ in pending:
@@ -261,7 +290,15 @@ def register_deploy_commands(main: click.Group) -> None:
             console.print(f"  [red]x[/] {p}")
         for n in res.notes:
             console.print(f"  [yellow]![/] {n}")
-        console.print(f"tools change rolled back; restarted: {', '.join(res.restarted) or '-'}")
+        if res.ok:
+            console.print(
+                f"tools change rolled back; restarted: {', '.join(res.restarted) or '-'}"
+            )
+            return
+        console.print(
+            "[red]the tools change was undone on disk, but restarting its units failed[/]"
+            f" ({len(res.problems)} problem(s) above); fix those units, then restart them"
+        )
 
     @deploy.command("status")
     def status_cmd() -> None:

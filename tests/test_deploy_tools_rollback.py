@@ -265,6 +265,7 @@ def _cli(monkeypatch, paths, manifest):
     monkeypatch.setattr(rollout, "restart_units", lambda units, runner=None, **kw: [])
     monkeypatch.setattr(deploy_cmd, "_paths", lambda: paths)
     monkeypatch.setattr(deploy_cmd, "_manifest", lambda *a, **k: (manifest, "c" * 40))
+    monkeypatch.setattr(deploy_cmd, "_try_manifest", lambda *a, **k: (manifest, "c" * 40))
     group = click.Group()
     deploy_cmd.register_deploy_commands(group)
     return lambda *args: CliRunner().invoke(group, ["deploy", "rollback", *args])
@@ -675,3 +676,136 @@ def test_rollback_refuses_broken_block_markers_and_changes_nothing(world):
     assert [e.get("block") for e in rec["files"]["entries"] if e["path"] == str(env)] == [
         "sk-deploy"
     ]
+
+
+# ------------------------------------------------- final review: F1, F2, F3, I3
+
+
+class Enabled(Calls):
+    """Every unit is active and enabled; notes whether a unit file exists when stopped."""
+
+    def __init__(self, units: Path):
+        super().__init__()
+        self.units = units
+        self.stopped_with_file: list[tuple[str, bool]] = []
+
+    def __call__(self, cmd, **kw):
+        if cmd[:1] == ["systemctl"] and "stop" in cmd:
+            self.stopped_with_file.append((cmd[-1], (self.units / cmd[-1]).exists()))
+        if cmd[:1] == ["systemctl"] and "is-enabled" in cmd:
+            self.cmds.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 0, "enabled\n", "")
+        return super().__call__(cmd, **kw)
+
+
+def test_rollback_stops_a_unit_the_apply_created_and_does_not_restart_it(world):
+    fw, cfg, home, units, paths = world
+    _apply(_manifest(fw, cfg), paths)  # gw.service did not exist before
+    calls = Enabled(units)
+    res = rollout.rollback_tools(paths, runner=calls)
+    assert res.ok, res.problems
+    assert not (units / "gw.service").exists()
+    assert calls.stopped_with_file == [("gw.service", True)], "stopped before its file went"
+    assert ["systemctl", "--user", "disable", "gw.service"] in calls.cmds
+    assert ["systemctl", "--user", "try-restart", "gw.service"] not in calls.cmds
+    assert "gw.service" not in res.restarted
+
+
+def _failing_save(monkeypatch):
+    def boom(*_a, **_k):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(rollout, "save_change", boom)
+
+
+def test_unrecorded_change_blocks_a_rollback_of_the_older_one(world, monkeypatch):
+    fw, cfg, home, units, paths = world
+    manifest = _manifest(fw, cfg)
+    _apply(manifest, paths, mid="a" * 40)
+    _bump_to_b(fw, cfg)
+    real = rollout.save_change
+    _failing_save(monkeypatch)
+    res = _apply(manifest, paths, mid="b" * 40)
+    assert any("not recorded" in n for n in res.notes)
+    monkeypatch.setattr(rollout, "save_change", real)
+    before = _snapshot(home)
+    calls = Calls()
+    with pytest.raises(rollout.DeployError, match="the last tools change was not recorded"):
+        rollout.rollback_tools(paths, runner=calls)
+    assert _snapshot(home) == before and calls.cmds == []
+    # the CLI says the same on a venv node, before switching anything
+    with pytest.raises(rollout.DeployError, match="rollback would undo an older one"):
+        rollout.check_tools_rollback(paths, rollout.pending_tools_changes(paths))
+    # a later change that IS recorded can be rolled back again
+    _bump(fw, cfg, "c")
+    _apply(manifest, paths, mid="c" * 40)
+    assert rollout.rollback_tools(paths, runner=Calls()).ok
+    assert (home / ".config/skcall/join.env").read_text() == "JOIN=b\n"
+
+
+def test_cli_refusal_says_fix_then_run_again(world, monkeypatch):
+    fw, cfg, home, units, paths = world
+    plug = _with_real_plugin_dir(home)
+    _apply(_manifest(fw, cfg), paths)
+    plug.unlink()
+    plug.mkdir()
+    out = _cli(monkeypatch, paths, _manifest(fw, cfg))("--node", "n1")
+    assert out.exit_code == 1
+    text = out.output.replace("\n", " ")
+    assert "fix the problem above, then run deploy rollback again" in text
+
+
+def test_cli_venv_refusal_says_fix_then_run_again(world, monkeypatch):
+    import shutil
+
+    fw, cfg, home, units, paths = world
+    manifest = _venv_world(world)
+    _apply(manifest, paths, mid="a" * 40)
+    a_export = paths.tools_root / "fw" / os.readlink(paths.tools_root / "fw/current")
+    _bump_to_b(fw, cfg)
+    _apply(manifest, paths, mid="b" * 40)
+    shutil.rmtree(a_export)
+    out = _cli(monkeypatch, paths, manifest)("--node", "n1")
+    assert out.exit_code == 1
+    assert "fix the problem above, then run deploy rollback again" in out.output.replace("\n", " ")
+
+
+def test_cli_rollback_with_failed_restart_does_not_say_rolled_back(world, monkeypatch):
+    fw, cfg, home, units, paths = world
+    manifest = _manifest(fw, cfg)
+    _apply(manifest, paths, mid="a" * 40)
+    _bump_to_b(fw, cfg)
+    _apply(manifest, paths, mid="b" * 40)
+    run = _cli(monkeypatch, paths, manifest)
+    monkeypatch.setattr(
+        rollout, "restart_units", lambda units, runner=None, **kw: ["gw.service is failed"]
+    )
+    out = run("--node", "n1")
+    assert out.exit_code == 1
+    assert "tools change rolled back" not in out.output
+    assert "gw.service is failed" in out.output and "restart" in out.output
+
+
+def test_cli_rollback_without_a_manifest_on_a_tools_only_node(world, monkeypatch):
+    from skcapstone.cli import deploy_cmd
+    from skcapstone.deploy import ManifestUnavailableError
+
+    fw, cfg, home, units, paths = world
+    _apply(_manifest(fw, cfg), paths, mid="a" * 40)
+    run = _cli(monkeypatch, paths, None)
+
+    def bad(*_a, **_k):
+        raise ManifestUnavailableError("a bad manifest commit was fetched")
+
+    monkeypatch.setattr(deploy_cmd, "_try_manifest", bad)
+    out = run("--node", "n1")
+    assert out.exit_code == 0, out.output
+    assert "manifest unavailable" in out.output
+    assert not (paths.tools_root / "fw/current").exists()
+    # a node whose state records a venv release still needs the manifest
+    _apply(_manifest(fw, cfg), paths, mid="a" * 40)
+    _venv_node(paths)
+    rollout.save_state(paths, {"current": {"release": str(paths.releases / "r2"), "at": 1.0}})
+    out = run("--node", "n1")
+    assert out.exit_code == 2 and "manifest unavailable" in out.output
+    assert (paths.tools_root / "fw/current").is_symlink()
