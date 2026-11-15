@@ -12,13 +12,58 @@ restart, verify.
 ## The release manifest
 
 One YAML file, `manifest.yaml`, in a repository of its own (named on each node
-in `~/.config/sk-deploy/env` as `SK_DEPLOY_MANIFEST_REPO=owner/name`). It pins
+in `~/.config/sk-deploy/env`, see below). It pins
 every package to a released version, lists the third-party requirements the
 venv needs, maps each user unit to the packages whose change means it
 restarts, and carries smoke commands and per-node profiles. See the docstring
 of `skcapstone.deploy.manifest` for the format. The tool reads it at
 `origin/main` only, so only a merged manifest can deploy, and the repository
 history is the deploy history.
+
+### One manifest repo per cluster
+
+Like the per-cluster config repos, each cluster has its own private manifest
+repo, and a node names only its own cluster's: `smilinTux/sk-release` holds the
+nor nodes and `smilinTux/sk-release-chi` holds the chi nodes. Both use this
+schema. A node never sees another cluster's node profiles, locks or config
+pins, and each manifest only lists the packages, tools and services its own
+nodes run. A node moving between clusters moves by a PR to each repo.
+
+`~/.config/sk-deploy/env` (also the drift timer's `EnvironmentFile`) names it
+with one of:
+
+```bash
+SK_DEPLOY_MANIFEST_REPO=smilinTux/sk-release     # https://github.com/<owner/name>
+SK_DEPLOY_MANIFEST_URL=git@github-sk-release-chi:smilinTux/sk-release-chi.git
+```
+
+`SK_DEPLOY_MANIFEST_URL` takes any URL git can clone, and wins over
+`SK_DEPLOY_MANIFEST_REPO`. A variable in the environment wins over the file.
+If the configured repo changes, the existing clone in the state dir is
+re-pointed on the next fetch.
+
+A node with no GitHub login reads its repos through one read-only deploy key
+per repo (GitHub deploy keys are per repo) and an ssh `Host` alias per key, so
+no personal login or token is involved. chiap01's setup:
+
+```
+# ~/.ssh/config
+Host github-sk-release-chi
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/sk-deploy-chi-release
+    IdentitiesOnly yes
+Host github-skgateway-config-chi
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/sk-deploy-chi-gwconfig
+    IdentitiesOnly yes
+```
+
+The manifest then names that node's config repo by `url:` on the second alias,
+for example
+`configs: {skgateway: {url: "git@github-skgateway-config-chi:smilinTux/skgateway-config-chi.git", ref: ..., instance: chiap01}}`.
+Public repos (the skgateway framework) need no key.
 
 Package sources:
 
