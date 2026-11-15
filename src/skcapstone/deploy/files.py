@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 import yaml
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .tools import ToolError, default_root, expand_tool_refs
 
@@ -126,6 +126,8 @@ class FileSpec(BaseModel):
     format: Literal["env", "yaml", "text"] = "env"
     block: str = "sk-deploy"
     file_mode: int = 0o600
+    #: units to restart when this file's content, link target or mode changes
+    restart: list[str] = Field(default_factory=list)
 
     @field_validator("file_mode", mode="before")
     @classmethod
@@ -153,6 +155,9 @@ class FileSpec(BaseModel):
                 raise ValueError(f"{self.path}: source is inside the instance (no '..')")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.block):
             raise ValueError(f"{self.path}: block name {self.block!r} is not a plain name")
+        bad = [u for u in self.restart if not re.fullmatch(r"[\w@.:-]+\.(service|timer)", u)]
+        if bad:
+            raise ValueError(f"{self.path}: restart names {bad}, not .service or .timer units")
         return self
 
 
@@ -316,6 +321,36 @@ def _link_exists(target: str, root: Path, exports: Optional[dict[str, Path]]) ->
     if m and exports and m.group(1) in exports:
         return (exports[m.group(1)] / (m.group(2) or "")).exists()
     return Path(target).exists()
+
+
+def _unchanged(r: Rendered) -> bool:
+    """Whether the host already is what *r* would make of it (apply writes nothing)."""
+    path = r.path
+    if r.link is not None:
+        return path.is_symlink() and os.readlink(path) == r.link
+    if path.is_symlink() or not path.is_file():
+        return False
+    return path.read_bytes() == _encode(r.text) and path.stat().st_mode & 0o777 == r.spec.file_mode
+
+
+def pending_changes(
+    specs: list[FileSpec],
+    instance_dir: Path,
+    home: Path,
+    *,
+    tools_on_node=None,
+    tools_root: Optional[Path] = None,
+) -> list[tuple[FileSpec, str]]:
+    """``(spec, path)`` of every file :func:`apply_files` would write (content, target or mode)."""
+    plan = render_files(
+        specs,
+        instance_dir,
+        home,
+        tools_on_node=tools_on_node,
+        tools_root=tools_root,
+        check_links=False,
+    )
+    return [(r.spec, str(r.path)) for r in plan if not _unchanged(r)]
 
 
 @dataclass
@@ -586,6 +621,7 @@ def apply_files(
     exports: Optional[dict[str, Path]] = None,
     undo: Optional[FilesUndo] = None,
     written: Optional[dict[str, dict]] = None,
+    changed_specs: Optional[list[tuple[FileSpec, str]]] = None,
 ) -> dict[str, Optional[str]]:
     """Make the host match *specs*. Everything is checked before anything is written.
 
@@ -593,6 +629,7 @@ def apply_files(
         written: Filled with what every spec leaves on disk, keyed by path, changed
             or not: ``{"mode", "sha256"}`` of the whole file (plus ``block`` and
             ``block_sha256`` of the block body), or ``{"mode": "link", "target"}``.
+        changed_specs: Filled with ``(spec, path)`` of every file written.
 
     Returns:
         Each path written, to its previous text (None: it was not a regular file).
@@ -615,9 +652,11 @@ def apply_files(
         path, key = r.path, str(r.path)
         if written is not None:
             written[key] = _written(r)
+        if _unchanged(r):
+            continue
+        if changed_specs is not None:
+            changed_specs.append((r.spec, key))
         if r.link is not None:
-            if path.is_symlink() and os.readlink(path) == r.link:
-                continue
             undo._note(path)
             changed[key] = undo.previous[key]
             if path.exists() and not path.is_symlink():
@@ -629,9 +668,6 @@ def apply_files(
             _atomic_symlink(path, r.link)
             continue
         data = _encode(r.text)
-        have = path.read_bytes() if path.is_file() else None
-        if have == data and path.stat().st_mode & 0o777 == r.spec.file_mode:
-            continue
         undo._note(path)
         if r.spec.mode == "block":
             undo.blocks.setdefault(key, r.spec.block)

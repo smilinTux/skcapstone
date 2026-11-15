@@ -31,6 +31,7 @@ from .tools import (
     _git,
     default_root,
     desired_dropins,
+    file_restarts,
     installed,
     ref_on_branch,
     render_units,
@@ -108,8 +109,11 @@ def tools_plan(
         ``stacks`` (name to ref and commit), ``roles``, ``tools`` (each tool
         export that would move, from its installed ref to the manifest's),
         ``files`` (per config export: its ref and the managed file diffs, or
-        an ``error``) and ``restarts`` (the units apply restarts, in its
-        order; the package restarts come first).
+        an ``error``), ``restarts`` (the units apply restarts, in its order;
+        the package restarts come first), ``restarts_complete`` (False when
+        an error kept some of them from being computed), ``errors`` (every
+        config or restart computation that failed) and ``notes`` (a managed
+        file that changes with no unit to restart for it).
     """
     home = home or Path.home()
     root = root or default_root(home)
@@ -130,6 +134,8 @@ def tools_plan(
     files: dict[str, dict] = {}
     exports: dict[str, Path] = {}
     file_units: set[str] = set()
+    errors: list[str] = []
+    notes: list[str] = []
     tmps: list[Path] = []
     try:
         for tool, cfg in manifest.configs_for(node).items():
@@ -148,20 +154,28 @@ def tools_plan(
                 )
                 files[cname] = {"ref": ref, "sha": sha, "diffs": diffs}
                 sysdir = inst / "systemd"
-                if diffs and sysdir.is_dir():
-                    file_units.update(
-                        f.name for f in sysdir.glob("*") if f.suffix in _UNIT_SUFFIXES
-                    )
+                inst_units = (
+                    [f.name for f in sysdir.glob("*") if f.suffix in _UNIT_SUFFIXES]
+                    if sysdir.is_dir()
+                    else []
+                )
+                changed = _files.pending_changes(
+                    specs, inst, home, tools_on_node=manifest.tools_for(node), tools_root=root
+                )
+                more, said = file_restarts(changed, inst_units)
+                file_units |= more
+                notes += said
             except (ToolError, OSError, ValueError, tarfile.TarError) as exc:
                 files[cname] = {"ref": ref, "error": str(exc), "diffs": []}
+                errors.append(f"files of {cname}: {exc}")
         units: list[str] = []
-        if not any(c.get("error") for c in files.values()):
+        if not errors:
             try:
                 units = _plan_units(
                     manifest, node, root, home, unit_dir, exports, set(moves), file_units
                 )
             except (ToolError, OSError, ValueError) as exc:
-                files.setdefault("units", {"ref": "", "diffs": []})["error"] = str(exc)
+                errors.append(f"restarts: {exc}")
     finally:
         for tmp in tmps:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -172,6 +186,9 @@ def tools_plan(
         "tools": moves,
         "files": files,
         "restarts": restarts,
+        "restarts_complete": not errors,
+        "errors": errors,
+        "notes": notes,
     }
 
 

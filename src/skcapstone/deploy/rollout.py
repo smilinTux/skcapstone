@@ -619,7 +619,7 @@ def apply(
             ok=True,
             release=dest,
             previous=previous,
-            notes=_record(paths, tools, manifest_id, unit_dir, log),
+            notes=tools.notes + _record(paths, tools, manifest_id, unit_dir, log),
         )
     log(f"restart: {', '.join(units) or 'nothing'}")
     started: dict[str, dict[str, str]] = {}
@@ -631,7 +631,7 @@ def apply(
             release=dest,
             previous=previous,
             restarted=units,
-            notes=_record(paths, tools, manifest_id, unit_dir, log),
+            notes=tools.notes + _record(paths, tools, manifest_id, unit_dir, log),
         )
     log("smoke failed: switching back")
     if not tools.empty:
@@ -678,13 +678,16 @@ def apply_tools_only(
     except ToolError as exc:
         return Result(ok=False, release=None, problems=[str(exc)])
     if tools.empty:
-        return Result(ok=True, release=None)
+        return Result(ok=True, release=None, notes=list(tools.notes))
     if not restart:
         return Result(
-            ok=True, release=None, notes=_record(paths, tools, manifest_id, unit_dir, log)
+            ok=True,
+            release=None,
+            notes=tools.notes + _record(paths, tools, manifest_id, unit_dir, log),
         )
     units = restart_targets(tools.units, runner)
     log(f"restart: {', '.join(units) or 'nothing'}")
+    notes = list(tools.notes)
     started: dict[str, dict[str, str]] = {}
     problems = restart_units(units, runner, started=started)
     if not problems:
@@ -694,7 +697,7 @@ def apply_tools_only(
             ok=True,
             release=None,
             restarted=units,
-            notes=_record(paths, tools, manifest_id, unit_dir, log),
+            notes=notes + _record(paths, tools, manifest_id, unit_dir, log),
         )
     log("restart or smoke failed: restoring the previous tools")
     tools.undo(paths.tools_root or default_root(), unit_dir)

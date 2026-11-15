@@ -95,6 +95,8 @@ class ToolsChange:
     #: :func:`.files.apply_files`), plus ``{"mode": "unit"|"dropin", "sha256"}``
     #: for unit files and managed drop-ins (``sha256`` None: removed)
     written: dict[str, dict] = field(default_factory=dict)
+    #: things the operator should know about this step (not part of the record)
+    notes: list[str] = field(default_factory=list)
 
     _PLAIN = ("exported", "published", "dropins", "units", "legacy", "unit_files", "displaced")
 
@@ -557,6 +559,27 @@ def _missing_in_exports(
     return sorted(set(gone))
 
 
+def file_restarts(changed, inst_units) -> tuple[set[str], list[str]]:
+    """The units managed file changes restart, and a note for each that restarts none.
+
+    Shared by plan and apply. A changed file (content, link target or mode)
+    restarts its spec's ``restart`` units plus the units of its own instance
+    (``<instance>/systemd/``).
+
+    Args:
+        changed: ``(spec, path)`` of each managed file that changes.
+        inst_units: The unit files of the instance the files belong to.
+    """
+    units: set[str] = set()
+    notes: list[str] = []
+    for spec, path in changed:
+        want = set(spec.restart) | set(inst_units)
+        if not want:
+            notes.append(f"{path} changed; no unit restarts for it")
+        units |= want
+    return units, notes
+
+
 def restart_units_for(
     manifest: Manifest,
     node: Optional[str],
@@ -697,7 +720,7 @@ def apply_tools(
     file_units: set[str] = set()
     try:
         for cname, (inst, specs, inst_units) in managed.items():
-            before = dict(change.files.previous)
+            changed_files: list = []
             _files.apply_files(
                 specs,
                 inst,
@@ -708,10 +731,15 @@ def apply_tools(
                 exports=exports,
                 undo=change.files,
                 written=change.written,
+                changed_specs=changed_files,
             )
-            if change.files.previous.keys() - before.keys():
-                file_units.update(inst_units)
+            if changed_files:
+                units, notes = file_restarts(changed_files, inst_units)
+                file_units |= units
+                change.notes += notes
                 log(f"{cname}: managed files written")
+                for note in notes:
+                    log(note)
     except (OSError, ToolError) as exc:
         change.undo(root, unit_dir)
         if change.dropins or change.unit_files or change.displaced:

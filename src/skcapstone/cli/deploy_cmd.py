@@ -81,7 +81,7 @@ def register_deploy_commands(main: click.Group) -> None:
         manifest, mid = _manifest(manifest_path, ref, node=node)
         plan = make_plan(manifest, _paths().venv_link / "bin" / "python", node)
         extra = tools_plan(manifest, node, _paths().state_dir, plan.restarts)
-        diffs = any(c["diffs"] or c.get("error") for c in extra["files"].values())
+        diffs = any(c["diffs"] for c in extra["files"].values())
         if as_json:
             click.echo(
                 json.dumps(
@@ -94,6 +94,9 @@ def register_deploy_commands(main: click.Group) -> None:
                         "tools": extra["tools"],
                         "files": extra["files"],
                         "restarts": extra["restarts"],
+                        "restarts_complete": extra["restarts_complete"],
+                        "errors": extra["errors"],
+                        "notes": extra["notes"],
                     },
                     indent=2,
                 )
@@ -107,17 +110,26 @@ def register_deploy_commands(main: click.Group) -> None:
         for name, mv in sorted(extra["tools"].items()):
             console.print(f"  tool {name}: {mv['from'] or '-'} -> {mv['to']}")
         for cname, cfg in sorted(extra["files"].items()):
-            if cfg.get("error"):
-                console.print(f"  [red]files of {cname}: {cfg['error']}[/]")
             for text in cfg["diffs"]:
                 console.print(f"  files of {cname}:")
                 click.echo(text.rstrip("\n"))
-        if plan.empty and not diffs and not extra["restarts"] and not extra["tools"]:
+        for err in extra["errors"]:
+            console.print(f"  [red]error: {err}[/]")
+        for note in extra["notes"]:
+            console.print(f"  [yellow]![/] {note}")
+        busy = diffs or extra["restarts"] or extra["tools"] or extra["errors"]
+        if plan.empty and not busy:
             console.print("[green]nothing to do: this node runs the manifest[/]")
             return
         for name, (have, want) in sorted(plan.changed.items()):
             tag = " (editable)" if name in plan.editable else ""
             console.print(f"  {name}: {have or '-'}{tag} -> {want}")
+        if not extra["restarts_complete"]:
+            known = ", ".join(extra["restarts"])
+            console.print(
+                "restarts: incomplete, see errors" + (f" (at least: {known})" if known else "")
+            )
+            return
         console.print(f"restarts: {', '.join(extra['restarts']) or 'none'}")
 
     @deploy.command("apply")

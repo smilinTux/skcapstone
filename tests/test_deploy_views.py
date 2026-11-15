@@ -318,3 +318,113 @@ def test_apply_restarts_in_stack_order_and_plan_matches(tmp_path, monkeypatch):
     # nothing moves: nothing restarts, in both
     planned, applied = both(_ordered_manifest(fw, cfg, "v2"))
     assert planned == applied == []
+
+
+# ------------------------------------------------- final review: I4 (FileSpec restart), F4
+
+
+def _files_world(tmp_path, monkeypatch, files_yaml: str, units: dict[str, str] | None = None):
+    fw = _tool_repo(tmp_path / "fw")
+    cfg = tmp_path / "cfg"
+    (cfg / "i").mkdir(parents=True)
+    (cfg / "i/files.yaml").write_text(files_yaml)
+    (cfg / "i/join.env").write_text("JOIN=a\n")
+    for name, text in (units or {}).items():
+        (cfg / "i/systemd").mkdir(exist_ok=True)
+        (cfg / "i/systemd" / name).write_text(text)
+    _sh(cfg, "init", "-q", "-b", "main")
+    _sh(cfg, "add", ".")
+    _sh(cfg, "commit", "-qm", "i")
+    home = tmp_path / "home"
+    unit_dir = home / ".config/systemd/user"
+    unit_dir.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    state, root = tmp_path / "state", home / ".local/share/sk-tools"
+    return fw, cfg, home, unit_dir, state, root
+
+
+def _ok(cmd, **kw):
+    if cmd[0] == "git":
+        return subprocess.run(cmd, **kw)
+    return subprocess.CompletedProcess(cmd, 0, "", "")
+
+
+def _plan_and_apply(manifest, home, unit_dir, state, root):
+    from skcapstone.deploy import tools, views
+
+    plan = views.tools_plan(manifest, "n1", state, [], home=home, root=root, runner=_ok)
+    change = tools.apply_tools(manifest, "n1", state, root, unit_dir, home, _ok)
+    return plan, change
+
+
+JOIN_RESTART = (
+    "files:\n  - path: ~/.config/skcall/join.env\n    mode: whole\n    source: join.env\n"
+    "    restart: [skcall.service]\n"
+)
+
+
+def test_files_only_instance_restarts_the_units_its_file_names(tmp_path, monkeypatch):
+    fw, cfg, home, unit_dir, state, root = _files_world(tmp_path, monkeypatch, JOIN_RESTART)
+    m = _ordered_manifest(fw, cfg, "v1")
+    plan, change = _plan_and_apply(m, home, unit_dir, state, root)
+    assert "skcall.service" in change.units
+    assert plan["restarts"] == change.units
+    # nothing changed: nothing restarts
+    _install = _plan_and_apply(m, home, unit_dir, state, root)
+    assert _install[0]["restarts"] == _install[1].units == []
+    # a mode change alone is a change, in both
+    os.chmod(home / ".config/skcall/join.env", 0o644)
+    plan, change = _plan_and_apply(m, home, unit_dir, state, root)
+    assert plan["restarts"] == change.units == ["skcall.service"]
+
+
+def test_file_change_nobody_restarts_for_is_noted(tmp_path, monkeypatch):
+    plain = JOIN_RESTART.replace("    restart: [skcall.service]\n", "")
+    fw, cfg, home, unit_dir, state, root = _files_world(tmp_path, monkeypatch, plain)
+    m = _ordered_manifest(fw, cfg, "v1")
+    join = home / ".config/skcall/join.env"
+    want = f"{join} changed; no unit restarts for it"
+    plan, change = _plan_and_apply(m, home, unit_dir, state, root)
+    assert want in plan["notes"] and want in change.notes
+    assert plan["restarts"] == change.units == []
+    paths = rollout.Paths(tmp_path / ".skenv", tmp_path / "rel", state, root)
+    join.write_text("JOIN=hand\n")
+    res = rollout.apply_tools_only(m, paths, runner=_ok, node="n1")
+    assert res.ok and want in res.notes
+
+
+def test_plan_errors_are_top_level_and_mark_restarts_incomplete(tmp_path, monkeypatch):
+    fw, cfg, home, unit_dir, state, root = _files_world(
+        tmp_path,
+        monkeypatch,
+        JOIN_RESTART,
+        units={"skcall.service": "[Service]\nExecStart=@BOGUS@/run\n"},
+    )
+    from skcapstone.deploy import views
+
+    m = _ordered_manifest(fw, cfg, "v1")
+    plan = views.tools_plan(m, "n1", state, ["pkg.service"], home=home, root=root, runner=_ok)
+    assert "units" not in plan["files"]
+    assert plan["errors"] and "@BOGUS@" in plan["errors"][0]
+    assert plan["restarts_complete"] is False
+    # and in the CLI
+    from skcapstone.deploy.rollout import Paths
+
+    paths = Paths(tmp_path / ".skenv", tmp_path / "rel", state, root)
+    from skcapstone.cli import deploy_cmd
+
+    monkeypatch.setattr(deploy_cmd, "_manifest", lambda *a, **k: (m, "c" * 40))
+    real = views.tools_plan
+    monkeypatch.setattr(
+        views, "tools_plan", lambda *a, **k: real(*a, **{**k, "home": home, "root": root})
+    )
+    out = _run(monkeypatch, paths, "plan", "--node", "n1", "--json")
+    data = json.loads(out.output)
+    assert "units" not in data["files"] and data["errors"] and data["restarts_complete"] is False
+    out = _run(monkeypatch, paths, "plan", "--node", "n1")
+    assert "restarts: incomplete, see errors" in out.output
+    assert "@BOGUS@" in out.output
+    # a config that cannot be read is an error too, not an empty restart list
+    bad = _ordered_manifest(fw, tmp_path / "nowhere", "v1")
+    plan = views.tools_plan(bad, "n1", state, [], home=home, root=root, runner=_ok)
+    assert plan["errors"] and plan["restarts_complete"] is False
