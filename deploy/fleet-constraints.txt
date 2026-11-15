@@ -217,7 +217,7 @@ skcomms==0.2.22
 skcoord==0.1.97
 skdashboard==0.1.109
 skharness==0.3.45
-skmemory==0.11.162
+skmemory==0.11.172
 sksecurity==1.2.8
 skseed==0.1.9
 skskills==1.2.1

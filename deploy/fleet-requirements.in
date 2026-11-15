@@ -21,7 +21,7 @@
 # (tests/test_fleet_dependency_parity.py). To bump, see
 # docs/fleet/DEPLOY-FROM-MAIN.md "Bumping a fleet dependency".
 skcoord==0.1.97
-skmemory==0.11.162
+skmemory==0.11.172
 cloud9==1.2.4
 skwhisper==0.6.6
 capauth==0.3.14
