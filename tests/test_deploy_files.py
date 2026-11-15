@@ -330,3 +330,28 @@ def test_failed_smoke_restores_files(world, monkeypatch):
     assert not (home / ".config/skcall/join.env").exists()
     plug = home / ".hermes/plugins/fw"
     assert plug.is_dir() and not plug.is_symlink() and (plug / "hand.py").read_text() == "mine\n"
+
+
+@pytest.mark.parametrize(
+    "line3",
+    [
+        "HERMES_MEMORY_OWNER = x",
+        "'HERMES_MEMORY_OWNER'=x",
+        'export "HERMES_MEMORY_OWNER" = x',
+    ],
+)
+def test_env_spaced_or_quoted_duplicate_key_refuses(tmp_path, line3):
+    inst, home, env = _block_world(tmp_path)
+    mine = f"A=1\n# owner was\n{line3}\nB=2\n"
+    env.write_text(mine)
+    with pytest.raises(files.FilesError, match=r"HERMES_MEMORY_OWNER on line 3"):
+        files.apply_files(files.load_files(inst), inst, home, tmp_path / "state")
+    assert env.read_text() == mine
+
+
+def test_block_body_setting_a_key_twice_refuses(tmp_path):
+    inst, home, env = _block_world(tmp_path, block="K=1\nOTHER=2\nK = 3\n")
+    env.write_text("A=1\n")
+    with pytest.raises(files.FilesError, match=r"hermes.env sets K more than once"):
+        files.apply_files(files.load_files(inst), inst, home, tmp_path / "state")
+    assert env.read_text() == "A=1\n"

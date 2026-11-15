@@ -44,8 +44,9 @@ from .tools import ToolError, default_root, expand_tool_refs
 
 FILES_YAML = "files.yaml"
 _KEYS = {
-    "env": re.compile(r"^\s*(export\s+)?([A-Za-z_][A-Za-z0-9_]*)="),
-    "yaml": re.compile(r"^()([A-Za-z_][\w-]*):"),
+    # python-dotenv also reads ``KEY = v`` and ``'KEY'=v`` as the key KEY.
+    "env": re.compile(r"^\s*(?:export\s+)?['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?\s*="),
+    "yaml": re.compile(r"^([A-Za-z_][\w-]*):"),
 }
 
 
@@ -156,7 +157,7 @@ def _keys(lines: list[tuple[int, str]], fmt: str) -> dict[str, list[int]]:
     for num, line in lines:
         m = rx.match(line)
         if m:
-            out.setdefault(m.group(2), []).append(num)
+            out.setdefault(m.group(1), []).append(num)
     return out
 
 
@@ -241,14 +242,14 @@ def render_files(
         real = path.resolve() if path.is_symlink() else path
         if real.is_dir():
             raise FilesError(f"{where}: is a directory")
+        dup = [
+            k
+            for k, n in _keys(list(enumerate(body.split("\n"), 1)), spec.format).items()
+            if len(n) > 1
+        ]
+        if dup:
+            raise FilesError(f"{where}: {spec.source} sets {', '.join(dup)} more than once")
         if spec.mode == "whole":
-            dup = [
-                k
-                for k, n in _keys(list(enumerate(body.split("\n"), 1)), spec.format).items()
-                if len(n) > 1
-            ]
-            if dup:
-                raise FilesError(f"{where}: {spec.source} sets {', '.join(dup)} more than once")
             out.append(Rendered(spec, real, text=body))
         else:
             old = _decode(real.read_bytes()) if real.is_file() else ""
