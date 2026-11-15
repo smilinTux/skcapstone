@@ -561,6 +561,7 @@ def _capturing_runner(rc=0, err=""):
         seen["cmd"] = list(cmd)
         if cmd[:3] == ["uv", "pip", "compile"]:
             seen["reqs"] = Path(cmd[-3]).read_text()
+            assert Path(cmd[-1]).parent == Path(cmd[-3]).parent  # never /dev/null
             return subprocess.CompletedProcess(cmd, rc, "", err)
         return subprocess.CompletedProcess(cmd, 0, "", "")
 

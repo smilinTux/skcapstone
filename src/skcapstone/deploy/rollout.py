@@ -182,10 +182,11 @@ def resolve_problems(
         if spec.source == "pypi"
     ]
     lines += list(manifest.lock_for(node) or manifest.requirements)
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
-        fh.write("\n".join(lines) + "\n")
-        reqs = Path(fh.name)
-    try:
+    # A real output file in a private temp dir: uv writes its output through a
+    # sibling temp file, so ``-o /dev/null`` fails with EACCES on /dev.
+    with tempfile.TemporaryDirectory(prefix="sk-deploy-resolve-") as tmp:
+        reqs = Path(tmp) / "requirements.txt"
+        reqs.write_text("\n".join(lines) + "\n", encoding="utf-8")
         proc = _run(
             [
                 "uv",
@@ -197,12 +198,10 @@ def resolve_problems(
                 manifest.python,
                 str(reqs),
                 "-o",
-                os.devnull,
+                str(Path(tmp) / "resolved.txt"),
             ],
             runner,
         )
-    finally:
-        reqs.unlink(missing_ok=True)
     if proc.returncode == 0:
         return []
     text = (proc.stderr or proc.stdout or "").strip()
