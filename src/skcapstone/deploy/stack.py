@@ -28,8 +28,12 @@ stack into the manifest:
 * a node gets a stack's tools and services only through its roles, plus
   ``<stack>-release``. ``tools: all`` and ``services: all`` keep meaning every
   part the CLUSTER defines, so a stack never lands on a node by accident;
-* ``@STACK:<name>@`` in smoke commands and setup argv becomes that stack's
-  ``<name>-release`` export.
+* ``<stack>-release`` is pinned to the commit the stack file was read at, so
+  the files the stack names are exactly the ones its ``stack.yaml`` came with;
+* ``@STACK:<name>@`` in smoke commands becomes that stack's
+  ``<name>-release/current``, and in setup argv and ``setup_env`` its versioned
+  export ``<name>-release/<sha12>``: setup runs at export time, before any
+  ``current`` is published, and ``<stack>-release`` is exported first.
 
 ``nodes.<node>.stacks.<stack>`` pins one node to another ref (a canary), so the
 merged manifest is per node: see ``resolve_manifest(..., node=...)``.
@@ -112,8 +116,11 @@ def fetch_stack(
     mirrors: Path,
     fetch: bool = True,
     runner: Runner = subprocess.run,
-) -> StackFile:
+) -> tuple[StackFile, str]:
     """Read ``stack.yaml`` of stack *name* at *at*, which must be on its main.
+
+    Returns:
+        The stack file and the commit it was read at.
 
     The repository is kept as a bare mirror at ``mirrors/<name>`` (fetched
     first unless *fetch* is off), the same way tool exports keep theirs.
@@ -140,12 +147,12 @@ def fetch_stack(
         raise ToolError(f"{label}: {STACK_FILE} at {at} is invalid: {exc}") from exc
     if stack.stack != name:
         raise ToolError(f"{label}: {STACK_FILE} at {at} says it is stack {stack.stack}")
-    return stack
+    return stack, sha
 
 
-def _expand(text: str, stacks, root: str, where: str) -> str:
+def _expand(text: str, stacks, root: str, where: str, versions=None) -> str:
     try:
-        return expand_stack_refs(text, stacks, root, where)
+        return expand_stack_refs(text, stacks, root, where, versions)
     except ToolError as exc:
         raise ValueError(str(exc)) from exc
 
@@ -153,6 +160,7 @@ def _expand(text: str, stacks, root: str, where: str) -> str:
 def merge_stacks(
     manifest_data: dict,
     files: dict[str, StackFile],
+    shas: dict[str, str],
     tools_root: Optional[Path] = None,
 ) -> Manifest:
     """The manifest with each stack's tools, services and roles folded in.
@@ -161,6 +169,8 @@ def merge_stacks(
         manifest_data: The cluster manifest as parsed YAML (not modified).
             ``stacks.<name>.ref`` is the ref the stack files were read at.
         files: The stack file of every stack the manifest names.
+        shas: The commit each stack file was read at (``<stack>-release`` is
+            exported from exactly that commit).
         tools_root: Where tool exports live (``@STACK:<name>@`` expands under
             it); ``~/.local/share/sk-tools`` by default.
 
@@ -169,8 +179,8 @@ def merge_stacks(
             its stack does not have, or ``@STACK:<name>@`` names no stack.
     """
     data = copy.deepcopy(manifest_data)
-    base = Manifest.model_validate(data)
-    missing = [s for s in base.stacks if s not in files]
+    base = Manifest.model_validate(data, context={"stacks_pending": True})
+    missing = [s for s in base.stacks if s not in files or s not in shas]
     if missing:
         raise ValueError(f"no stack file for stack(s): {missing}")
     root = str(tools_root or default_root())
@@ -190,9 +200,9 @@ def merge_stacks(
             if spec is None:
                 tools[tool] = {
                     "url": sref.git_url(),
-                    "ref": sref.ref,
+                    "ref": shas[name],
                     "branch": sref.branch,
-                    "reason": f"{source}: the stack repository itself",
+                    "reason": f"{source} at {sref.ref}: the stack repository itself",
                 }
             else:
                 tools[tool] = spec.model_dump(exclude_unset=True)
@@ -206,10 +216,12 @@ def merge_stacks(
     names = set(files)
     for tool, spec in tools.items():
         if spec.get("setup"):
-            spec["setup"] = [_expand(a, names, root, f"tool {tool} setup") for a in spec["setup"]]
+            spec["setup"] = [
+                _expand(a, names, root, f"tool {tool} setup", shas) for a in spec["setup"]
+            ]
         if spec.get("setup_env"):
             spec["setup_env"] = {
-                k: _expand(v, names, root, f"tool {tool} setup_env")
+                k: _expand(v, names, root, f"tool {tool} setup_env", shas)
                 for k, v in spec["setup_env"].items()
             }
     for unit, spec in services.items():

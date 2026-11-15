@@ -139,6 +139,9 @@ def _cluster(stack_url: str, **tools_extra) -> dict:
     }
 
 
+SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
 def _sh(cwd: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
@@ -187,7 +190,9 @@ def test_roles_expand_to_tools_and_services(tmp_path, stack_repo):
     assert set(m.tools_for("chiap04")) == {"hermes", "skcall", "sidekick-release"}
     assert list(m.services_for("chiap04")) == ["skcall.service", "hermes-gateway.service"]
     release = m.tools["sidekick-release"]
-    assert (release.url, release.ref, release.branch) == (url, "v0.1.0", "main")
+    # pinned to the commit stack.yaml was read at, not the movable tag
+    tag_sha = _sh(stack_repo, "rev-parse", "v0.1.0^{commit}")
+    assert (release.url, release.ref, release.branch) == (url, tag_sha, "main")
     assert release.checkouts == []
     # R2: roles are the only way in; tools: all means every cluster tool only
     assert set(m.tools_for("chiap01")) == {"skgateway"}
@@ -208,7 +213,7 @@ def test_unknown_role_refused():
     data = _cluster("file:///x")
     data["nodes"]["chiap04"]["roles"] = {"sidekick": ["nope"]}
     with pytest.raises(ValueError, match="chiap04.*role nope.*sidekick"):
-        merge_stacks(data, {"sidekick": stack})
+        merge_stacks(data, {"sidekick": stack}, {"sidekick": SHA})
 
 
 def test_stack_file_role_entries_must_exist():
@@ -226,21 +231,22 @@ def test_stack_clash_refused():
     stack = StackFile.model_validate(_stack_yaml("0.1.0"))
     data = _cluster("file:///x", skcall={"repo": "smilinTux/skcall", "ref": "v1"})
     with pytest.raises(ValueError, match="tool skcall.*cluster manifest.*stack sidekick"):
-        merge_stacks(data, {"sidekick": stack})
+        merge_stacks(data, {"sidekick": stack}, {"sidekick": SHA})
     data = _cluster("file:///x")
     data["services"]["skcall.service"] = {}
     with pytest.raises(ValueError, match="service skcall.service.*cluster manifest.*sidekick"):
-        merge_stacks(data, {"sidekick": stack})
+        merge_stacks(data, {"sidekick": stack}, {"sidekick": SHA})
 
 
 def test_node_canary_ref(tmp_path, stack_repo):
     path = str(_write_manifest(tmp_path, _cluster(f"file://{stack_repo}")))
     canary, _ = resolve_manifest(tmp_path / "state", path=path, node="chiap02")
-    assert canary.tools["sidekick-release"].ref == "v0.1.1-rc.1"
+    rc_sha = _sh(stack_repo, "rev-parse", "v0.1.1-rc.1^{commit}")
+    assert canary.tools["sidekick-release"].ref == rc_sha
     assert canary.tools["skcall"].ref == "v3"
     for node in ("chiap04", "chiap01"):
         m, _ = resolve_manifest(tmp_path / "state", path=path, node=node)
-        assert m.tools["sidekick-release"].ref == "v0.1.0"
+        assert m.tools["sidekick-release"].ref == _sh(stack_repo, "rev-parse", "v0.1.0^{commit}")
         assert m.tools["skcall"].ref == "v2"
 
 
@@ -255,12 +261,9 @@ def test_stack_ref_missing_or_off_main_refused(tmp_path, stack_repo, ref):
     assert not (tmp_path / "home/.local/share/sk-tools").exists()
     assert not list((tmp_path / "state").glob("tool-src/*"))
     # the main ref still resolves for the other nodes
-    assert (
-        resolve_manifest(tmp_path / "state", path=path, node="chiap04")[0]
-        .tools["sidekick-release"]
-        .ref
-        == "v0.1.0"
-    )
+    assert resolve_manifest(tmp_path / "state", path=path, node="chiap04")[0].tools[
+        "sidekick-release"
+    ].ref == _sh(stack_repo, "rev-parse", "v0.1.0^{commit}")
 
 
 def test_stack_placeholder_in_smoke(tmp_path):
@@ -268,14 +271,16 @@ def test_stack_placeholder_in_smoke(tmp_path):
     data = _cluster("file:///x")
     data["smoke"] = ["test -x @STACK:sidekick@/bin/check"]
     root = tmp_path / "home/.local/share/sk-tools"
-    m = merge_stacks(data, {"sidekick": stack}, tools_root=root)
+    m = merge_stacks(data, {"sidekick": stack}, {"sidekick": SHA}, tools_root=root)
     base = f"{root}/sidekick-release/current"
     assert m.services["skcall.service"].smoke == f"{base}/bin/check skcall"
-    assert m.tools["hermes"].setup == [f"{base}/bin/setup-hermes", "--quiet"]
+    # setup runs at export time, before current is published: the versioned export
+    pinned = f"{root}/sidekick-release/{SHA[:12]}"
+    assert m.tools["hermes"].setup == [f"{pinned}/bin/setup-hermes", "--quiet"]
     assert m.smoke == [f"test -x {base}/bin/check"]
     data["services"]["skgateway-chiap01.service"]["smoke"] = "@STACK:nope@/x"
     with pytest.raises(ValueError, match="unknown stack nope"):
-        merge_stacks(data, {"sidekick": stack}, tools_root=root)
+        merge_stacks(data, {"sidekick": stack}, {"sidekick": SHA}, tools_root=root)
 
 
 # sk-release-chi main at 334b2771 (2026-11-15), comments dropped.
@@ -338,3 +343,95 @@ def test_manifest_without_stacks_unchanged(tmp_path, monkeypatch):
     monkeypatch.delenv("SK_DEPLOY_MANIFEST", raising=False)
     got, _ = resolve_manifest(state, fetch=False, node="chiap01")
     assert got == want
+
+
+def _local_stack(tmp_path: Path) -> tuple[Path, Path]:
+    """A stack whose agent role is one local tool provisioned by the stack's script."""
+    tool = tmp_path / "hermes"
+    tool.mkdir()
+    (tool / "run.sh").write_text("#!/bin/sh\n")
+    _sh(tool, "init", "-q", "-b", "main")
+    _sh(tool, "add", ".")
+    _sh(tool, "commit", "-qm", "hermes")
+    repo = tmp_path / "sidekick-local"
+    (repo / "bin").mkdir(parents=True)
+    setup = repo / "bin/setup-hermes"
+    setup.write_text('#!/bin/sh\necho "$0" > provisioned-by\n')
+    setup.chmod(0o755)
+    stack = {
+        "stack": "sidekick",
+        "version": "0.1.0",
+        "config_schema": 1,
+        "tools": {
+            "hermes": {
+                "url": f"file://{tool}",
+                "ref": "main",
+                "setup": ["@STACK:sidekick@/bin/setup-hermes"],
+            }
+        },
+        "services": {},
+        "roles": {"agent": {"tools": ["hermes"]}},
+    }
+    (repo / "stack.yaml").write_text(yaml.safe_dump(stack, sort_keys=False))
+    _sh(repo, "init", "-q", "-b", "main")
+    _sh(repo, "add", ".")
+    _sh(repo, "commit", "-qm", "v0.1.0")
+    _sh(repo, "tag", "v0.1.0")
+    return repo, tool
+
+
+def _real_runner(cmd, **kw):
+    if cmd[:1] == ["systemctl"]:
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    return subprocess.run(cmd, **kw)
+
+
+def test_stack_setup_runs_on_a_fresh_node(tmp_path, monkeypatch):
+    repo, _tool = _local_stack(tmp_path)
+    home = tmp_path / "home"
+    (home / ".config/systemd/user").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    data = {
+        "packages": {},
+        "stacks": {"sidekick": {"url": f"file://{repo}", "ref": "v0.1.0"}},
+        "nodes": {"chiap04": {"tools": [], "services": [], "roles": {"sidekick": ["agent"]}}},
+    }
+    state = tmp_path / "state"
+    m, _ = resolve_manifest(state, path=str(_write_manifest(tmp_path, data)), node="chiap04")
+    assert list(m.tools_for("chiap04")) == ["sidekick-release", "hermes"], "release first"
+    root = home / ".local/share/sk-tools"
+    assert not root.exists(), "a fresh node: no current anywhere"
+    change = tools.apply_tools(
+        m,
+        "chiap04",
+        state,
+        root=root,
+        unit_dir=home / ".config/systemd/user",
+        home=home,
+        runner=_real_runner,
+    )
+    sha12 = _sh(repo, "rev-parse", "v0.1.0^{commit}")[:12]
+    assert change.exported["sidekick-release"] == sha12
+    ran = (root / "hermes/current/provisioned-by").read_text().strip()
+    assert ran == f"{root}/sidekick-release/{sha12}/bin/setup-hermes"
+    assert (root / "sidekick-release/current").resolve() == root / "sidekick-release" / sha12
+
+
+def test_role_tool_may_carry_a_node_config(tmp_path, stack_repo):
+    data = _cluster(f"file://{stack_repo}")
+    cfg = {"url": "file:///cfg", "ref": "v1", "instance": "chiap04"}
+    data["nodes"]["chiap04"]["configs"] = {"hermes": cfg, "sidekick-release": cfg}
+    path = str(_write_manifest(tmp_path, data))
+    m, _ = resolve_manifest(tmp_path / "state", path=path, node="chiap04")
+    assert set(m.configs_for("chiap04")) == {"hermes", "sidekick-release"}
+    # render is in the stack, but not in the agent role: still refused
+    data["nodes"]["chiap04"]["configs"] = {"render": cfg}
+    path = str(_write_manifest(tmp_path, data))
+    with pytest.raises(ValidationError, match="config for tool.*render"):
+        resolve_manifest(tmp_path / "state", path=path, node="chiap04")
+    # and a node without roles is checked before any stack is read
+    data["nodes"]["chiap04"]["configs"] = {}
+    data["nodes"]["chiap01"]["configs"] = {"hermes": cfg}
+    path = str(_write_manifest(tmp_path, data))
+    with pytest.raises(ValidationError, match="config for tool.*hermes"):
+        resolve_manifest(tmp_path / "state", path=path, node="chiap01")

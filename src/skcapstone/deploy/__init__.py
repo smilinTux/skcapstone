@@ -104,23 +104,28 @@ def _with_stacks(
     manifest_path: Path, state_dir: Path, node: Optional[str], fetch: bool
 ) -> Manifest:
     """Load *manifest_path* and merge the stacks it names, as *node* sees them."""
-    manifest = load_manifest(manifest_path)
-    if not manifest.stacks:
-        return manifest
+    data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not data.get("stacks"):
+        return load_manifest(manifest_path)
     from . import stack as stack_mod
     from .tools import ToolError
 
-    data = copy.deepcopy(yaml.safe_load(manifest_path.read_text(encoding="utf-8")))
+    data = copy.deepcopy(data)
+    # Role tools join a node's list only in the merge: its configs for them
+    # are checked on the merged manifest.
+    manifest = Manifest.model_validate(data, context={"stacks_pending": True})
     prof = manifest.profile(node)
-    files = {}
+    files, shas = {}, {}
     for name, sref in manifest.stacks.items():
         at = prof.stacks.get(name, sref.ref)
         try:
-            files[name] = stack_mod.fetch_stack(name, sref, at, state_dir / "stacks", fetch)
+            files[name], shas[name] = stack_mod.fetch_stack(
+                name, sref, at, state_dir / "stacks", fetch
+            )
         except ToolError as exc:
             raise ManifestUnavailableError(str(exc)) from exc
         data["stacks"][name]["ref"] = at
-    return stack_mod.merge_stacks(data, files)
+    return stack_mod.merge_stacks(data, files, shas)
 
 
 def resolve_manifest(

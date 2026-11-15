@@ -296,7 +296,9 @@ def expand_tool_refs(text: str, tools_on_node, home_form_root: str, where: str =
     )
 
 
-def expand_stack_refs(text: str, stacks, root: str, where: str = "") -> str:
+def expand_stack_refs(
+    text: str, stacks, root: str, where: str = "", versions: Optional[dict[str, str]] = None
+) -> str:
     """Replace ``@STACK:<name>@`` with the stack repo's export, ``<root>/<name>-release/current``.
 
     Args:
@@ -305,6 +307,9 @@ def expand_stack_refs(text: str, stacks, root: str, where: str = "") -> str:
         root: The tools root as the consumer needs it spelled (an absolute
             path for smokes and setup argv, which no systemd ever expands).
         where: What the text belongs to, for the error message.
+        versions: Stack name to its resolved commit: expand to the versioned
+            export ``<name>-release/<sha12>`` instead of ``current``. Setup runs
+            at export time, before any ``current`` is published, so it needs this.
 
     Raises:
         ToolError: The name is not a stack the manifest includes.
@@ -314,7 +319,8 @@ def expand_stack_refs(text: str, stacks, root: str, where: str = "") -> str:
         "stack",
         text,
         stacks,
-        lambda n: f"{root}/{n}{STACK_RELEASE_SUFFIX}/current",
+        lambda n: f"{root}/{n}{STACK_RELEASE_SUFFIX}/"
+        + (versions[n][:12] if versions is not None else "current"),
         where,
     )
 

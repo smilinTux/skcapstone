@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Literal, Optional, Union
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
 class PackageSpec(BaseModel):
@@ -309,7 +309,11 @@ class Manifest(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _references_resolve(self) -> "Manifest":
+    def _references_resolve(self, info: ValidationInfo) -> "Manifest":
+        # Before stacks are merged a node's role tools are not in its list yet:
+        # its configs are checked once they are (the merged manifest is
+        # validated again without this context).
+        stacks_pending = bool((info.context or {}).get("stacks_pending"))
         known = set(self.packages)
         for unit, spec in self.services.items():
             missing = [p for p in spec.packages if p not in known]
@@ -326,7 +330,7 @@ class Manifest(BaseModel):
                     raise ValueError(f"node {node} names unknown tool(s): {missing}")
             node_tools = set(self.tools) if prof.tools == "all" else set(prof.tools)
             stray = [t for t in prof.configs if t not in node_tools]
-            if stray:
+            if stray and not (stacks_pending and prof.roles):
                 raise ValueError(f"node {node} has a config for tool(s) it does not run: {stray}")
             for what, names in (("roles", prof.roles), ("stacks", prof.stacks)):
                 missing = [s for s in names if s not in self.stacks]
