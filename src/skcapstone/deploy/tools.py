@@ -69,6 +69,12 @@ class ToolError(RuntimeError):
     """A tool could not be exported; nothing was published."""
 
 
+def _files_undo():
+    from .files import FilesUndo
+
+    return FilesUndo()
+
+
 @dataclass
 class ToolsChange:
     """What one tools step changed, and how to put it back."""
@@ -82,13 +88,22 @@ class ToolsChange:
     unit_files: dict[str, Optional[str]] = field(default_factory=dict)
     #: drop-in moved aside from a rendered unit: original path -> where it went
     displaced: dict[str, str] = field(default_factory=dict)
+    #: files the config instances manage (``<instance>/files.yaml``), to put back
+    files: "FilesUndo" = field(default_factory=_files_undo)  # noqa: F821
 
     @property
     def empty(self) -> bool:
-        return not (self.published or self.dropins or self.unit_files or self.displaced)
+        return not (
+            self.published
+            or self.dropins
+            or self.unit_files
+            or self.displaced
+            or not self.files.empty
+        )
 
     def undo(self, root: Path, unit_dir: Path) -> None:
-        """Restore the previous ``current`` links and drop-in files."""
+        """Restore the previous ``current`` links, drop-ins, units and managed files."""
+        self.files.restore()
         for name, previous in self.published.items():
             link = root / name / "current"
             if previous is None:
@@ -344,7 +359,7 @@ def render_units(
             if sysdir.is_dir()
             else []
         )
-        if not files:
+        if not files and not (dest / cfg.instance / "files.yaml").is_file():
             raise ToolError(f"{cname}: {cfg.instance}/systemd/ has no unit files")
         meta = json.loads((dest / _META).read_text(encoding="utf-8"))
         tool_cur = _home_form(root / tool / "current", home)
@@ -504,6 +519,7 @@ def apply_tools(
     """
     home = home or Path.home()
     root = root or default_root(home)
+    from . import files as _files
     from .inspect import default_unit_dir
 
     unit_dir = unit_dir or default_unit_dir(home)
@@ -540,6 +556,7 @@ def apply_tools(
         raise ToolError(
             "units would point at files the export does not have: " + "; ".join(gone[:8])
         )
+    managed = _check_files(manifest, node, root, home, exports)
     moved: set[str] = set()
     for name, dest in exports.items():
         link = root / name / "current"
@@ -586,7 +603,29 @@ def apply_tools(
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(new, encoding="utf-8")
-    affected = set(change.dropins) | set(change.unit_files)
+    file_units: set[str] = set()
+    try:
+        for cname, (inst, specs, inst_units) in managed.items():
+            before = dict(change.files.previous)
+            _files.apply_files(
+                specs,
+                inst,
+                home,
+                state_dir,
+                tools_on_node=manifest.tools_for(node),
+                tools_root=root,
+                exports=exports,
+                undo=change.files,
+            )
+            if change.files.previous.keys() - before.keys():
+                file_units.update(inst_units)
+                log(f"{cname}: managed files written")
+    except (OSError, ToolError) as exc:
+        change.undo(root, unit_dir)
+        if change.dropins or change.unit_files or change.displaced:
+            runner(["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=60)
+        raise ToolError(f"managed files: {exc}; every change was undone") from exc
+    affected = set(change.dropins) | set(change.unit_files) | file_units
     affected |= {Path(p).parent.name.removesuffix(".d") for p in change.displaced}
     for unit, text in {**want, **rendered}.items():
         if any(f"/sk-tools/{name}/current" in text for name in moved):
@@ -597,6 +636,42 @@ def apply_tools(
             ["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=60, check=False
         )
     return change
+
+
+def _check_files(manifest: Manifest, node: Optional[str], root: Path, home: Path, exports):
+    """Each config's managed files, rendered and checked against the NEW exports.
+
+    Runs before anything is published (R4): a broken block, a duplicated key
+    or a link to nothing refuses the whole apply.
+
+    Returns:
+        ``{config export name: (instance dir, specs, the instance's units)}``.
+    """
+    from . import files as _files
+
+    out: dict = {}
+    owner: dict[str, str] = {}
+    for tool, cfg in manifest.configs_for(node).items():
+        cname = tool + CONFIG_SUFFIX
+        inst = exports[cname] / cfg.instance
+        specs = _files.load_files(inst)
+        if not specs:
+            continue
+        for r in _files.render_files(
+            specs,
+            inst,
+            home,
+            tools_on_node=manifest.tools_for(node),
+            tools_root=root,
+            exports=exports,
+        ):
+            if str(r.path) in owner:
+                raise ToolError(f"{r.path} is managed by both {owner[str(r.path)]} and {cname}")
+            owner[str(r.path)] = cname
+        sysdir = inst / "systemd"
+        units = sorted(f.name for f in sysdir.glob("*") if f.suffix in _UNIT_SUFFIXES)
+        out[cname] = (inst, specs, units if sysdir.is_dir() else [])
+    return out
 
 
 def restart_targets(units: list[str], runner: Runner = subprocess.run) -> list[str]:
