@@ -14,6 +14,11 @@ Subcommands (each exits 0 on pass, 1 on a finding, 2 on bad input):
       not list. Rows there whose cap no installed SK package carries any more
       are reported as stale, not failed.
 
+  audit-sees AUDIT_JSON CANARY
+      Read a pip-audit ``-f json`` report of CANARY (deploy/audit-canary.txt,
+      known-vulnerable pins) and fail unless every package in CANARY is
+      reported with at least one vulnerability. Proves the audit can see.
+
   smoke REQUIREMENTS
       Import every top-level module of every SK package pinned in
       REQUIREMENTS (plus skcapstone) and run each of its console scripts with
@@ -53,6 +58,9 @@ SECURITY_PACKAGES = tuple(
         "h11",
         "jinja2",
         "PGPy",
+        # 2026-11-15: CVE-2026-111497 (Brotli decoder out-of-bounds write).
+        "Brotli",
+        "brotlicffi",
     )
 )
 
@@ -94,6 +102,16 @@ def security_downgrades(base: str, head: str, pr_body: str) -> list[str]:
                 f"body with a line 'security-downgrade: {name} <reason>'"
             )
     return findings
+
+
+def audit_blind_spots(report: dict, canary: str) -> list[str]:
+    """Canary packages the pip-audit report shows no vulnerability for."""
+    seen = {
+        canonicalize_name(d.get("name", ""))
+        for d in report.get("dependencies", [])
+        if d.get("vulns")
+    }
+    return sorted(n for n in lock_versions(canary) if n not in seen)
 
 
 def _sk_names(requirements: Path) -> set[str]:
@@ -283,6 +301,20 @@ def main(argv: list[str]) -> int:
         if not findings:
             print("no security package lowered")
         return 1 if findings else 0
+    if cmd == "audit-sees" and len(args) == 2:
+        import json
+
+        try:
+            report = json.loads(Path(args[0]).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"AUDIT_BLIND: no readable pip-audit report ({exc})")
+            return 1
+        blind = audit_blind_spots(report, Path(args[1]).read_text(encoding="utf-8"))
+        for name in blind:
+            print(f"AUDIT_BLIND: pip-audit reported no vulnerability for canary {name}")
+        if not blind:
+            print("pip-audit sees every canary advisory")
+        return 1 if blind else 0
     if cmd == "caps" and len(args) == 2:
         return check_caps(Path(args[0]), Path(args[1]))
     if cmd == "smoke" and len(args) == 1:

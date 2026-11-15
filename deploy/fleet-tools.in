@@ -18,6 +18,12 @@ aiohttp
 ansible-core
 black
 boto3
+# Security floors (CVE-2026-111497, GHSA-9v8h-qqgm-4m35, PYSEC-2026-4322/4323:
+# out-of-bounds write in the Brotli decoder). No fleet host installs either one
+# today; aiohttp, httpx and urllib3 pull them in through their brotli extras, so
+# the floor keeps any host that gets one on a fixed release.
+brotli>=1.2.1
+brotlicffi>=1.2.1.0
 browserforge
 build
 curl-cffi

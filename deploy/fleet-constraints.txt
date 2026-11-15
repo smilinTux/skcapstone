@@ -16,6 +16,8 @@ black==26.10.1
 blinker==1.9.0
 boto3==1.43.69
 botocore==1.43.69
+brotli==1.2.1
+brotlicffi==1.2.1.0
 browserforge==1.2.4
 build==1.6.0
 capauth==0.3.14

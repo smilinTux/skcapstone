@@ -36,7 +36,7 @@ env:
     deploy/fleet-constraints.txt deploy/fleet-requirements.in deploy/fleet-tools.in deploy/fleet-self.in
     deploy/dependency-caps.md pyproject.toml scripts/fleet-lock.sh
     scripts/ci/fleet_lock_gate.py src/skcapstone/fleet/dependency_parity.py
-    .github/workflows/fleet-lock.yml
+    deploy/audit-canary.txt .github/workflows/fleet-lock.yml
 
 jobs:
   resolve:
@@ -125,6 +125,16 @@ jobs:
           git show "$base:deploy/fleet-constraints.txt" > "$RUNNER_TEMP/base-lock.txt" || : > "$RUNNER_TEMP/base-lock.txt"
           python scripts/ci/fleet_lock_gate.py security-downgrades \
             "$RUNNER_TEMP/base-lock.txt" deploy/fleet-constraints.txt
+      - name: pip-audit can see (known-vulnerable canary, PyPI + OSV)
+        run: |
+          for svc in pypi osv; do
+            # Exit 1 is expected: the canary is vulnerable on purpose.
+            pip-audit -r deploy/audit-canary.txt --no-deps --disable-pip \
+              --progress-spinner off --vulnerability-service "$svc" \
+              -f json -o "$RUNNER_TEMP/canary-$svc.json" || true
+            python scripts/ci/fleet_lock_gate.py audit-sees \
+              "$RUNNER_TEMP/canary-$svc.json" deploy/audit-canary.txt
+          done
       - name: No known vulnerability in the resolved set (pip-audit, PyPI + OSV)
         run: |
           pip-audit -r deploy/fleet-constraints.txt --no-deps --disable-pip \
