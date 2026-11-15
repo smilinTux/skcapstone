@@ -13,6 +13,7 @@
 # halts with DEPENDENCY_DRIFT (src/skcapstone/fleet/dependency_parity.py).
 #
 # skskills: 1.2.1 is the first release without the rich<14 cap.
+# skchat-sovereign: 0.14.267 is the first release without the fastapi<0.136 cap.
 # skbrain: 1.0.2 is the first release without the click<8.2 / typer<0.13 caps,
 #   which pulled the fleet down to click 8.1.8 and typer 0.12.5 (#1382).
 #
@@ -29,7 +30,7 @@ skdashboard==0.1.109
 skharness==0.3.45
 skskills==1.2.1
 skcomms==0.2.22
-skchat-sovereign==0.14.266
+skchat-sovereign==0.14.267
 sksecurity==1.2.8
 skbrain==1.0.2
 skvault==0.1.0

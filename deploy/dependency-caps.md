@@ -37,7 +37,6 @@ The parser reads the first three columns; keep the cap in backticks.
 | skchat-sovereign | mcp | `<2.0` | proven | Same `Server.list_tools` removal (dev extra; the runtime imports mcp unconditionally). | `import skchat.mcp_server` on mcp 2.3.0 fails as above; gate smoke. | 2026-11-15 |
 | skskills | mcp | `<2.0` | proven | The aggregator registers with `Server.list_tools`, gone in mcp 2.x. | skskills test suite on mcp 2.3.0: `AttributeError` in the aggregator test (skskills #12). | 2026-11-15 |
 | skdashboard | mcp | `<2.0` | open | No MCP server module found to probe; presumed the same API. | none yet: lift PR will tell. | 2026-11-15 |
-| skchat-sovereign | fastapi | `<0.136` | open | Removed on main by skchat #196 (tests walk nested routers); this row goes when the release reaches the lock. | skchat #196: route tests pass on fastapi 0.163.1. | 2026-11-15 |
 | skcapstone | ansible-core | `==2.21.3` | pin | The sealed qualify env (`data/qualify-env.json`) builds this exact ansible-core for Python >= 3.12. | `tests/fleet/test_qualified_runtime_dependencies.py`. | 2026-11-15 |
 | skcapstone | ansible-core | `==2.19.5` | pin | Same, for Python < 3.12 (2.21 needs 3.12). | `tests/fleet/test_qualified_runtime_dependencies.py`. | 2026-11-15 |
 | sksecurity | cryptography | `<51.0.0` | open | Major-version guard on a crypto library; no test. Not binding: 50.0.2 is the newest release. | none: lift PR when 51 ships. | 2026-11-15 |
@@ -76,4 +75,4 @@ The parser reads the first three columns; keep the cap in backticks.
 - skbrain: click `<8.2`, typer `<0.13` (skbrain 1.0.2, skbrain #4). typer's floor rose to 0.16: older typer fails 13 CLI tests on click >= 8.2.
 - skskills: rich `<14.0`, click `<9.0`, pydantic `<3.0`, pyyaml `<7.0` (skskills 1.2.1, skskills #12).
 - skcapstone: rich `<14.0`, click `<9.0`, pydantic `<3.0`, pyyaml `<7.0` (this repo, the fleet-lock PR).
-- skchat-sovereign: fastapi `<0.136` (skchat #196, on its next release).
+- skchat-sovereign: fastapi `<0.136` (skchat-sovereign 0.14.267, skchat #196). Tests now walk nested routers.

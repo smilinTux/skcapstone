@@ -166,7 +166,11 @@ def check_caps(caps_md: Path, requirements: Path) -> int:
         print(f"  listed  {pkg} -> {dep} {cap}")
     present = {canonicalize_name(d.metadata["Name"] or "") for d in metadata.distributions()}
     for pkg, dep, cap in sorted(listed - installed):
-        why = "no longer carried: delete the row" if pkg in present else "package not in this lock"
+        why = (
+            "the installed release does not carry it"
+            if pkg in present
+            else "package not in this lock"
+        )
         print(f"  stale   {pkg} -> {dep} {cap} ({why})")
     for pkg, dep, cap in unlisted:
         print(
