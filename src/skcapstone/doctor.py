@@ -4258,12 +4258,6 @@ def _check_deploy(deep: bool = False) -> list[Check]:
             report.missing,
             "restore the file from main as a manifest tool, or disable the unit if it is dead",
         ),
-        _one(
-            "deploy:files",
-            "Managed files match what the last deploy wrote",
-            report.files,
-            "skcapstone deploy tools  # rewrites them; edit the config repo, not the file",
-        ),
     ]
     if manifest is None:
         checks.append(
@@ -4295,6 +4289,15 @@ def _check_deploy(deep: bool = False) -> list[Check]:
                 "Tool exports match the release manifest",
                 report.tools,
                 "skcapstone deploy tools",
+            )
+        )
+    if manifest is not None or report.files:
+        checks.append(
+            _one(
+                "deploy:files",
+                "Managed files match what the last deploy wrote",
+                report.files,
+                "skcapstone deploy tools  # rewrites them; edit the config repo, not the file",
             )
         )
     return checks
