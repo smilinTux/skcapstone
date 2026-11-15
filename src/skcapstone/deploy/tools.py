@@ -17,9 +17,19 @@ fixes both:
    lines with the checkout replaced by ``current``. The unit files themselves
    are never edited, and deleting the drop-in reverts the unit.
 
+A node can also pin a per-cluster **config repository** for a tool
+(``nodes.<node>.configs.<tool>`` in the manifest). It is exported the same
+way, as ``<tool>-config``, holding only that node's ``<instance>/`` directory,
+and every unit file in ``<instance>/systemd/`` is rendered (``@TOOL@`` and
+``@CONFIG@`` replaced by the two ``current`` exports) and installed as the
+whole unit: hand-written drop-ins of a rendered unit are moved aside under
+the deploy state directory. So the framework release, the cluster config and
+the unit that joins them are all pinned, reviewed by PR, and nothing runs
+from a working tree.
+
 The whole step is undoable: :class:`ToolsChange` remembers the previous
-``current`` targets and drop-in contents, and :meth:`ToolsChange.undo`
-restores them.
+``current`` targets, drop-in contents, unit files and moved drop-ins, and
+:meth:`ToolsChange.undo` restores them.
 """
 
 from __future__ import annotations
@@ -49,6 +59,10 @@ LEGACY_DROPINS = ("zz-sk-deploy-tools.conf",)
 _MARK = "# Managed by `skcapstone deploy` (manifest tools). Regenerated on every\n"
 _MARK += "# apply; edit the manifest, not this file. Delete it to revert the unit.\n"
 _META = ".sk-tool.json"
+#: Export name suffix of a tool's per-cluster config repository.
+CONFIG_SUFFIX = "-config"
+_PLACEHOLDER = re.compile(r"@[A-Z][A-Z0-9_]*@")
+_UNIT_SUFFIXES = (".service", ".timer")
 
 
 class ToolError(RuntimeError):
@@ -64,10 +78,14 @@ class ToolsChange:
     dropins: dict[str, Optional[str]] = field(default_factory=dict)
     units: list[str] = field(default_factory=list)
     legacy: dict[str, str] = field(default_factory=dict)
+    #: rendered unit file name -> its previous content (None: it did not exist)
+    unit_files: dict[str, Optional[str]] = field(default_factory=dict)
+    #: drop-in moved aside from a rendered unit: original path -> where it went
+    displaced: dict[str, str] = field(default_factory=dict)
 
     @property
     def empty(self) -> bool:
-        return not self.published and not self.dropins
+        return not (self.published or self.dropins or self.unit_files or self.displaced)
 
     def undo(self, root: Path, unit_dir: Path) -> None:
         """Restore the previous ``current`` links and drop-in files."""
@@ -85,6 +103,15 @@ class ToolsChange:
                 path.write_text(old, encoding="utf-8")
         for path, text in self.legacy.items():
             Path(path).write_text(text, encoding="utf-8")
+        for unit, old in self.unit_files.items():
+            path = unit_dir / unit
+            if old is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_text(old, encoding="utf-8")
+        for original, moved in self.displaced.items():
+            Path(original).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(moved, original)
 
 
 def default_root(home: Optional[Path] = None) -> Path:
@@ -198,6 +225,60 @@ def export(
     meta["setup"] = setup
     (dest / _META).write_text(json.dumps(meta, indent=1), encoding="utf-8")
     return dest
+
+
+def _home_form(path: Path, home: Path) -> str:
+    """*path* spelled with ``%h`` when it is under *home* (unit-file form)."""
+    text = str(path)
+    return "%h" + text[len(str(home)) :] if text.startswith(str(home) + "/") else text
+
+
+def render_units(
+    manifest: Manifest, node: Optional[str], root: Path, home: Path, exports: dict[str, Path]
+) -> dict[str, str]:
+    """The unit files each node config renders, keyed by unit file name.
+
+    Raises:
+        ToolError: A config has no ``<instance>/systemd/`` units, a unit is
+            rendered twice, or a placeholder is left unreplaced.
+    """
+    out: dict[str, str] = {}
+    for tool, cfg in manifest.configs_for(node).items():
+        cname = tool + CONFIG_SUFFIX
+        dest = exports[cname]
+        sysdir = dest / cfg.instance / "systemd"
+        files = (
+            sorted(f for f in sysdir.glob("*") if f.suffix in _UNIT_SUFFIXES)
+            if sysdir.is_dir()
+            else []
+        )
+        if not files:
+            raise ToolError(f"{cname}: {cfg.instance}/systemd/ has no unit files")
+        meta = json.loads((dest / _META).read_text(encoding="utf-8"))
+        tool_cur = _home_form(root / tool / "current", home)
+        cfg_cur = _home_form(root / cname / "current" / cfg.instance, home)
+        for f in files:
+            text = (
+                f.read_text(encoding="utf-8")
+                .replace("@TOOL@", tool_cur)
+                .replace("@CONFIG@", cfg_cur)
+            )
+            left = sorted(set(_PLACEHOLDER.findall(text)))
+            if left:
+                raise ToolError(
+                    f"{cname}: {cfg.instance}/systemd/{f.name} leaves {', '.join(left)}"
+                )
+            if f.name in out:
+                raise ToolError(f"unit {f.name} is rendered by more than one config")
+            head = (
+                "# Managed by `skcapstone deploy`: rendered from "
+                f"{cfg.instance}/systemd/{f.name}\n"
+                f"# of {meta['url']} at {meta['sha'][:12]} ({cfg.ref}), with {tool} at its\n"
+                "# manifest ref. Change it in the config repo by PR. Drop-ins for this\n"
+                "# unit are moved aside on every apply: this file is the whole unit.\n"
+            )
+            out[f.name] = head + text
+    return out
 
 
 def installed(root: Path, name: str) -> Optional[dict]:
@@ -336,9 +417,17 @@ def apply_tools(
             setup_timeout=tool.setup_timeout,
         )
         change.exported[name] = exports[name].name
+    for name, cfg in manifest.configs_for(node).items():
+        cname = name + CONFIG_SUFFIX
+        url, ref, branch = cfg.source()
+        exports[cname] = export(
+            cname, url, ref, branch, [cfg.instance], root, state_dir / "tool-src", runner
+        )
+        change.exported[cname] = exports[cname].name
+    rendered = render_units(manifest, node, root, home, exports)
     pairs = rewrite_pairs(manifest, node, root, home)
-    want = desired_dropins(unit_dir, pairs)
-    gone = _missing_in_exports(want, exports, root, home)
+    want = {u: t for u, t in desired_dropins(unit_dir, pairs).items() if u not in rendered}
+    gone = _missing_in_exports({**want, **rendered}, exports, root, home)
     if gone:
         raise ToolError(
             "units would point at files the export does not have: " + "; ".join(gone[:8])
@@ -357,6 +446,25 @@ def apply_tools(
             change.dropins.setdefault(path.parent.name.removesuffix(".d"), None)
             change.legacy[str(path)] = path.read_text(encoding="utf-8")
             path.unlink()
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    for unit, text in rendered.items():
+        dropdir = unit_dir / f"{unit}.d"
+        hand = sorted(dropdir.glob("*.conf")) if dropdir.is_dir() else []
+        for conf in hand:
+            aside = state_dir / "displaced-dropins" / stamp / f"{unit}.d" / conf.name
+            aside.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(conf), str(aside))
+            change.displaced[str(conf)] = str(aside)
+            log(f"unit {unit}: drop-in {conf.name} moved aside to {aside}")
+        if hand and dropdir.is_dir() and not any(dropdir.iterdir()):
+            dropdir.rmdir()
+        path = unit_dir / unit
+        old = path.read_text(encoding="utf-8") if path.is_file() else None
+        if old != text:
+            change.unit_files[unit] = old
+            unit_dir.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            log(f"unit {unit}: written from its config")
     have = {p.parent.name.removesuffix(".d"): p for p in unit_dir.glob(f"*.service.d/{DROPIN}")}
     for unit in sorted(set(want) | set(have)):
         path = unit_dir / f"{unit}.d" / DROPIN
@@ -370,12 +478,13 @@ def apply_tools(
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(new, encoding="utf-8")
-    affected = set(change.dropins)
-    for unit, text in want.items():
+    affected = set(change.dropins) | set(change.unit_files)
+    affected |= {Path(p).parent.name.removesuffix(".d") for p in change.displaced}
+    for unit, text in {**want, **rendered}.items():
         if any(f"/sk-tools/{name}/current" in text for name in moved):
             affected.add(unit)
     change.units = sorted(affected)
-    if change.dropins:
+    if change.dropins or change.unit_files or change.displaced:
         runner(
             ["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=60, check=False
         )

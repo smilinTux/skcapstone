@@ -25,7 +25,7 @@ from .inspect import (
     unit_missing_paths,
 )
 from .manifest import Manifest
-from .tools import default_root, installed
+from .tools import CONFIG_SUFFIX, default_root, installed
 
 
 @dataclass
@@ -125,6 +125,13 @@ def compute(
                 report.tools.append(f"{name} not exported (manifest {ref})")
             elif meta.get("ref") != ref:
                 report.tools.append(f"{name} {meta.get('ref')} != manifest {ref}")
+        for name, cfg in manifest.configs_for(node).items():
+            cname = name + CONFIG_SUFFIX
+            meta = installed(root, cname)
+            if meta is None:
+                report.tools.append(f"{cname} not exported (manifest {cfg.ref})")
+            elif meta.get("ref") != cfg.ref:
+                report.tools.append(f"{cname} {meta.get('ref')} != manifest {cfg.ref}")
     if manifest is None:
         report.unknown.append("no release manifest on this node; versions not compared")
     elif dists:
