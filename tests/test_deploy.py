@@ -549,3 +549,65 @@ def test_tools_only_apply_rolls_back_on_smoke_failure(tmp_path, monkeypatch):
     assert not result.ok and result.rolled_back
     assert "smoke said no" in result.problems[0]
     assert undone == [True]
+
+
+# ------------------------------------------------------------------ resolve
+
+
+def _capturing_runner(rc=0, err=""):
+    seen: dict = {}
+
+    def runner(cmd, **kw):
+        seen["cmd"] = list(cmd)
+        if cmd[:3] == ["uv", "pip", "compile"]:
+            seen["reqs"] = Path(cmd[-3]).read_text()
+            return subprocess.CompletedProcess(cmd, rc, "", err)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    return runner, seen
+
+
+def test_resolve_feeds_pypi_pins_and_requirements_but_not_git():
+    runner, seen = _capturing_runner()
+    assert rollout.resolve_problems(_m(), runner) == []
+    assert seen["cmd"][:3] == ["uv", "pip", "compile"]
+    assert "--python-version" in seen["cmd"] and "3.12" in seen["cmd"]
+    lines = seen["reqs"].split()
+    assert "skfoo==1.2.0" in lines and "uvicorn==0.30.6" in lines
+    assert not any("skbar" in ln for ln in lines)
+
+
+def test_resolve_reports_the_conflict():
+    runner, _ = _capturing_runner(1, "No solution found: click<8.2 vs huggingface-hub")
+    problems = rollout.resolve_problems(_m(), runner)
+    assert len(problems) == 1 and "does not resolve" in problems[0] and "click<8.2" in problems[0]
+
+
+def test_resolve_mode_defaults_to_report_and_validates():
+    assert _m().resolve == "report"
+    assert _m(resolve="strict").resolve == "strict"
+    with pytest.raises(Exception):
+        _m(resolve="sometimes")
+
+
+def test_strict_apply_refuses_an_unresolvable_set_before_building(tmp_path, monkeypatch):
+    _fake_build(monkeypatch)
+    built = []
+    monkeypatch.setattr(rollout, "build_venv", lambda *a, **k: built.append(a))
+    paths = _paths(tmp_path)
+    (paths.venv_link / "bin").mkdir(parents=True)
+    (paths.venv_link / "bin" / "python").write_text("")
+    runner, _ = _capturing_runner(1, "No solution found")
+    with pytest.raises(rollout.DeployError, match="does not resolve"):
+        rollout.apply(_m(resolve="strict"), "abc123", paths, "3.12", runner)
+    assert built == [] and not paths.venv_link.is_symlink()
+
+
+def test_report_mode_apply_does_not_resolve(tmp_path, monkeypatch):
+    _fake_build(monkeypatch)
+    paths = _paths(tmp_path)
+    (paths.venv_link / "bin").mkdir(parents=True)
+    (paths.venv_link / "bin" / "python").write_text("")
+    runner, seen = _capturing_runner(1, "No solution found")
+    rollout.apply(_m(), "abc123", paths, "3.12", runner)
+    assert "reqs" not in seen
