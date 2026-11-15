@@ -129,6 +129,8 @@ def register_deploy_commands(main: click.Group) -> None:
             sys.exit(1)
         for p in res.problems:
             console.print(f"  [red]x[/] {p}")
+        for n in res.notes:
+            console.print(f"  [yellow]![/] {n}")
         if res.ok:
             console.print(f"[green]deployed[/] {res.release} (previous: {res.previous})")
         elif res.rolled_back:
