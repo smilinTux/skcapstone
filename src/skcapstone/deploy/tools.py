@@ -147,6 +147,50 @@ def _atomic_link(link: Path, target: str) -> None:
     os.replace(tmp, link)
 
 
+def sync_mirror(name: str, url: str, mirror: Path, runner: Runner = subprocess.run) -> None:
+    """Clone *url* as a bare mirror at *mirror* if missing, then fetch it.
+
+    Raises:
+        ToolError: The clone or the fetch failed.
+    """
+    if not mirror.is_dir():
+        mirror.parent.mkdir(parents=True, exist_ok=True)
+        proc = _git(["clone", "--bare", "--quiet", url, str(mirror)], runner)
+        if proc.returncode != 0:
+            raise ToolError(f"{name}: clone {url} failed: {_err(proc)}")
+    proc = _git(
+        ["fetch", "--quiet", "--prune", "--tags", "origin", "+refs/heads/*:refs/heads/*"],
+        runner,
+        cwd=mirror,
+    )
+    if proc.returncode != 0:
+        raise ToolError(f"{name}: fetch failed: {_err(proc)}")
+
+
+def ref_on_branch(
+    name: str,
+    url: str,
+    ref: str,
+    branch: str,
+    mirror: Path,
+    runner: Runner = subprocess.run,
+    what: str = "tools",
+) -> str:
+    """The commit *ref* names in *mirror*, checked to be on *branch*.
+
+    Raises:
+        ToolError: The ref does not resolve, or it is not on *branch*.
+    """
+    proc = _git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], runner, cwd=mirror)
+    sha = _text(proc)
+    if proc.returncode != 0 or not sha:
+        raise ToolError(f"{name}: ref {ref} does not resolve in {url}")
+    proc = _git(["merge-base", "--is-ancestor", sha, f"refs/heads/{branch}"], runner, cwd=mirror)
+    if proc.returncode != 0:
+        raise ToolError(f"{name}: {ref} ({sha[:12]}) is not on {branch}; {what} ship from main")
+    return sha
+
+
 def export(
     name: str,
     url: str,
@@ -172,25 +216,8 @@ def export(
             or it is not on *branch*.
     """
     mirror = src_dir / f"{name}.git"
-    if not mirror.is_dir():
-        mirror.parent.mkdir(parents=True, exist_ok=True)
-        proc = _git(["clone", "--bare", "--quiet", url, str(mirror)], runner)
-        if proc.returncode != 0:
-            raise ToolError(f"{name}: clone {url} failed: {_err(proc)}")
-    proc = _git(
-        ["fetch", "--quiet", "--prune", "--tags", "origin", "+refs/heads/*:refs/heads/*"],
-        runner,
-        cwd=mirror,
-    )
-    if proc.returncode != 0:
-        raise ToolError(f"{name}: fetch failed: {_err(proc)}")
-    proc = _git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], runner, cwd=mirror)
-    sha = _text(proc)
-    if proc.returncode != 0 or not sha:
-        raise ToolError(f"{name}: ref {ref} does not resolve in {url}")
-    proc = _git(["merge-base", "--is-ancestor", sha, f"refs/heads/{branch}"], runner, cwd=mirror)
-    if proc.returncode != 0:
-        raise ToolError(f"{name}: {ref} ({sha[:12]}) is not on {branch}; tools ship from main")
+    sync_mirror(name, url, mirror, runner)
+    sha = ref_on_branch(name, url, ref, branch, mirror, runner)
     dest = root / name / sha[:12]
     if (dest / _META).is_file():
         return dest
@@ -233,7 +260,23 @@ def _home_form(path: Path, home: Path) -> str:
     return "%h" + text[len(str(home)) :] if text.startswith(str(home) + "/") else text
 
 
-_TOOL_REF = re.compile(r"@TOOL:([A-Za-z0-9][A-Za-z0-9_.-]*)@")
+_NAME = r"([A-Za-z0-9][A-Za-z0-9_.-]*)"
+_TOOL_REF = re.compile(rf"@TOOL:{_NAME}@")
+_STACK_REF = re.compile(rf"@STACK:{_NAME}@")
+#: A stack's own repository is exported as this tool on nodes with its roles.
+STACK_RELEASE_SUFFIX = "-release"
+
+
+def _expand_named(
+    pattern: re.Pattern, kind: str, text: str, known, target: Callable[[str], str], where: str
+) -> str:
+    def _sub(m: re.Match) -> str:
+        name = m.group(1)
+        if name not in known:
+            raise ToolError(f"unknown {kind} {name}" + (f" in {where}" if where else ""))
+        return target(name)
+
+    return pattern.sub(_sub, text)
 
 
 def expand_tool_refs(text: str, tools_on_node, home_form_root: str, where: str = "") -> str:
@@ -248,14 +291,32 @@ def expand_tool_refs(text: str, tools_on_node, home_form_root: str, where: str =
     Raises:
         ToolError: The name is not a tool the node runs.
     """
+    return _expand_named(
+        _TOOL_REF, "tool", text, tools_on_node, lambda n: f"{home_form_root}/{n}/current", where
+    )
 
-    def _sub(m: re.Match) -> str:
-        name = m.group(1)
-        if name not in tools_on_node:
-            raise ToolError(f"unknown tool {name}" + (f" in {where}" if where else ""))
-        return f"{home_form_root}/{name}/current"
 
-    return _TOOL_REF.sub(_sub, text)
+def expand_stack_refs(text: str, stacks, root: str, where: str = "") -> str:
+    """Replace ``@STACK:<name>@`` with the stack repo's export, ``<root>/<name>-release/current``.
+
+    Args:
+        text: A smoke command or a setup argument.
+        stacks: Names of the stacks the manifest includes.
+        root: The tools root as the consumer needs it spelled (an absolute
+            path for smokes and setup argv, which no systemd ever expands).
+        where: What the text belongs to, for the error message.
+
+    Raises:
+        ToolError: The name is not a stack the manifest includes.
+    """
+    return _expand_named(
+        _STACK_REF,
+        "stack",
+        text,
+        stacks,
+        lambda n: f"{root}/{n}{STACK_RELEASE_SUFFIX}/current",
+        where,
+    )
 
 
 def render_units(

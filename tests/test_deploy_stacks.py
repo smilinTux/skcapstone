@@ -1,15 +1,18 @@
-"""Schema relaxations that let a cluster manifest carry a public stack."""
+"""A cluster manifest carrying a public stack: schema relaxations, stacks and roles."""
 
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
-from skcapstone.deploy import tools
-from skcapstone.deploy.manifest import Manifest, ToolConfigSpec, ToolSpec
+from skcapstone.deploy import ManifestUnavailableError, resolve_manifest, tools
+from skcapstone.deploy.manifest import Manifest, ToolConfigSpec, ToolSpec, load_manifest
+from skcapstone.deploy.stack import StackFile, merge_stacks
 
 
 def test_tool_without_checkout():
@@ -75,3 +78,263 @@ def test_render_tool_placeholder(tmp_path):
 def test_render_unknown_tool_placeholder(tmp_path):
     with pytest.raises(tools.ToolError, match="unknown tool nope in a.service"):
         _render("[Service]\nExecStart=@TOOL:nope@/bin/run\n", tmp_path)
+
+
+# --------------------------------------------------------------- stacks and roles
+
+
+def _stack_yaml(version: str, skcall_ref: str = "v2") -> dict:
+    return {
+        "stack": "sidekick",
+        "version": version,
+        "config_schema": 1,
+        "tools": {
+            "hermes": {
+                "repo": "smilinTux/hermes-skworld",
+                "ref": "v1",
+                "setup": ["@STACK:sidekick@/bin/setup-hermes", "--quiet"],
+            },
+            "skcall": {"repo": "smilinTux/skcall", "ref": skcall_ref},
+            "render": {"repo": "smilinTux/render", "ref": "v1"},
+        },
+        # restart order: skcall first, the gateway last
+        "services": {
+            "skcall.service": {"smoke": "@STACK:sidekick@/bin/check skcall"},
+            "hermes-gateway.service": {"smoke": "true"},
+            "render.service": {},
+        },
+        "roles": {
+            # listed out of stack order on purpose: services keep stack order
+            "agent": {
+                "tools": ["hermes", "skcall"],
+                "services": ["hermes-gateway.service", "skcall.service"],
+            },
+            "render": {"tools": ["render"], "services": ["render.service"]},
+        },
+    }
+
+
+def _cluster(stack_url: str, **tools_extra) -> dict:
+    return {
+        "schema": 1,
+        "packages": {},
+        "tools": {"skgateway": {"repo": "smilinTux/skgateway", "ref": "v1"}, **tools_extra},
+        "services": {"skgateway-chiap01.service": {"smoke": "true"}},
+        "stacks": {"sidekick": {"url": stack_url, "ref": "v0.1.0"}},
+        "nodes": {
+            "chiap01": {"tools": ["skgateway"], "services": ["skgateway-chiap01.service"]},
+            "chiap04": {
+                "packages": [],
+                "tools": [],
+                "services": [],
+                "roles": {"sidekick": ["agent"]},
+            },
+            "chiap02": {
+                "packages": [],
+                "roles": {"sidekick": ["agent"]},
+                "stacks": {"sidekick": "v0.1.1-rc.1"},
+            },
+            "default": {"tools": "all"},
+        },
+    }
+
+
+def _sh(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+@pytest.fixture
+def stack_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "sidekick"
+    repo.mkdir()
+    (repo / "bin").mkdir()
+    (repo / "bin/check").write_text("#!/bin/sh\n")
+    _sh(repo, "init", "-q", "-b", "main")
+    (repo / "stack.yaml").write_text(yaml.safe_dump(_stack_yaml("0.1.0"), sort_keys=False))
+    _sh(repo, "add", ".")
+    _sh(repo, "commit", "-qm", "v0.1.0")
+    _sh(repo, "tag", "v0.1.0")
+    (repo / "stack.yaml").write_text(
+        yaml.safe_dump(_stack_yaml("0.1.1-rc.1", skcall_ref="v3"), sort_keys=False)
+    )
+    _sh(repo, "commit", "-qam", "rc")
+    _sh(repo, "tag", "v0.1.1-rc.1")
+    _sh(repo, "checkout", "-qb", "side")
+    (repo / "stack.yaml").write_text(yaml.safe_dump(_stack_yaml("9.9.9"), sort_keys=False))
+    _sh(repo, "commit", "-qam", "side")
+    _sh(repo, "tag", "v9.9.9-side")
+    _sh(repo, "checkout", "-q", "main")
+    return repo
+
+
+def _write_manifest(tmp_path: Path, data: dict) -> Path:
+    path = tmp_path / "manifest.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False))
+    return path
+
+
+def test_roles_expand_to_tools_and_services(tmp_path, stack_repo):
+    url = f"file://{stack_repo}"
+    m, _mid = resolve_manifest(
+        tmp_path / "state", path=str(_write_manifest(tmp_path, _cluster(url))), node="chiap04"
+    )
+    assert set(m.tools_for("chiap04")) == {"hermes", "skcall", "sidekick-release"}
+    assert list(m.services_for("chiap04")) == ["skcall.service", "hermes-gateway.service"]
+    release = m.tools["sidekick-release"]
+    assert (release.url, release.ref, release.branch) == (url, "v0.1.0", "main")
+    assert release.checkouts == []
+    # R2: roles are the only way in; tools: all means every cluster tool only
+    assert set(m.tools_for("chiap01")) == {"skgateway"}
+    assert set(m.tools_for("elsewhere")) == {"skgateway"}
+    assert list(m.services_for("elsewhere")) == ["skgateway-chiap01.service"]
+    assert set(m.tools_for("chiap02")) == {"skgateway", "hermes", "skcall", "sidekick-release"}
+    assert list(m.services_for("chiap02")) == [
+        "skgateway-chiap01.service",
+        "skcall.service",
+        "hermes-gateway.service",
+    ]
+    # the mirror is a bare repo under the deploy state dir
+    assert (tmp_path / "state/stacks/sidekick/HEAD").is_file()
+
+
+def test_unknown_role_refused():
+    stack = StackFile.model_validate(_stack_yaml("0.1.0"))
+    data = _cluster("file:///x")
+    data["nodes"]["chiap04"]["roles"] = {"sidekick": ["nope"]}
+    with pytest.raises(ValueError, match="chiap04.*role nope.*sidekick"):
+        merge_stacks(data, {"sidekick": stack})
+
+
+def test_stack_file_role_entries_must_exist():
+    bad = _stack_yaml("0.1.0")
+    bad["roles"]["agent"]["tools"].append("ghost")
+    with pytest.raises(ValidationError, match="ghost"):
+        StackFile.model_validate(bad)
+    bad = _stack_yaml("0.1.0")
+    bad["roles"]["render"]["services"] = ["ghost.service"]
+    with pytest.raises(ValidationError, match="ghost.service"):
+        StackFile.model_validate(bad)
+
+
+def test_stack_clash_refused():
+    stack = StackFile.model_validate(_stack_yaml("0.1.0"))
+    data = _cluster("file:///x", skcall={"repo": "smilinTux/skcall", "ref": "v1"})
+    with pytest.raises(ValueError, match="tool skcall.*cluster manifest.*stack sidekick"):
+        merge_stacks(data, {"sidekick": stack})
+    data = _cluster("file:///x")
+    data["services"]["skcall.service"] = {}
+    with pytest.raises(ValueError, match="service skcall.service.*cluster manifest.*sidekick"):
+        merge_stacks(data, {"sidekick": stack})
+
+
+def test_node_canary_ref(tmp_path, stack_repo):
+    path = str(_write_manifest(tmp_path, _cluster(f"file://{stack_repo}")))
+    canary, _ = resolve_manifest(tmp_path / "state", path=path, node="chiap02")
+    assert canary.tools["sidekick-release"].ref == "v0.1.1-rc.1"
+    assert canary.tools["skcall"].ref == "v3"
+    for node in ("chiap04", "chiap01"):
+        m, _ = resolve_manifest(tmp_path / "state", path=path, node=node)
+        assert m.tools["sidekick-release"].ref == "v0.1.0"
+        assert m.tools["skcall"].ref == "v2"
+
+
+@pytest.mark.parametrize("ref", ["v7.7.7-missing", "v9.9.9-side"])
+def test_stack_ref_missing_or_off_main_refused(tmp_path, stack_repo, ref):
+    data = _cluster(f"file://{stack_repo}")
+    data["nodes"]["chiap02"]["stacks"] = {"sidekick": ref}
+    path = str(_write_manifest(tmp_path, data))
+    with pytest.raises(ManifestUnavailableError, match=f"sidekick.*{ref}"):
+        resolve_manifest(tmp_path / "state", path=path, node="chiap02")
+    # refused while reading the manifest: no export was attempted
+    assert not (tmp_path / "home/.local/share/sk-tools").exists()
+    assert not list((tmp_path / "state").glob("tool-src/*"))
+    # the main ref still resolves for the other nodes
+    assert (
+        resolve_manifest(tmp_path / "state", path=path, node="chiap04")[0]
+        .tools["sidekick-release"]
+        .ref
+        == "v0.1.0"
+    )
+
+
+def test_stack_placeholder_in_smoke(tmp_path):
+    stack = StackFile.model_validate(_stack_yaml("0.1.0"))
+    data = _cluster("file:///x")
+    data["smoke"] = ["test -x @STACK:sidekick@/bin/check"]
+    root = tmp_path / "home/.local/share/sk-tools"
+    m = merge_stacks(data, {"sidekick": stack}, tools_root=root)
+    base = f"{root}/sidekick-release/current"
+    assert m.services["skcall.service"].smoke == f"{base}/bin/check skcall"
+    assert m.tools["hermes"].setup == [f"{base}/bin/setup-hermes", "--quiet"]
+    assert m.smoke == [f"test -x {base}/bin/check"]
+    data["services"]["skgateway-chiap01.service"]["smoke"] = "@STACK:nope@/x"
+    with pytest.raises(ValueError, match="unknown stack nope"):
+        merge_stacks(data, {"sidekick": stack}, tools_root=root)
+
+
+# sk-release-chi main at 334b2771 (2026-11-15), comments dropped.
+CHI_MANIFEST = """
+schema: 1
+python: '3.12'
+packages: {}
+smoke: []
+services:
+  skgateway-chiap01.service:
+    packages: []
+    smoke: >-
+      for i in $(seq 45); do curl -sf -m3 http://127.0.0.1:18790/health >/dev/null && break;
+      sleep 2; done; curl -sf -m5 http://127.0.0.1:18790/health | grep -q '"status":"ok"'
+tools:
+  skgateway:
+    repo: smilinTux/skgateway
+    ref: skgateway-v1.1.17
+    checkout: ~/.local/share/skgateway/releases/skgateway-v1.1.17
+    setup: [npm, ci, --omit=dev]
+    reason: Node server, not a Python package.
+nodes:
+  chiap01:
+    packages: []
+    tools: [skgateway]
+    services: [skgateway-chiap01.service]
+    configs:
+      skgateway:
+        url: git@github-skgateway-config-chi:smilinTux/skgateway-config-chi.git
+        ref: b2fdac5dc245b70bd51277b14fa5e90d8b9db14a
+        instance: chiap01
+"""
+
+
+def test_manifest_without_stacks_unchanged(tmp_path, monkeypatch):
+    import skcapstone.deploy.stack as stack_mod
+
+    def _no_network(*_a, **_k):
+        raise AssertionError("a manifest without stacks must not fetch anything")
+
+    monkeypatch.setattr(stack_mod, "fetch_stack", _no_network)
+    path = tmp_path / "manifest.yaml"
+    path.write_text(CHI_MANIFEST)
+    want = load_manifest(path)
+    state = tmp_path / "state"
+    for node in (None, "chiap01", "chiap04"):
+        got, _ = resolve_manifest(state, path=str(path), node=node)
+        assert got == want
+        assert got.model_dump() == want.model_dump()
+    assert not (state / "stacks").exists()
+    # and read from a manifest repo clone, offline
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    (origin / "manifest.yaml").write_text(CHI_MANIFEST)
+    _sh(origin, "init", "-q", "-b", "main")
+    _sh(origin, "add", ".")
+    _sh(origin, "commit", "-qm", "chi")
+    subprocess.run(["git", "clone", "-q", str(origin), str(state / "manifest-repo")], check=True)
+    monkeypatch.setenv("SK_DEPLOY_MANIFEST_URL", str(origin))
+    monkeypatch.delenv("SK_DEPLOY_MANIFEST", raising=False)
+    got, _ = resolve_manifest(state, fetch=False, node="chiap01")
+    assert got == want

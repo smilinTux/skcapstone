@@ -28,8 +28,12 @@ Example::
     nodes:
       default: {packages: all}
       some-host: {packages: [skcapstone, skmemory]}
+      agent-host: {packages: [], tools: [], services: [],
+                   roles: {sidekick: [agent]}, stacks: {sidekick: v0.1.1-rc.1}}
     allow_exec_in_tree: []
     carry_bin: []           # hand-placed bin/ files copied from the live venv
+    stacks:                 # public stack releases (stack.yaml at a tag), see .stack
+      sidekick: {repo: smilinTux/sidekick, ref: v0.1.0}
     tools:                  # scripts units run, exported from a commit on main
       skchat-scripts:
         package: skchat-sovereign      # repo (and default ref) from the package
@@ -226,11 +230,46 @@ class ServiceSpec(BaseModel):
     smoke: Optional[str] = None
 
 
+class StackRef(BaseModel):
+    """A public stack release a cluster manifest includes (``stacks.<name>``).
+
+    The stack repository holds ``stack.yaml`` (tools, services and roles, see
+    :mod:`.stack`) at a tag on its default branch. Nodes take parts of it only
+    through ``nodes.<node>.roles``.
+
+    Attributes:
+        repo: ``owner/name`` on GitHub (cloned over HTTPS).
+        url: Any git URL; overrides ``repo``.
+        ref: The release tag (or a commit) on ``branch``.
+        branch: The stack repository's default branch.
+    """
+
+    repo: Optional[str] = None
+    url: Optional[str] = None
+    ref: str
+    branch: str = "main"
+
+    @model_validator(mode="after")
+    def _has_source(self) -> "StackRef":
+        if not (self.repo or self.url):
+            raise ValueError("a stack needs a repo or url")
+        return self
+
+    def git_url(self) -> str:
+        """The URL git clones the stack repository from."""
+        return self.url or f"https://github.com/{self.repo}.git"
+
+
 class NodeProfile(BaseModel):
     """Which packages and services a node gets. ``all`` means every one.
 
     ``lock`` and ``carry_bin`` override the manifest-wide ones: two nodes
     rarely have the same third-party set or the same hand-placed shims.
+
+    ``roles`` (stack name to role names) adds those roles' tools and services
+    from the stack to the node; it is the only way a node gets a stack's
+    parts. ``stacks`` (stack name to ref) pins this node alone to another
+    ref of a stack, for a canary.
     """
 
     packages: Union[Literal["all"], list[str]] = "all"
@@ -239,6 +278,8 @@ class NodeProfile(BaseModel):
     carry_bin: Optional[list[str]] = None
     tools: Union[Literal["all"], list[str]] = "all"
     configs: dict[str, ToolConfigSpec] = Field(default_factory=dict)
+    roles: dict[str, list[str]] = Field(default_factory=dict)
+    stacks: dict[str, str] = Field(default_factory=dict)
 
 
 class Manifest(BaseModel):
@@ -256,6 +297,7 @@ class Manifest(BaseModel):
     allow_exec_in_tree: list[str] = Field(default_factory=list)
     carry_bin: list[str] = Field(default_factory=list)
     tools: dict[str, ToolSpec] = Field(default_factory=dict)
+    stacks: dict[str, StackRef] = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
 
@@ -286,6 +328,10 @@ class Manifest(BaseModel):
             stray = [t for t in prof.configs if t not in node_tools]
             if stray:
                 raise ValueError(f"node {node} has a config for tool(s) it does not run: {stray}")
+            for what, names in (("roles", prof.roles), ("stacks", prof.stacks)):
+                missing = [s for s in names if s not in self.stacks]
+                if missing:
+                    raise ValueError(f"node {node} {what} name unknown stack(s): {missing}")
         for name, tool in self.tools.items():
             if tool.package and tool.package not in known:
                 raise ValueError(f"tool {name} names unknown package {tool.package}")

@@ -21,15 +21,25 @@ Where the manifest comes from, first match wins:
    ``--ref`` picks an earlier commit of main for a deliberate rollback, and
    is refused if it is not on main. One manifest repo per cluster: a node
    names only its own cluster's repo.
+
+A manifest may include public stacks (``stacks:``, see :mod:`.stack`). Each
+one's ``stack.yaml`` is read from a bare mirror under ``<state>/stacks/`` at
+its ref, which must be on the stack repo's main, and merged in. A node may
+pin a stack to another ref (``nodes.<node>.stacks``), so the merged manifest
+belongs to one node: pass ``node`` (this host by default). A manifest without
+``stacks:`` is read exactly as before and fetches nothing more.
 """
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import os
 import subprocess
 from pathlib import Path
 from typing import Optional
+
+import yaml
 
 from .manifest import Manifest, load_manifest
 
@@ -90,11 +100,35 @@ def _git(repo: Path, *args: str) -> str:
     return proc.stdout.strip()
 
 
+def _with_stacks(
+    manifest_path: Path, state_dir: Path, node: Optional[str], fetch: bool
+) -> Manifest:
+    """Load *manifest_path* and merge the stacks it names, as *node* sees them."""
+    manifest = load_manifest(manifest_path)
+    if not manifest.stacks:
+        return manifest
+    from . import stack as stack_mod
+    from .tools import ToolError
+
+    data = copy.deepcopy(yaml.safe_load(manifest_path.read_text(encoding="utf-8")))
+    prof = manifest.profile(node)
+    files = {}
+    for name, sref in manifest.stacks.items():
+        at = prof.stacks.get(name, sref.ref)
+        try:
+            files[name] = stack_mod.fetch_stack(name, sref, at, state_dir / "stacks", fetch)
+        except ToolError as exc:
+            raise ManifestUnavailableError(str(exc)) from exc
+        data["stacks"][name]["ref"] = at
+    return stack_mod.merge_stacks(data, files)
+
+
 def resolve_manifest(
     state_dir: Path,
     path: Optional[str] = None,
     ref: Optional[str] = None,
     fetch: bool = True,
+    node: Optional[str] = None,
 ) -> tuple[Manifest, str]:
     """Load the release manifest and its id.
 
@@ -102,20 +136,24 @@ def resolve_manifest(
         state_dir: Host-local deploy state directory (holds the clone).
         path: Explicit manifest file (overrides the repository).
         ref: A commit of the manifest repo's main to use instead of its tip.
-        fetch: Fetch the repository first (off for offline doctor runs).
+        fetch: Fetch the repository (and any stack mirrors) first (off for
+            offline doctor runs).
+        node: The node the manifest is merged for (a node may pin a stack to
+            a canary ref). This hostname by default.
 
     Returns:
         The manifest and an id naming exactly which manifest it is.
 
     Raises:
-        ManifestUnavailableError: Nothing configured, or the fetch failed.
+        ManifestUnavailableError: Nothing configured, the fetch failed, or a
+            stack ref does not resolve or is not on the stack repo's main.
     """
     conf = node_config()
     path = path or os.environ.get("SK_DEPLOY_MANIFEST") or conf.get("SK_DEPLOY_MANIFEST")
     if path:
         data = Path(path).expanduser().read_bytes()
         return (
-            load_manifest(Path(path).expanduser()),
+            _with_stacks(Path(path).expanduser(), state_dir, node, fetch),
             "file-" + hashlib.sha256(data).hexdigest()[:12],
         )
     url = manifest_url(conf)
@@ -156,7 +194,7 @@ def resolve_manifest(
     tmp = state_dir / f".manifest-{commit[:12]}.yaml"
     tmp.write_text(text + "\n", encoding="utf-8")
     try:
-        return load_manifest(tmp), commit
+        return _with_stacks(tmp, state_dir, node, fetch), commit
     finally:
         tmp.unlink(missing_ok=True)
 

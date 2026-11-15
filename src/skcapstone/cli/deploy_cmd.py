@@ -26,11 +26,11 @@ def _paths():
     return Paths.default()
 
 
-def _manifest(path, ref, fetch=True):
+def _manifest(path, ref, fetch=True, node=None):
     from ..deploy import ManifestUnavailableError, resolve_manifest
 
     try:
-        return resolve_manifest(_paths().state_dir, path=path, ref=ref, fetch=fetch)
+        return resolve_manifest(_paths().state_dir, path=path, ref=ref, fetch=fetch, node=node)
     except (ManifestUnavailableError, OSError, ValueError) as exc:
         console.print(f"[red]manifest unavailable:[/] {exc}")
         sys.exit(2)
@@ -67,7 +67,7 @@ def register_deploy_commands(main: click.Group) -> None:
         """Show what a rollout would change and restart."""
         from ..deploy.rollout import make_plan
 
-        manifest, mid = _manifest(manifest_path, ref)
+        manifest, mid = _manifest(manifest_path, ref, node=node)
         plan = make_plan(manifest, _paths().venv_link / "bin" / "python", node)
         if as_json:
             click.echo(
@@ -112,7 +112,7 @@ def register_deploy_commands(main: click.Group) -> None:
         if shutil.which("uv") is None:
             console.print("[red]uv is required[/] (it builds the release venv)")
             sys.exit(2)
-        manifest, mid = _manifest(manifest_path, ref)
+        manifest, mid = _manifest(manifest_path, ref, node=node)
         try:
             res = apply(
                 manifest,
@@ -151,7 +151,7 @@ def register_deploy_commands(main: click.Group) -> None:
         """Roll only the manifest's tool exports (no venv rebuild)."""
         from ..deploy.rollout import apply_tools_only
 
-        manifest, _mid = _manifest(manifest_path, ref)
+        manifest, _mid = _manifest(manifest_path, ref, node=node)
         res = apply_tools_only(
             manifest,
             _paths(),
@@ -176,7 +176,7 @@ def register_deploy_commands(main: click.Group) -> None:
         """Switch back to the previous release and restart its services."""
         from ..deploy.rollout import DeployError, rollback
 
-        manifest, _mid = _manifest(manifest_path, None, fetch=False)
+        manifest, _mid = _manifest(manifest_path, None, fetch=False, node=node)
         try:
             res = rollback(_paths(), list(manifest.services_for(node)))
         except DeployError as exc:
@@ -216,7 +216,9 @@ def register_deploy_commands(main: click.Group) -> None:
 
         paths = _paths()
         try:
-            manifest, _ = resolve_manifest(paths.state_dir, path=manifest_path, fetch=not offline)
+            manifest, _ = resolve_manifest(
+                paths.state_dir, path=manifest_path, fetch=not offline, node=node
+            )
         except (ManifestUnavailableError, OSError, ValueError):
             manifest = None
         report = compute(Path.home(), paths.venv_link / "bin" / "python", manifest, node=node)
