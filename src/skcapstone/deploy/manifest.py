@@ -164,6 +164,50 @@ class ToolSpec(BaseModel):
         return [self.checkout] if isinstance(self.checkout, str) else list(self.checkout)
 
 
+class ToolConfigSpec(BaseModel):
+    """A per-cluster config repository for a tool, pinned per node.
+
+    The framework is the tool (public, one pinned release for every node);
+    the config is a private repository per cluster holding one directory per
+    instance. Both are exported side by side and the instance's units are
+    rendered from the config, so a node runs exactly
+    ``(framework ref, config ref)`` and nothing from a working tree.
+
+    The export holds only ``<instance>/``, at
+    ``~/.local/share/sk-tools/<tool>-config/<sha12>/<instance>``. Every file
+    in ``<instance>/systemd/`` (``*.service``, ``*.timer``) is installed as a
+    user unit of the same name, with ``@TOOL@`` replaced by the tool's
+    ``current`` export and ``@CONFIG@`` by ``<tool>-config/current/<instance>``.
+    Those units are owned by the deploy: their hand-written drop-ins are moved
+    aside, so the rendered file is the whole effective unit.
+
+    Attributes:
+        repo: ``owner/name`` on GitHub.
+        url: Any git URL (a private forge); overrides ``repo``.
+        ref: Commit or tag to export; must be on ``branch``.
+        branch: The default branch.
+        instance: The instance directory to export and render.
+    """
+
+    repo: Optional[str] = None
+    url: Optional[str] = None
+    ref: str
+    branch: str = "main"
+    instance: str
+
+    @model_validator(mode="after")
+    def _has_source(self) -> "ToolConfigSpec":
+        if not (self.repo or self.url):
+            raise ValueError("a tool config needs a repo or url")
+        if "/" in self.instance or self.instance in ("", ".", ".."):
+            raise ValueError("instance is one directory name")
+        return self
+
+    def source(self) -> tuple[str, str, str]:
+        """``(git url, ref, default branch)``."""
+        return self.url or f"https://github.com/{self.repo}.git", self.ref, self.branch
+
+
 class ServiceSpec(BaseModel):
     """A user unit and the packages whose change means it must restart."""
 
@@ -183,6 +227,7 @@ class NodeProfile(BaseModel):
     lock: Optional[list[str]] = None
     carry_bin: Optional[list[str]] = None
     tools: Union[Literal["all"], list[str]] = "all"
+    configs: dict[str, ToolConfigSpec] = Field(default_factory=dict)
 
 
 class Manifest(BaseModel):
@@ -226,6 +271,10 @@ class Manifest(BaseModel):
                 missing = [t for t in prof.tools if t not in self.tools]
                 if missing:
                     raise ValueError(f"node {node} names unknown tool(s): {missing}")
+            node_tools = set(self.tools) if prof.tools == "all" else set(prof.tools)
+            stray = [t for t in prof.configs if t not in node_tools]
+            if stray:
+                raise ValueError(f"node {node} has a config for tool(s) it does not run: {stray}")
         for name, tool in self.tools.items():
             if tool.package and tool.package not in known:
                 raise ValueError(f"tool {name} names unknown package {tool.package}")
@@ -275,6 +324,10 @@ class Manifest(BaseModel):
         if prof.tools == "all":
             return dict(self.tools)
         return {n: self.tools[n] for n in prof.tools}
+
+    def configs_for(self, node: Optional[str] = None) -> dict[str, ToolConfigSpec]:
+        """The per-cluster config repos this node exports, keyed by tool."""
+        return dict(self.profile(node).configs)
 
     def tool_source(self, name: str) -> tuple[str, str, str]:
         """``(git url, ref, default branch)`` for tool *name*."""
