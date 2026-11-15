@@ -327,7 +327,14 @@ class Manifest(BaseModel):
             if prof.tools != "all":
                 missing = [t for t in prof.tools if t not in self.tools]
                 if missing:
-                    raise ValueError(f"node {node} names unknown tool(s): {missing}")
+                    stack_tools = set((info.context or {}).get("stack_tools") or ())
+                    stack_tools |= {s + "-release" for s in self.stacks}
+                    hint = (
+                        " (stack tools come only through roles)"
+                        if any(t in stack_tools for t in missing)
+                        else ""
+                    )
+                    raise ValueError(f"node {node} names unknown tool(s): {missing}{hint}")
             node_tools = set(self.tools) if prof.tools == "all" else set(prof.tools)
             stray = [t for t in prof.configs if t not in node_tools]
             if stray and not (stacks_pending and prof.roles):

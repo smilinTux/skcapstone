@@ -35,6 +35,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import os
+import socket
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -100,10 +101,60 @@ def _git(repo: Path, *args: str) -> str:
     return proc.stdout.strip()
 
 
+def _profile_key(data: dict, node: Optional[str]) -> Optional[str]:
+    """The ``nodes`` key *node* resolves to (as :meth:`Manifest.profile` does), or None."""
+    nodes = data.get("nodes") or {}
+    name = node or socket.gethostname()
+    if name in nodes:
+        return name
+    return "default" if "default" in nodes else None
+
+
+def _stack_tool_names(data: dict, state_dir: Path, fetch: bool) -> set[str]:
+    """Every tool the manifest's stacks bring, as far as their mirrors can tell (error path)."""
+    from . import stack as stack_mod
+    from .manifest import StackRef
+    from .tools import STACK_RELEASE_SUFFIX, ToolError
+
+    out: set[str] = set()
+    for name, raw in (data.get("stacks") or {}).items():
+        out.add(name + STACK_RELEASE_SUFFIX)
+        try:
+            sref = StackRef.model_validate(raw)
+            stack, _sha = stack_mod.fetch_stack(name, sref, sref.ref, state_dir / "stacks", fetch)
+        except (ToolError, ValueError):
+            continue
+        out.update(stack.tools)
+    return out
+
+
+def _refuse_stack_refs(manifest: Manifest) -> None:
+    """``@STACK:<name>@`` left in a manifest whose node takes no stack names no stack."""
+    from .tools import _STACK_REF
+
+    texts = [("smoke", c) for c in manifest.smoke]
+    texts += [(f"service {u} smoke", s.smoke or "") for u, s in manifest.services.items()]
+    for name, tool in manifest.tools.items():
+        texts += [(f"tool {name} setup", a) for a in tool.setup or []]
+        texts += [(f"tool {name} setup_env", v) for v in (tool.setup_env or {}).values()]
+    for where, text in texts:
+        m = _STACK_REF.search(text)
+        if m:
+            raise ValueError(f"unknown stack {m.group(1)} in {where}")
+
+
 def _with_stacks(
     manifest_path: Path, state_dir: Path, node: Optional[str], fetch: bool
 ) -> Manifest:
-    """Load *manifest_path* and merge the stacks it names, as *node* sees them."""
+    """Load *manifest_path* and merge the stacks *node* takes, as *node* sees them.
+
+    Only the stacks named in the node's ``roles`` are fetched and merged (with
+    its ``stacks`` canary pins for those): a node that takes no stack resolves
+    exactly as if the manifest named none, so a stack whose ref is unreachable
+    or bad never takes down a node that does not run it. Profiles of other
+    nodes that take a stack this node does not are left out of the merged
+    manifest, which belongs to this node alone.
+    """
     data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or not data.get("stacks"):
         return load_manifest(manifest_path)
@@ -113,10 +164,38 @@ def _with_stacks(
     data = copy.deepcopy(data)
     # Role tools join a node's list only in the merge: its configs for them
     # are checked on the merged manifest.
-    manifest = Manifest.model_validate(data, context={"stacks_pending": True})
+    try:
+        manifest = Manifest.model_validate(data, context={"stacks_pending": True})
+    except ValueError:
+        names = _stack_tool_names(data, state_dir, fetch)
+        Manifest.model_validate(data, context={"stacks_pending": True, "stack_tools": names})
+        raise
+    key = _profile_key(data, node)
     prof = manifest.profile(node)
+    taken = set(prof.roles)
+    dropped = set(manifest.stacks) - taken
+    data["stacks"] = {n: v for n, v in data["stacks"].items() if n in taken}
+    nodes = data.get("nodes") or {}
+    kept: dict = {}
+    for name, raw in nodes.items():
+        raw = dict(raw or {})
+        if name == key:
+            if raw.get("stacks"):
+                raw["stacks"] = {s: r for s, r in raw["stacks"].items() if s in taken}
+        elif set(raw.get("roles") or {}) & dropped or set(raw.get("stacks") or {}) & dropped:
+            continue
+        kept[name] = raw
+    if "nodes" in data:
+        data["nodes"] = kept
+    if not taken:
+        data.pop("stacks")
+        merged = Manifest.model_validate(data)
+        _refuse_stack_refs(merged)
+        return merged
     files, shas = {}, {}
     for name, sref in manifest.stacks.items():
+        if name not in taken:
+            continue
         at = prof.stacks.get(name, sref.ref)
         try:
             files[name], shas[name] = stack_mod.fetch_stack(

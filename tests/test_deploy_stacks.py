@@ -244,10 +244,12 @@ def test_node_canary_ref(tmp_path, stack_repo):
     rc_sha = _sh(stack_repo, "rev-parse", "v0.1.1-rc.1^{commit}")
     assert canary.tools["sidekick-release"].ref == rc_sha
     assert canary.tools["skcall"].ref == "v3"
-    for node in ("chiap04", "chiap01"):
-        m, _ = resolve_manifest(tmp_path / "state", path=path, node=node)
-        assert m.tools["sidekick-release"].ref == _sh(stack_repo, "rev-parse", "v0.1.0^{commit}")
-        assert m.tools["skcall"].ref == "v2"
+    m, _ = resolve_manifest(tmp_path / "state", path=path, node="chiap04")
+    assert m.tools["sidekick-release"].ref == _sh(stack_repo, "rev-parse", "v0.1.0^{commit}")
+    assert m.tools["skcall"].ref == "v2"
+    # a node without roles takes no stack at all (I2)
+    m, _ = resolve_manifest(tmp_path / "state", path=path, node="chiap01")
+    assert "sidekick-release" not in m.tools and "skcall" not in m.tools
 
 
 @pytest.mark.parametrize("ref", ["v7.7.7-missing", "v9.9.9-side"])
@@ -435,3 +437,76 @@ def test_role_tool_may_carry_a_node_config(tmp_path, stack_repo):
     path = str(_write_manifest(tmp_path, data))
     with pytest.raises(ValidationError, match="config for tool.*hermes"):
         resolve_manifest(tmp_path / "state", path=path, node="chiap01")
+
+
+# ------------------------------------------------- final review: I2 and M4
+
+
+def _no_stack_view(data: dict) -> dict:
+    """*data* as if it had no stacks: no ``stacks:`` and no node that takes one."""
+    import copy
+
+    plain = copy.deepcopy(data)
+    plain.pop("stacks")
+    plain["nodes"] = {
+        n: p for n, p in plain["nodes"].items() if not (p.get("roles") or p.get("stacks"))
+    }
+    return plain
+
+
+@pytest.mark.parametrize("node", ["chiap01", "elsewhere"])
+@pytest.mark.parametrize("fetch", [True, False])
+def test_roleless_node_does_not_depend_on_a_stack(tmp_path, monkeypatch, node, fetch):
+    import skcapstone.deploy.stack as stack_mod
+
+    def _unreachable(*_a, **_k):
+        raise tools.ToolError("stack sidekick: fetch failed: unreachable")
+
+    monkeypatch.setattr(stack_mod, "fetch_stack", _unreachable)
+    data = _cluster("file:///nowhere/sidekick")
+    got, _ = resolve_manifest(
+        tmp_path / "state", path=str(_write_manifest(tmp_path, data)), node=node, fetch=fetch
+    )
+    plain = tmp_path / "plain.yaml"
+    plain.write_text(yaml.safe_dump(_no_stack_view(data), sort_keys=False))
+    want = load_manifest(plain)
+    assert got.stacks == {}
+    assert got.tools == want.tools and got.services == want.services
+    assert got.smoke == want.smoke and got.packages == want.packages
+    assert got.tools_for(node) == want.tools_for(node)
+    assert got.services_for(node) == want.services_for(node)
+    assert got.configs_for(node) == want.configs_for(node)
+    assert "sidekick-release" not in got.tools
+
+
+def test_role_node_still_refuses_a_broken_stack(tmp_path):
+    data = _cluster("file:///nowhere/sidekick")
+    path = str(_write_manifest(tmp_path, data))
+    with pytest.raises(ManifestUnavailableError, match="sidekick"):
+        resolve_manifest(tmp_path / "state", path=path, node="chiap04")
+
+
+def test_stack_placeholder_only_for_stacks_the_node_takes(tmp_path, stack_repo):
+    data = _cluster(f"file://{stack_repo}")
+    data["services"]["skgateway-chiap01.service"]["smoke"] = "@STACK:sidekick@/bin/check gw"
+    path = str(_write_manifest(tmp_path, data))
+    m, _ = resolve_manifest(tmp_path / "state", path=path, node="chiap04")
+    assert (
+        "/sidekick-release/current/bin/check gw" in m.services["skgateway-chiap01.service"].smoke
+    )
+    with pytest.raises(ValueError, match="unknown stack sidekick"):
+        resolve_manifest(tmp_path / "state", path=path, node="chiap01")
+
+
+@pytest.mark.parametrize("name", ["hermes", "sidekick-release"])
+def test_node_naming_a_stack_tool_directly_gets_a_hint(tmp_path, stack_repo, name):
+    data = _cluster(f"file://{stack_repo}")
+    data["nodes"]["chiap01"]["tools"] = ["skgateway", name]
+    path = str(_write_manifest(tmp_path, data))
+    with pytest.raises(ValueError, match=r"unknown tool.*stack tools come only through roles"):
+        resolve_manifest(tmp_path / "state", path=path, node="chiap01")
+    data["nodes"]["chiap01"]["tools"] = ["skgateway", "ghost"]
+    path = str(_write_manifest(tmp_path, data))
+    with pytest.raises(ValueError, match="unknown tool") as exc:
+        resolve_manifest(tmp_path / "state", path=path, node="chiap01")
+    assert "come only through roles" not in str(exc.value)
