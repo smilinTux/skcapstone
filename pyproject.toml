@@ -33,13 +33,16 @@ classifiers = [
 
 dependencies = [
     "croniter>=2.0",
-    "click>=8.1,<9.0",
+    "click>=8.1",
     "cloud9>=1.0.0",
     "mcp>=1.0,<2.0",
     "packaging>=23.0",
-    "pydantic>=2.0,<3.0",
-    "pyyaml>=6.0,<7.0",
-    "rich>=13.0,<14.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    # No upper caps on third-party libraries without a reason and a test that
+    # shows it (deploy/dependency-caps.md). rich<14 held the fleet at 13.9.4 and
+    # broke twine 7 (needs rich>=14.3.3), 2026-11-15.
+    "rich>=13.0",
     # Floor at the contract skcapstone actually targets, not at whatever was
     # current when the dep was first added. skcoord cuts a patch tag on every
     # push to its main, and twice on 2026-08-27 a release changed a contract

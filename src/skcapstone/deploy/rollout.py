@@ -25,6 +25,7 @@ import os
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -157,6 +158,54 @@ def make_plan(manifest: Manifest, live_python: Path, node: Optional[str] = None)
         if any(normalize(p) in changed for p in svc.packages):
             plan.restarts.append(unit)
     return plan
+
+
+def resolve_problems(
+    manifest: Manifest, runner: Runner = subprocess.run, node: Optional[str] = None
+) -> list[str]:
+    """Whether the node's pinned set resolves as ONE set, before anything is built.
+
+    The node's PyPI package pins plus its lock (or requirements) are resolved
+    together with ``uv pip compile`` on the manifest's Python. A set that does
+    not resolve is a set ``pip check`` will fail on after the build: this is
+    the same refusal moved to plan time, so a conflicting manifest is caught
+    by ``deploy plan`` on the first node instead of in a built venv. Git
+    sources are not resolved here (they would need a clone each); their
+    conflicts still surface in ``verify``.
+
+    Returns:
+        Empty when the set resolves, else the resolver's explanation.
+    """
+    lines = [
+        spec.requirement(name)
+        for name, spec in manifest.packages_for(node).items()
+        if spec.source == "pypi"
+    ]
+    lines += list(manifest.lock_for(node) or manifest.requirements)
+    # A real output file in a private temp dir: uv writes its output through a
+    # sibling temp file, so ``-o /dev/null`` fails with EACCES on /dev.
+    with tempfile.TemporaryDirectory(prefix="sk-deploy-resolve-") as tmp:
+        reqs = Path(tmp) / "requirements.txt"
+        reqs.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        proc = _run(
+            [
+                "uv",
+                "pip",
+                "compile",
+                "--quiet",
+                "--no-header",
+                "--python-version",
+                manifest.python,
+                str(reqs),
+                "-o",
+                str(Path(tmp) / "resolved.txt"),
+            ],
+            runner,
+        )
+    if proc.returncode == 0:
+        return []
+    text = (proc.stderr or proc.stdout or "").strip()
+    return [f"the pinned set does not resolve: {text[-1500:]}"]
 
 
 # ---------------------------------------------------------------------- preflight
@@ -558,6 +607,11 @@ def apply(
     plan = make_plan(manifest, paths.venv_link / "bin" / "python", node) if live else Plan()
     log("pre-flight: checking every release tag is on its default branch")
     preflight(manifest, runner, node)
+    if manifest.resolve == "strict":
+        log("pre-flight: the pinned set resolves (resolve: strict)")
+        unresolved = resolve_problems(manifest, runner, node)
+        if unresolved:
+            raise DeployError("; ".join(unresolved))
     dest = paths.releases / f"{time.strftime('%Y%m%d-%H%M%S')}-{manifest_id[:12]}"
     log(f"build: {dest}")
     build_venv(manifest, dest, python, runner, node)
