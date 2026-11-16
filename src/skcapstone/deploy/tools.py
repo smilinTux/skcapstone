@@ -34,6 +34,7 @@ The whole step is undoable: :class:`ToolsChange` remembers the previous
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -69,6 +70,20 @@ class ToolError(RuntimeError):
     """A tool could not be exported; nothing was published."""
 
 
+class UndoFailedError(ToolError):
+    """A failed step's undo stopped partway; :attr:`change` is what is left to undo."""
+
+    def __init__(self, message: str, change: "ToolsChange"):
+        super().__init__(message)
+        self.change = change
+
+
+def _files_undo():
+    from .files import FilesUndo
+
+    return FilesUndo()
+
+
 @dataclass
 class ToolsChange:
     """What one tools step changed, and how to put it back."""
@@ -82,13 +97,58 @@ class ToolsChange:
     unit_files: dict[str, Optional[str]] = field(default_factory=dict)
     #: drop-in moved aside from a rendered unit: original path -> where it went
     displaced: dict[str, str] = field(default_factory=dict)
+    #: files the config instances manage (``<instance>/files.yaml``), to put back
+    files: "FilesUndo" = field(default_factory=_files_undo)  # noqa: F821
+    #: what this step left on disk, keyed by path: managed files (see
+    #: :func:`.files.apply_files`), plus ``{"mode": "unit"|"dropin", "sha256"}``
+    #: for unit files and managed drop-ins (``sha256`` None: removed)
+    written: dict[str, dict] = field(default_factory=dict)
+    #: things the operator should know about this step (not part of the record)
+    notes: list[str] = field(default_factory=list)
+
+    _PLAIN = ("exported", "published", "dropins", "units", "legacy", "unit_files", "displaced")
+
+    def to_dict(self) -> dict:
+        """Plain JSON data, for the change record (rollback runs in a later process)."""
+        out = {k: getattr(self, k) for k in self._PLAIN}
+        out["files"] = self.files.to_dict()
+        out["written"] = self.written
+        return json.loads(json.dumps(out))
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ToolsChange":
+        """The change :meth:`to_dict` wrote."""
+        from .files import FilesUndo
+
+        change = cls(**{k: data[k] for k in cls._PLAIN if data.get(k) is not None})
+        change.files = FilesUndo.from_dict(data.get("files") or {})
+        change.written = dict(data.get("written") or {})
+        for key, wrote in change.written.items():  # a record from before ``block`` entries
+            if wrote.get("mode") == "block" and wrote.get("block"):
+                change.files.blocks.setdefault(key, wrote["block"])
+        return change
 
     @property
     def empty(self) -> bool:
-        return not (self.published or self.dropins or self.unit_files or self.displaced)
+        return not (
+            self.published
+            or self.dropins
+            or self.unit_files
+            or self.displaced
+            or not self.files.empty
+        )
 
-    def undo(self, root: Path, unit_dir: Path) -> None:
-        """Restore the previous ``current`` links and drop-in files."""
+    def undo(self, root: Path, unit_dir: Path) -> list[str]:
+        """Restore the previous ``current`` links, drop-ins, units and managed files.
+
+        Every step is idempotent (see :meth:`.files.FilesUndo.restore`), so an
+        undo that stopped partway can run again and finish.
+
+        Returns:
+            Notes from the managed files (a created block file kept for the
+            lines outside its block).
+        """
+        notes = self.files.restore()
         for name, previous in self.published.items():
             link = root / name / "current"
             if previous is None:
@@ -110,8 +170,35 @@ class ToolsChange:
             else:
                 path.write_text(old, encoding="utf-8")
         for original, moved in self.displaced.items():
+            problem = displaced_blocker(original, moved)
+            if problem == "restored":
+                continue
+            if problem:
+                raise ToolError(problem)
             Path(original).parent.mkdir(parents=True, exist_ok=True)
             shutil.move(moved, original)
+        return notes
+
+
+def displaced_blocker(original: str, moved: str) -> Optional[str]:
+    """Why the drop-in moved aside to *moved* cannot go back to *original*.
+
+    Returns:
+        None when it can, ``"restored"`` when it already is back (its aside
+        gone, a file at the original path), or the problem.
+    """
+    orig, aside = Path(original), Path(moved)
+    if not (aside.exists() or aside.is_symlink()):
+        if orig.is_file():
+            return "restored"
+        return f"{original}: the drop-in moved aside to {moved} is gone"
+    if orig.is_dir() and not orig.is_symlink():
+        return f"{original} is a directory now; moving {moved} back would nest it inside"
+    return None
+
+
+def _sha(text: Optional[str]) -> Optional[str]:
+    return None if text is None else hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def default_root(home: Optional[Path] = None) -> Path:
@@ -147,6 +234,50 @@ def _atomic_link(link: Path, target: str) -> None:
     os.replace(tmp, link)
 
 
+def sync_mirror(name: str, url: str, mirror: Path, runner: Runner = subprocess.run) -> None:
+    """Clone *url* as a bare mirror at *mirror* if missing, then fetch it.
+
+    Raises:
+        ToolError: The clone or the fetch failed.
+    """
+    if not mirror.is_dir():
+        mirror.parent.mkdir(parents=True, exist_ok=True)
+        proc = _git(["clone", "--bare", "--quiet", url, str(mirror)], runner)
+        if proc.returncode != 0:
+            raise ToolError(f"{name}: clone {url} failed: {_err(proc)}")
+    proc = _git(
+        ["fetch", "--quiet", "--prune", "--tags", "origin", "+refs/heads/*:refs/heads/*"],
+        runner,
+        cwd=mirror,
+    )
+    if proc.returncode != 0:
+        raise ToolError(f"{name}: fetch failed: {_err(proc)}")
+
+
+def ref_on_branch(
+    name: str,
+    url: str,
+    ref: str,
+    branch: str,
+    mirror: Path,
+    runner: Runner = subprocess.run,
+    what: str = "tools",
+) -> str:
+    """The commit *ref* names in *mirror*, checked to be on *branch*.
+
+    Raises:
+        ToolError: The ref does not resolve, or it is not on *branch*.
+    """
+    proc = _git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], runner, cwd=mirror)
+    sha = _text(proc)
+    if proc.returncode != 0 or not sha:
+        raise ToolError(f"{name}: ref {ref} does not resolve in {url}")
+    proc = _git(["merge-base", "--is-ancestor", sha, f"refs/heads/{branch}"], runner, cwd=mirror)
+    if proc.returncode != 0:
+        raise ToolError(f"{name}: {ref} ({sha[:12]}) is not on {branch}; {what} ship from main")
+    return sha
+
+
 def export(
     name: str,
     url: str,
@@ -172,25 +303,8 @@ def export(
             or it is not on *branch*.
     """
     mirror = src_dir / f"{name}.git"
-    if not mirror.is_dir():
-        mirror.parent.mkdir(parents=True, exist_ok=True)
-        proc = _git(["clone", "--bare", "--quiet", url, str(mirror)], runner)
-        if proc.returncode != 0:
-            raise ToolError(f"{name}: clone {url} failed: {_err(proc)}")
-    proc = _git(
-        ["fetch", "--quiet", "--prune", "--tags", "origin", "+refs/heads/*:refs/heads/*"],
-        runner,
-        cwd=mirror,
-    )
-    if proc.returncode != 0:
-        raise ToolError(f"{name}: fetch failed: {_err(proc)}")
-    proc = _git(["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"], runner, cwd=mirror)
-    sha = _text(proc)
-    if proc.returncode != 0 or not sha:
-        raise ToolError(f"{name}: ref {ref} does not resolve in {url}")
-    proc = _git(["merge-base", "--is-ancestor", sha, f"refs/heads/{branch}"], runner, cwd=mirror)
-    if proc.returncode != 0:
-        raise ToolError(f"{name}: {ref} ({sha[:12]}) is not on {branch}; tools ship from main")
+    sync_mirror(name, url, mirror, runner)
+    sha = ref_on_branch(name, url, ref, branch, mirror, runner)
     dest = root / name / sha[:12]
     if (dest / _META).is_file():
         return dest
@@ -233,6 +347,71 @@ def _home_form(path: Path, home: Path) -> str:
     return "%h" + text[len(str(home)) :] if text.startswith(str(home) + "/") else text
 
 
+_NAME = r"([A-Za-z0-9][A-Za-z0-9_.-]*)"
+_TOOL_REF = re.compile(rf"@TOOL:{_NAME}@")
+_STACK_REF = re.compile(rf"@STACK:{_NAME}@")
+#: A stack's own repository is exported as this tool on nodes with its roles.
+STACK_RELEASE_SUFFIX = "-release"
+
+
+def _expand_named(
+    pattern: re.Pattern, kind: str, text: str, known, target: Callable[[str], str], where: str
+) -> str:
+    def _sub(m: re.Match) -> str:
+        name = m.group(1)
+        if name not in known:
+            raise ToolError(f"unknown {kind} {name}" + (f" in {where}" if where else ""))
+        return target(name)
+
+    return pattern.sub(_sub, text)
+
+
+def expand_tool_refs(text: str, tools_on_node, home_form_root: str, where: str = "") -> str:
+    """Replace ``@TOOL:<name>@`` with ``<home_form_root>/<name>/current``.
+
+    Args:
+        text: Unit file text (or a symlink target).
+        tools_on_node: Names of the tools the node runs (any container of names).
+        home_form_root: The tools root in unit-file form, e.g. ``%h/.local/share/sk-tools``.
+        where: What the text belongs to, for the error message.
+
+    Raises:
+        ToolError: The name is not a tool the node runs.
+    """
+    return _expand_named(
+        _TOOL_REF, "tool", text, tools_on_node, lambda n: f"{home_form_root}/{n}/current", where
+    )
+
+
+def expand_stack_refs(
+    text: str, stacks, root: str, where: str = "", versions: Optional[dict[str, str]] = None
+) -> str:
+    """Replace ``@STACK:<name>@`` with the stack repo's export, ``<root>/<name>-release/current``.
+
+    Args:
+        text: A smoke command or a setup argument.
+        stacks: Names of the stacks the manifest includes.
+        root: The tools root as the consumer needs it spelled (an absolute
+            path for smokes and setup argv, which no systemd ever expands).
+        where: What the text belongs to, for the error message.
+        versions: Stack name to its resolved commit: expand to the versioned
+            export ``<name>-release/<sha12>`` instead of ``current``. Setup runs
+            at export time, before any ``current`` is published, so it needs this.
+
+    Raises:
+        ToolError: The name is not a stack the manifest includes.
+    """
+    return _expand_named(
+        _STACK_REF,
+        "stack",
+        text,
+        stacks,
+        lambda n: f"{root}/{n}{STACK_RELEASE_SUFFIX}/"
+        + (versions[n][:12] if versions is not None else "current"),
+        where,
+    )
+
+
 def render_units(
     manifest: Manifest, node: Optional[str], root: Path, home: Path, exports: dict[str, Path]
 ) -> dict[str, str]:
@@ -252,14 +431,16 @@ def render_units(
             if sysdir.is_dir()
             else []
         )
-        if not files:
+        if not files and not (dest / cfg.instance / "files.yaml").is_file():
             raise ToolError(f"{cname}: {cfg.instance}/systemd/ has no unit files")
         meta = json.loads((dest / _META).read_text(encoding="utf-8"))
         tool_cur = _home_form(root / tool / "current", home)
         cfg_cur = _home_form(root / cname / "current" / cfg.instance, home)
+        node_tools = manifest.tools_for(node)
+        tools_root = _home_form(root, home)
         for f in files:
             text = (
-                f.read_text(encoding="utf-8")
+                expand_tool_refs(f.read_text(encoding="utf-8"), node_tools, tools_root, f.name)
                 .replace("@TOOL@", tool_cur)
                 .replace("@CONFIG@", cfg_cur)
             )
@@ -386,6 +567,54 @@ def _missing_in_exports(
     return sorted(set(gone))
 
 
+def file_restarts(changed, inst_units) -> tuple[set[str], list[str]]:
+    """The units managed file changes restart, and a note for each that restarts none.
+
+    Shared by plan and apply. A changed file (content, link target or mode)
+    restarts its spec's ``restart`` units plus the units of its own instance
+    (``<instance>/systemd/``).
+
+    Args:
+        changed: ``(spec, path)`` of each managed file that changes.
+        inst_units: The unit files of the instance the files belong to.
+    """
+    units: set[str] = set()
+    notes: list[str] = []
+    for spec, path in changed:
+        want = set(spec.restart) | set(inst_units)
+        if not want:
+            notes.append(f"{path} changed; no unit restarts for it")
+        units |= want
+    return units, notes
+
+
+def restart_units_for(
+    manifest: Manifest,
+    node: Optional[str],
+    *,
+    changed: set[str],
+    displaced: list[str],
+    texts: dict[str, str],
+    moved: set[str],
+) -> list[str]:
+    """The units a tools change restarts, in restart order. Shared by plan and apply.
+
+    A unit restarts when its rendered text, drop-in or a managed file of its
+    config changed (*changed*), when a drop-in of it was moved aside
+    (*displaced*, drop-in paths), or when its text (*texts*, the managed
+    drop-in or the rendered unit) names the ``current`` link of a tool in
+    *moved*. The order is the manifest's service order (a stack lists services
+    first and the agent last); units the manifest does not list follow, sorted.
+    """
+    affected = set(changed)
+    affected |= {Path(p).parent.name.removesuffix(".d") for p in displaced}
+    for unit, text in texts.items():
+        if any(f"/sk-tools/{name}/current" in text for name in moved):
+            affected.add(unit)
+    order = [u for u in manifest.services_for(node) if u in affected]
+    return order + sorted(affected - set(order))
+
+
 def apply_tools(
     manifest: Manifest,
     node: Optional[str],
@@ -410,6 +639,7 @@ def apply_tools(
     """
     home = home or Path.home()
     root = root or default_root(home)
+    from . import files as _files
     from .inspect import default_unit_dir
 
     unit_dir = unit_dir or default_unit_dir(home)
@@ -446,6 +676,7 @@ def apply_tools(
         raise ToolError(
             "units would point at files the export does not have: " + "; ".join(gone[:8])
         )
+    managed = _check_files(manifest, node, root, home, exports)
     moved: set[str] = set()
     for name, dest in exports.items():
         link = root / name / "current"
@@ -473,6 +704,7 @@ def apply_tools(
         if hand and dropdir.is_dir() and not any(dropdir.iterdir()):
             dropdir.rmdir()
         path = unit_dir / unit
+        change.written[str(path)] = {"mode": "unit", "sha256": _sha(text)}
         old = path.read_text(encoding="utf-8") if path.is_file() else None
         if old != text:
             change.unit_files[unit] = old
@@ -484,6 +716,7 @@ def apply_tools(
         path = unit_dir / f"{unit}.d" / DROPIN
         old = path.read_text(encoding="utf-8") if path.is_file() else None
         new = want.get(unit)
+        change.written[str(path)] = {"mode": "dropin", "sha256": _sha(new)}
         if old == new:
             continue
         change.dropins[unit] = old
@@ -492,17 +725,89 @@ def apply_tools(
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(new, encoding="utf-8")
-    affected = set(change.dropins) | set(change.unit_files)
-    affected |= {Path(p).parent.name.removesuffix(".d") for p in change.displaced}
-    for unit, text in {**want, **rendered}.items():
-        if any(f"/sk-tools/{name}/current" in text for name in moved):
-            affected.add(unit)
-    change.units = sorted(affected)
+    file_units: set[str] = set()
+    try:
+        for cname, (inst, specs, inst_units) in managed.items():
+            changed_files: list = []
+            _files.apply_files(
+                specs,
+                inst,
+                home,
+                state_dir,
+                tools_on_node=manifest.tools_for(node),
+                tools_root=root,
+                exports=exports,
+                undo=change.files,
+                written=change.written,
+                changed_specs=changed_files,
+            )
+            if changed_files:
+                units, notes = file_restarts(changed_files, inst_units)
+                file_units |= units
+                change.notes += notes
+                log(f"{cname}: managed files written")
+                for note in notes:
+                    log(note)
+    except (OSError, ToolError) as exc:
+        try:
+            change.undo(root, unit_dir)
+        except (OSError, ToolError) as undo_exc:
+            runner(["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=60)
+            raise UndoFailedError(
+                f"managed files: {exc}; undoing the step stopped partway ({undo_exc})", change
+            ) from undo_exc
+        if change.dropins or change.unit_files or change.displaced:
+            runner(["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=60)
+        raise ToolError(f"managed files: {exc}; every change was undone") from exc
+    change.units = restart_units_for(
+        manifest,
+        node,
+        changed=set(change.dropins) | set(change.unit_files) | file_units,
+        displaced=list(change.displaced),
+        texts={**want, **rendered},
+        moved=moved,
+    )
     if change.dropins or change.unit_files or change.displaced:
         runner(
             ["systemctl", "--user", "daemon-reload"], capture_output=True, timeout=60, check=False
         )
     return change
+
+
+def _check_files(manifest: Manifest, node: Optional[str], root: Path, home: Path, exports):
+    """Each config's managed files, rendered and checked against the NEW exports.
+
+    Runs before anything is published (R4): a broken block, a duplicated key
+    or a link to nothing refuses the whole apply.
+
+    Returns:
+        ``{config export name: (instance dir, specs, the instance's units)}``.
+    """
+    from . import files as _files
+
+    out: dict = {}
+    owner: dict[str, str] = {}
+    for tool, cfg in manifest.configs_for(node).items():
+        cname = tool + CONFIG_SUFFIX
+        inst = exports[cname] / cfg.instance
+        specs = _files.load_files(inst)
+        if not specs:
+            continue
+        for r in _files.render_files(
+            specs,
+            inst,
+            home,
+            tools_on_node=manifest.tools_for(node),
+            tools_root=root,
+            exports=exports,
+        ):
+            if str(r.path) in owner:
+                raise ToolError(f"{r.path} is managed by both {owner[str(r.path)]} and {cname}")
+            owner[str(r.path)] = cname
+        sysdir = inst / "systemd"
+        units = sorted(f.name for f in sysdir.glob("*") if f.suffix in _UNIT_SUFFIXES)
+        out[cname] = (inst, specs, units if sysdir.is_dir() else [])
+    return out
 
 
 def restart_targets(units: list[str], runner: Runner = subprocess.run) -> list[str]:

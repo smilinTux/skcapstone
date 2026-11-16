@@ -29,8 +29,12 @@ Example::
     nodes:
       default: {packages: all}
       some-host: {packages: [skcapstone, skmemory]}
+      agent-host: {packages: [], tools: [], services: [],
+                   roles: {sidekick: [agent]}, stacks: {sidekick: v0.1.1-rc.1}}
     allow_exec_in_tree: []
     carry_bin: []           # hand-placed bin/ files copied from the live venv
+    stacks:                 # public stack releases (stack.yaml at a tag), see .stack
+      sidekick: {repo: smilinTux/sidekick, ref: v0.1.0}
     tools:                  # scripts units run, exported from a commit on main
       skchat-scripts:
         package: skchat-sovereign      # repo (and default ref) from the package
@@ -46,7 +50,7 @@ from pathlib import Path
 from typing import Literal, Optional, Union
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
 class PackageSpec(BaseModel):
@@ -142,7 +146,7 @@ class ToolSpec(BaseModel):
     url: Optional[str] = None
     ref: Optional[str] = None
     branch: Optional[str] = None
-    checkout: Union[str, list[str]]
+    checkout: Union[str, list[str]] = Field(default_factory=list)
     paths: list[str] = Field(default_factory=list)
     reason: Optional[str] = None
     setup: list[str] = Field(default_factory=list)
@@ -161,8 +165,10 @@ class ToolSpec(BaseModel):
 
     @property
     def checkouts(self) -> list[str]:
-        """Every checkout location, as a list."""
-        return [self.checkout] if isinstance(self.checkout, str) else list(self.checkout)
+        """Every checkout location, as a list (empty for a tool with none)."""
+        if isinstance(self.checkout, str):
+            return [self.checkout] if self.checkout else []
+        return list(self.checkout)
 
 
 class ToolConfigSpec(BaseModel):
@@ -187,7 +193,8 @@ class ToolConfigSpec(BaseModel):
         url: Any git URL (a private forge); overrides ``repo``.
         ref: Commit or tag to export; must be on ``branch``.
         branch: The default branch.
-        instance: The instance directory to export and render.
+        instance: The instance directory to export and render, relative to the
+            repo root (``node1`` or ``render/chiap04``); no ``..``.
     """
 
     repo: Optional[str] = None
@@ -200,8 +207,16 @@ class ToolConfigSpec(BaseModel):
     def _has_source(self) -> "ToolConfigSpec":
         if not (self.repo or self.url):
             raise ValueError("a tool config needs a repo or url")
-        if "/" in self.instance or self.instance in ("", ".", ".."):
-            raise ValueError("instance is one directory name")
+        parts = Path(self.instance).parts
+        if (
+            not self.instance
+            or self.instance.startswith("/")
+            or not parts
+            or any(p in ("", ".", "..") for p in parts)
+        ):
+            raise ValueError(
+                "instance is one directory inside the config repo (no '..', not absolute)"
+            )
         return self
 
     def source(self) -> tuple[str, str, str]:
@@ -216,11 +231,46 @@ class ServiceSpec(BaseModel):
     smoke: Optional[str] = None
 
 
+class StackRef(BaseModel):
+    """A public stack release a cluster manifest includes (``stacks.<name>``).
+
+    The stack repository holds ``stack.yaml`` (tools, services and roles, see
+    :mod:`.stack`) at a tag on its default branch. Nodes take parts of it only
+    through ``nodes.<node>.roles``.
+
+    Attributes:
+        repo: ``owner/name`` on GitHub (cloned over HTTPS).
+        url: Any git URL; overrides ``repo``.
+        ref: The release tag (or a commit) on ``branch``.
+        branch: The stack repository's default branch.
+    """
+
+    repo: Optional[str] = None
+    url: Optional[str] = None
+    ref: str
+    branch: str = "main"
+
+    @model_validator(mode="after")
+    def _has_source(self) -> "StackRef":
+        if not (self.repo or self.url):
+            raise ValueError("a stack needs a repo or url")
+        return self
+
+    def git_url(self) -> str:
+        """The URL git clones the stack repository from."""
+        return self.url or f"https://github.com/{self.repo}.git"
+
+
 class NodeProfile(BaseModel):
     """Which packages and services a node gets. ``all`` means every one.
 
     ``lock`` and ``carry_bin`` override the manifest-wide ones: two nodes
     rarely have the same third-party set or the same hand-placed shims.
+
+    ``roles`` (stack name to role names) adds those roles' tools and services
+    from the stack to the node; it is the only way a node gets a stack's
+    parts. ``stacks`` (stack name to ref) pins this node alone to another
+    ref of a stack, for a canary.
     """
 
     packages: Union[Literal["all"], list[str]] = "all"
@@ -229,6 +279,8 @@ class NodeProfile(BaseModel):
     carry_bin: Optional[list[str]] = None
     tools: Union[Literal["all"], list[str]] = "all"
     configs: dict[str, ToolConfigSpec] = Field(default_factory=dict)
+    roles: dict[str, list[str]] = Field(default_factory=dict)
+    stacks: dict[str, str] = Field(default_factory=dict)
 
 
 class Manifest(BaseModel):
@@ -246,6 +298,7 @@ class Manifest(BaseModel):
     allow_exec_in_tree: list[str] = Field(default_factory=list)
     carry_bin: list[str] = Field(default_factory=list)
     tools: dict[str, ToolSpec] = Field(default_factory=dict)
+    stacks: dict[str, StackRef] = Field(default_factory=dict)
     #: ``strict``: ``deploy plan`` and ``deploy apply`` refuse a node set whose
     #: pinned PyPI packages and lock do not resolve together (the conflict
     #: ``pip check`` would report after the build). ``report``: they print the
@@ -263,7 +316,11 @@ class Manifest(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _references_resolve(self) -> "Manifest":
+    def _references_resolve(self, info: ValidationInfo) -> "Manifest":
+        # Before stacks are merged a node's role tools are not in its list yet:
+        # its configs are checked once they are (the merged manifest is
+        # validated again without this context).
+        stacks_pending = bool((info.context or {}).get("stacks_pending"))
         known = set(self.packages)
         for unit, spec in self.services.items():
             missing = [p for p in spec.packages if p not in known]
@@ -277,11 +334,22 @@ class Manifest(BaseModel):
             if prof.tools != "all":
                 missing = [t for t in prof.tools if t not in self.tools]
                 if missing:
-                    raise ValueError(f"node {node} names unknown tool(s): {missing}")
+                    stack_tools = set((info.context or {}).get("stack_tools") or ())
+                    stack_tools |= {s + "-release" for s in self.stacks}
+                    hint = (
+                        " (stack tools come only through roles)"
+                        if any(t in stack_tools for t in missing)
+                        else ""
+                    )
+                    raise ValueError(f"node {node} names unknown tool(s): {missing}{hint}")
             node_tools = set(self.tools) if prof.tools == "all" else set(prof.tools)
             stray = [t for t in prof.configs if t not in node_tools]
-            if stray:
+            if stray and not (stacks_pending and prof.roles):
                 raise ValueError(f"node {node} has a config for tool(s) it does not run: {stray}")
+            for what, names in (("roles", prof.roles), ("stacks", prof.stacks)):
+                missing = [s for s in names if s not in self.stacks]
+                if missing:
+                    raise ValueError(f"node {node} {what} name unknown stack(s): {missing}")
         for name, tool in self.tools.items():
             if tool.package and tool.package not in known:
                 raise ValueError(f"tool {name} names unknown package {tool.package}")

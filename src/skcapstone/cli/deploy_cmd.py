@@ -3,7 +3,7 @@
 Commands:
     skcapstone deploy plan       what a rollout would change and restart
     skcapstone deploy apply      pre-flight, build, verify, switch, restart, smoke
-    skcapstone deploy rollback   back to the previous release
+    skcapstone deploy rollback   back to the previous release (or tools change)
     skcapstone deploy status     the release this node runs
     skcapstone deploy drift      editable installs, exec paths in git trees, version drift
 """
@@ -26,14 +26,24 @@ def _paths():
     return Paths.default()
 
 
-def _manifest(path, ref, fetch=True):
-    from ..deploy import ManifestUnavailableError, resolve_manifest
+def _try_manifest(path, ref, fetch=True, node=None):
+    """The manifest and its id; raises when it cannot be resolved."""
+    from ..deploy import resolve_manifest
+
+    return resolve_manifest(_paths().state_dir, path=path, ref=ref, fetch=fetch, node=node)
+
+
+def _manifest(path, ref, fetch=True, node=None):
+    from ..deploy import ManifestUnavailableError
 
     try:
-        return resolve_manifest(_paths().state_dir, path=path, ref=ref, fetch=fetch)
+        return _try_manifest(path, ref, fetch=fetch, node=node)
     except (ManifestUnavailableError, OSError, ValueError) as exc:
         console.print(f"[red]manifest unavailable:[/] {exc}")
         sys.exit(2)
+
+
+_AGAIN = "fix the problem above, then run deploy rollback again"
 
 
 def register_deploy_commands(main: click.Group) -> None:
@@ -72,9 +82,12 @@ def register_deploy_commands(main: click.Group) -> None:
         conflict stops at plan time on the first node, before any build.
         """
         from ..deploy.rollout import make_plan, resolve_problems
+        from ..deploy.views import tools_plan
 
-        manifest, mid = _manifest(manifest_path, ref)
+        manifest, mid = _manifest(manifest_path, ref, node=node)
         plan = make_plan(manifest, _paths().venv_link / "bin" / "python", node)
+        extra = tools_plan(manifest, node, _paths().state_dir, plan.restarts)
+        diffs = any(c["diffs"] for c in extra["files"].values())
         unresolved = [] if no_resolve else resolve_problems(manifest, node=node)
         refused = bool(unresolved) and manifest.resolve == "strict"
         if as_json:
@@ -84,7 +97,14 @@ def register_deploy_commands(main: click.Group) -> None:
                         "manifest": mid,
                         "changed": plan.changed,
                         "editable": plan.editable,
-                        "restarts": plan.restarts,
+                        "stacks": extra["stacks"],
+                        "roles": extra["roles"],
+                        "tools": extra["tools"],
+                        "files": extra["files"],
+                        "restarts": extra["restarts"],
+                        "restarts_complete": extra["restarts_complete"],
+                        "errors": extra["errors"],
+                        "notes": extra["notes"],
                         "resolve": {
                             "mode": manifest.resolve,
                             "checked": not no_resolve,
@@ -105,13 +125,34 @@ def register_deploy_commands(main: click.Group) -> None:
         if refused:
             console.print("[red]refused: fix the manifest so the set resolves[/]")
             raise SystemExit(3)
-        if plan.empty:
+        for name, st in sorted(extra["stacks"].items()):
+            console.print(f"  stack {name}: {st['ref']} ({(st['sha'] or '-')[:12]})")
+        for name, roles in sorted(extra["roles"].items()):
+            console.print(f"  roles from {name}: {', '.join(roles)}")
+        for name, mv in sorted(extra["tools"].items()):
+            console.print(f"  tool {name}: {mv['from'] or '-'} -> {mv['to']}")
+        for cname, cfg in sorted(extra["files"].items()):
+            for text in cfg["diffs"]:
+                console.print(f"  files of {cname}:")
+                click.echo(text.rstrip("\n"))
+        for err in extra["errors"]:
+            console.print(f"  [red]error: {err}[/]")
+        for note in extra["notes"]:
+            console.print(f"  [yellow]![/] {note}")
+        busy = diffs or extra["restarts"] or extra["tools"] or extra["errors"]
+        if plan.empty and not busy:
             console.print("[green]nothing to do: this node runs the manifest[/]")
             return
         for name, (have, want) in sorted(plan.changed.items()):
             tag = " (editable)" if name in plan.editable else ""
             console.print(f"  {name}: {have or '-'}{tag} -> {want}")
-        console.print(f"restarts: {', '.join(plan.restarts) or 'none'}")
+        if not extra["restarts_complete"]:
+            known = ", ".join(extra["restarts"])
+            console.print(
+                "restarts: incomplete, see errors" + (f" (at least: {known})" if known else "")
+            )
+            return
+        console.print(f"restarts: {', '.join(extra['restarts']) or 'none'}")
 
     @deploy.command("apply")
     @manifest_opt
@@ -134,7 +175,7 @@ def register_deploy_commands(main: click.Group) -> None:
         if shutil.which("uv") is None:
             console.print("[red]uv is required[/] (it builds the release venv)")
             sys.exit(2)
-        manifest, mid = _manifest(manifest_path, ref)
+        manifest, mid = _manifest(manifest_path, ref, node=node)
         try:
             res = apply(
                 manifest,
@@ -151,6 +192,8 @@ def register_deploy_commands(main: click.Group) -> None:
             sys.exit(1)
         for p in res.problems:
             console.print(f"  [red]x[/] {p}")
+        for n in res.notes:
+            console.print(f"  [yellow]![/] {n}")
         if res.ok:
             console.print(f"[green]deployed[/] {res.release} (previous: {res.previous})")
         elif res.rolled_back:
@@ -173,16 +216,19 @@ def register_deploy_commands(main: click.Group) -> None:
         """Roll only the manifest's tool exports (no venv rebuild)."""
         from ..deploy.rollout import apply_tools_only
 
-        manifest, _mid = _manifest(manifest_path, ref)
+        manifest, mid = _manifest(manifest_path, ref, node=node)
         res = apply_tools_only(
             manifest,
             _paths(),
             node=node,
             restart=not no_restart,
             log=lambda m: console.print(f"[dim]{m}[/]"),
+            manifest_id=mid,
         )
         for p in res.problems:
             console.print(f"  [red]x[/] {p}")
+        for n in res.notes:
+            console.print(f"  [yellow]![/] {n}")
         if res.ok:
             console.print(
                 f"[green]tools deployed[/]; restarted: {', '.join(res.restarted) or '-'}"
@@ -195,19 +241,98 @@ def register_deploy_commands(main: click.Group) -> None:
     @manifest_opt
     @node_opt
     def rollback_cmd(manifest_path, node) -> None:
-        """Switch back to the previous release and restart its services."""
-        from ..deploy.rollout import DeployError, rollback
+        """Switch back to the previous release (or tools change) and restart its services.
 
-        manifest, _mid = _manifest(manifest_path, None, fetch=False)
+        On a node whose profile has no packages (tools only), this undoes the
+        last recorded tools change. Elsewhere every tools change recorded after
+        the venv switch is undone first, newest first, and the venv switches
+        back last, only once all of them are.
+        """
+        from ..deploy import ManifestUnavailableError, rollout
+        from ..deploy.rollout import (
+            DeployError,
+            RollbackRefusedError,
+            check_tools_rollback,
+            load_state,
+            pending_tools_changes,
+        )
+
+        paths = _paths()
         try:
-            res = rollback(_paths(), list(manifest.services_for(node)))
+            manifest, _mid = _try_manifest(manifest_path, None, fetch=False, node=node)
+        except (ManifestUnavailableError, OSError, ValueError) as exc:
+            # A bad manifest commit must not block undoing the last good change:
+            # a node whose state records no venv release is tools only, and its
+            # rollback needs nothing but the change record.
+            if (load_state(paths).get("current") or {}).get("release"):
+                console.print(f"[red]manifest unavailable:[/] {exc}")
+                sys.exit(2)
+            console.print(
+                f"[yellow]manifest unavailable[/] ({exc}); this node records no venv"
+                " release, so the last recorded tools change is rolled back without it"
+            )
+            manifest = None
+        if manifest is None or not manifest.packages_for(node):
+            try:
+                res = rollout.rollback_tools(paths)
+            except RollbackRefusedError as exc:
+                console.print(f"[red]{exc}[/]")
+                console.print(_AGAIN)
+                sys.exit(1)
+            except DeployError as exc:
+                console.print(f"[red]{exc}[/]")
+                sys.exit(1)
+            _report_tools(res)
+            sys.exit(0 if res.ok else 1)
+        # Tools first, venv last. The pending set is every tools change recorded
+        # after the venv switch that state.json records, and that time only moves
+        # when the venv actually switches back: a rollback that stops partway
+        # finds the same remaining records on the next run and leaves the venv
+        # alone until every one of them is undone. Never a mixed node.
+        switched = (load_state(paths).get("current") or {}).get("at") or 0
+        pending = pending_tools_changes(paths, since=switched)
+        try:
+            check_tools_rollback(paths, pending, since=switched)
         except DeployError as exc:
             console.print(f"[red]{exc}[/]")
+            console.print(_AGAIN)
+            sys.exit(1)
+        ok = True
+        for _ in pending:
+            try:
+                tres = rollout.rollback_tools(paths)
+            except DeployError as exc:
+                console.print(f"[red]{exc}[/]")
+                console.print("the venv was not switched; run deploy rollback again")
+                sys.exit(1)
+            _report_tools(tres)
+            ok = ok and tres.ok
+        try:
+            res = rollout.rollback(paths, list(manifest.services_for(node)))
+        except DeployError as exc:
+            console.print(f"[red]{exc}[/]")
+            if pending:
+                console.print("the tools changes were rolled back; the venv was not switched")
             sys.exit(1)
         for p in res.problems:
             console.print(f"  [red]x[/] {p}")
         console.print(f"now on {res.release} (was {res.previous})")
-        sys.exit(0 if res.ok else 1)
+        sys.exit(0 if ok and res.ok else 1)
+
+    def _report_tools(res) -> None:
+        for p in res.problems:
+            console.print(f"  [red]x[/] {p}")
+        for n in res.notes:
+            console.print(f"  [yellow]![/] {n}")
+        if res.ok:
+            console.print(
+                f"tools change rolled back; restarted: {', '.join(res.restarted) or '-'}"
+            )
+            return
+        console.print(
+            "[red]the tools change was undone on disk, but restarting its units failed[/]"
+            f" ({len(res.problems)} problem(s) above); fix those units, then restart them"
+        )
 
     @deploy.command("status")
     def status_cmd() -> None:
@@ -223,7 +348,13 @@ def register_deploy_commands(main: click.Group) -> None:
             else ("directory (unmanaged)" if link.exists() else "missing")
         )
         console.print(f"{link}: {kind} -> {target}")
-        click.echo(json.dumps(load_state(paths), indent=2))
+        from ..deploy.views import last_tools_change
+
+        state = load_state(paths)
+        last = last_tools_change(paths)
+        if last:
+            state["last_tools_change"] = last
+        click.echo(json.dumps(state, indent=2))
 
     @deploy.command("drift")
     @manifest_opt
@@ -238,10 +369,18 @@ def register_deploy_commands(main: click.Group) -> None:
 
         paths = _paths()
         try:
-            manifest, _ = resolve_manifest(paths.state_dir, path=manifest_path, fetch=not offline)
+            manifest, _ = resolve_manifest(
+                paths.state_dir, path=manifest_path, fetch=not offline, node=node
+            )
         except (ManifestUnavailableError, OSError, ValueError):
             manifest = None
-        report = compute(Path.home(), paths.venv_link / "bin" / "python", manifest, node=node)
+        report = compute(
+            Path.home(),
+            paths.venv_link / "bin" / "python",
+            manifest,
+            node=node,
+            state_dir=paths.state_dir,
+        )
         if as_json:
             click.echo(
                 json.dumps(
