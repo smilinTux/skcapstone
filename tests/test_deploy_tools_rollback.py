@@ -17,6 +17,12 @@ from skcapstone.deploy import rollout, tools
 from skcapstone.deploy.manifest import Manifest
 
 
+@pytest.fixture(autouse=True)
+def _no_xdg_config_home(monkeypatch):
+    """Unit files follow XDG_CONFIG_HOME, which GitHub runners set: keep them in the test HOME."""
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+
 def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],

@@ -17,6 +17,13 @@ from skcapstone.deploy import drift, files, rollout
 from skcapstone.deploy.tools import ToolsChange
 from tests.test_deploy_stacks import _cluster, _sh, _stack_yaml
 
+
+@pytest.fixture(autouse=True)
+def _no_xdg_config_home(monkeypatch):
+    """Unit files follow XDG_CONFIG_HOME, which GitHub runners set: keep them in the test HOME."""
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+
 FILES_YAML = "files:\n  - path: ~/.hermes/.env\n    mode: block\n    source: hermes.env\n"
 UNIT = "[Service]\nExecStart=@TOOL@/bin/run\n"
 BLOCK = "sk-deploy"
