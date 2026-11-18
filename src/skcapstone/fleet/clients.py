@@ -64,6 +64,8 @@ class ClientPin:
             "sha256": self.sha256,
             "entry": self.entry,
             "env": dict(self.env),
+            "smoke": list(self.smoke),
+            "smoke_expect": self.smoke_expect,
         }
 
 
