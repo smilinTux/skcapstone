@@ -20,7 +20,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 from . import clients as spec_mod
 
@@ -84,8 +84,9 @@ def call_agent(host: str, action: str, payload: dict, *, timeout: float = 1800) 
 def reachable(host: str) -> bool:
     if is_local(host):
         return True
-    res = subprocess.run(["ssh", *SSH_OPTS, "-o", "ConnectTimeout=5", host, "true"],
-                         capture_output=True, timeout=30)
+    res = subprocess.run(
+        ["ssh", *SSH_OPTS, "-o", "ConnectTimeout=5", host, "true"], capture_output=True, timeout=30
+    )
     return res.returncode == 0
 
 
@@ -114,8 +115,11 @@ def notify(recipients: tuple[str, ...], subject: str, body: str) -> None:
     skmail = os.environ.get("SKMAIL_BIN", "skmail")
     for to in recipients:
         try:
-            subprocess.run([skmail, "send", "skfleet-clients", to, "normal", subject, body],
-                           capture_output=True, timeout=60)
+            subprocess.run(
+                [skmail, "send", "skfleet-clients", to, "normal", subject, body],
+                capture_output=True,
+                timeout=60,
+            )
         except (OSError, subprocess.TimeoutExpired):
             pass
 
@@ -184,7 +188,9 @@ def roll_host(host: str, desired: dict, *, smoke: bool, agent: Callable = call_a
     applied = agent(host, "apply", desired)
     if applied.get("error") or applied.get("errors"):
         agent(host, "rollback", {})
-        return "apply: " + "; ".join([applied.get("error", "")] + applied.get("errors", [])).strip("; ")
+        return "apply: " + "; ".join([applied.get("error", "")] + applied.get("errors", [])).strip(
+            "; "
+        )
     gated = agent(host, "gate", desired)
     if gated.get("error") or not gated.get("ok"):
         agent(host, "rollback", {})
@@ -193,7 +199,11 @@ def roll_host(host: str, desired: dict, *, smoke: bool, agent: Callable = call_a
         smoked = agent(host, "smoke", desired, timeout=1500)
         if smoked.get("error") or not smoked.get("ok"):
             agent(host, "rollback", {})
-            bad = {k: v.get("tail", "") for k, v in (smoked.get("results") or {}).items() if not v.get("ok")}
+            bad = {
+                k: v.get("tail", "")
+                for k, v in (smoked.get("results") or {}).items()
+                if not v.get("ok")
+            }
             return "smoke: " + (smoked.get("error") or json.dumps(bad)[:600])
     agent(host, "prune", desired)
     return ""
@@ -221,15 +231,23 @@ def tick(
         return Outcome("noop")
 
     halt = state.halt
-    if not force and halt.get("target") == target and now() - halt.get("at", 0) < HALT_RETRY_SECONDS:
-        return Outcome("halted", halted_at=halt.get("host", ""), reason="waiting to retry halted state")
+    if (
+        not force
+        and halt.get("target") == target
+        and now() - halt.get("at", 0) < HALT_RETRY_SECONDS
+    ):
+        return Outcome(
+            "halted", halted_at=halt.get("host", ""), reason="waiting to retry halted state"
+        )
 
     canary = spec.canary
     last = state.last_render.get(canary)
     drop = spec_mod.model_drop(last, desired.get(canary, {}))
     if not force and drop > spec.max_model_drop:
-        reason = (f"render would drop {drop:.0%} of models at once (limit {spec.max_model_drop:.0%}); "
-                  "check the gateway catalog, then run `skcapstone fleet clients apply --force`")
+        reason = (
+            f"render would drop {drop:.0%} of models at once (limit {spec.max_model_drop:.0%}); "
+            "check the gateway catalog, then run `skcapstone fleet clients apply --force`"
+        )
         return _halt(spec, state, target, canary, reason, [], mail, now)
 
     rolled: list[str] = []
@@ -264,8 +282,11 @@ def tick(
         return Outcome("partial", rolled=rolled, skipped=skipped)
     state.clear_halt()
     versions = ", ".join(f"{c.name} {c.version}" for c in spec.clients.values())
-    mail(spec.notify, "skfleet-clients ROLLED",
-         f"{versions}; configs from {spec.gateway} -> {' '.join(rolled)} (gates passed)")
+    mail(
+        spec.notify,
+        "skfleet-clients ROLLED",
+        f"{versions}; configs from {spec.gateway} -> {' '.join(rolled)} (gates passed)",
+    )
     log(f"ROLLED to {rolled}")
     return Outcome("rolled", rolled=rolled)
 
@@ -273,16 +294,31 @@ def tick(
 def _halt(spec, state, target, host, why, rolled, mail, now) -> Outcome:
     prev = state.halt
     streak = prev.get("streak", 0) + 1 if prev.get("target") == target else 1
-    state.set_halt({"target": target, "host": host, "reason": why, "at": now(), "streak": streak,
-                    "since": prev.get("since", now()) if prev.get("target") == target else now()})
-    text = (f"skfleet-clients HALTED at {host}: {why}. Rolled before it: {' '.join(rolled) or 'none'}; "
-            f"later hosts keep their previous clients and configs. Journal: "
-            f"journalctl --user -u skfleet-clients on {socket.gethostname()}")
+    state.set_halt(
+        {
+            "target": target,
+            "host": host,
+            "reason": why,
+            "at": now(),
+            "streak": streak,
+            "since": prev.get("since", now()) if prev.get("target") == target else now(),
+        }
+    )
+    text = (
+        f"skfleet-clients HALTED at {host}: {why}. "
+        f"Rolled before it: {' '.join(rolled) or 'none'}; "
+        f"later hosts keep their previous clients and configs. Journal: "
+        f"journalctl --user -u skfleet-clients on {socket.gethostname()}"
+    )
     log("HALT " + text)
     if streak == 1:
         mail(spec.notify, f"skfleet-clients HALTED at {host}", text)
     elif streak == HALT_ESCALATE:
-        mail(spec.notify, f"ESCALATE skfleet-clients stuck at {host}", f"{streak} halts in a row. {text}")
+        mail(
+            spec.notify,
+            f"ESCALATE skfleet-clients stuck at {host}",
+            f"{streak} halts in a row. {text}",
+        )
     return Outcome("halted", rolled=rolled, halted_at=host, reason=why)
 
 
@@ -294,8 +330,12 @@ def sync_repo(repo: Path) -> str:
     git = ["git", "-C", str(repo)]
     if subprocess.run([*git, "fetch", "-q", "origin", "main"], capture_output=True).returncode:
         return "fetch failed"
-    head = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    tgt = subprocess.run([*git, "rev-parse", "origin/main"], capture_output=True, text=True).stdout.strip()
+    head = subprocess.run(
+        [*git, "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    tgt = subprocess.run(
+        [*git, "rev-parse", "origin/main"], capture_output=True, text=True
+    ).stdout.strip()
     if head == tgt:
         return ""
     if subprocess.run([*git, "merge-base", "--is-ancestor", head, tgt]).returncode:
@@ -339,16 +379,19 @@ def _ver(v: str) -> tuple[int, ...]:
 def latest_version(pin: spec_mod.ClientPin) -> tuple[str, str]:
     """(version, sha256) of the newest upstream release for one client."""
     if pin.source == "npm":
-        res = subprocess.run(["npm", "view", pin.package, "version"], capture_output=True,
-                             text=True, timeout=60)
+        res = subprocess.run(
+            ["npm", "view", pin.package, "version"], capture_output=True, text=True, timeout=60
+        )
         if res.returncode:
             raise RuntimeError(f"npm view {pin.package} failed")
         return res.stdout.strip(), ""
     repo, asset = pin.upstream.get("github"), pin.upstream.get("asset")
     if not repo or not asset:
         raise RuntimeError(f"{pin.name}: release pins need upstream.github and upstream.asset")
-    req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/latest",
-                                 headers={"Accept": "application/vnd.github+json"})
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/releases/latest",
+        headers={"Accept": "application/vnd.github+json"},
+    )
     with urllib.request.urlopen(req, timeout=30) as resp:
         rel = json.loads(resp.read())
     version = str(rel.get("tag_name", "")).lstrip("v")
@@ -361,8 +404,10 @@ def latest_version(pin: spec_mod.ClientPin) -> tuple[str, str]:
 def bump_pins_text(text: str, client: str, version: str, sha256: str) -> str:
     """Rewrite one client's version (and sha256) inside pins.yaml, keeping comments."""
     lines = text.splitlines(keepends=True)
-    start = next(i for i, l in enumerate(lines) if re.match(rf"^  {re.escape(client)}:\s*$", l))
-    end = next((i for i in range(start + 1, len(lines)) if re.match(r"^  \S", lines[i])), len(lines))
+    start = next(i for i, ln in enumerate(lines) if re.match(rf"^  {re.escape(client)}:\s*$", ln))
+    end = next(
+        (i for i in range(start + 1, len(lines)) if re.match(r"^  \S", lines[i])), len(lines)
+    )
     for i in range(start + 1, end):
         if re.match(r"^    version:", lines[i]):
             lines[i] = f"    version: {version}\n"
