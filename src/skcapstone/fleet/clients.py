@@ -299,6 +299,7 @@ def render_template(
         "format": tpl["format"],
         "set": managed,
         "preserve": list(tpl.get("preserve") or []),
+        "only_existing": bool(tpl.get("only_existing", False)),
     }
 
 

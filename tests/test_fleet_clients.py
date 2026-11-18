@@ -167,6 +167,30 @@ def test_missing_secret_is_reported_not_written(tmp_path, agent):
     assert missing == ["skgateway"]
 
 
+def test_only_existing_template_never_creates_the_file(tmp_path, agent):
+    root = write_spec(tmp_path)
+    tpl = {
+        "client": "pi",
+        "file": "~/.t3/userdata/settings.json",
+        "format": "json",
+        "only_existing": True,
+        "set": {"providerInstances.pi.config.binaryPath": "{home}/.local/bin/pi"},
+    }
+    (root / "clients/templates/t3.yaml").write_text(json.dumps(tpl))
+    spec = spec_mod.load_spec(root)
+    fspec = [f for f in spec_mod.render_host(spec, "cana", ROWS)["files"] if "t3" in f["file"]][0]
+    assert agent.render_file(fspec, {})[0] is None
+    settings = agent.HOME / ".t3/userdata/settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(
+        json.dumps({"providerInstances": {"pi": {"config": {"binaryPath": "/old"}}}})
+    )
+    doc = json.loads(agent.render_file(fspec, {})[0])
+    assert doc["providerInstances"]["pi"]["config"]["binaryPath"] == f"{agent.HOME}/.local/bin/pi"
+    settings.write_text(json.dumps({"providerInstances": {}}))
+    assert json.loads(agent.render_file(fspec, {})[0]) == {"providerInstances": {}}
+
+
 def test_merge_toml_sets_top_level_only(agent):
     text = 'model = "x"\n\n[projects."/a"]\ntrust_level = "trusted"\n'
     out = agent.merge_toml(text, {"check_for_update_on_startup": False, "model": "y"})
