@@ -1,6 +1,7 @@
 # skfleet-clients: one version, one path, one config for pi, opencode, codex, claude
 
-Status: design, 2026-11-18. Owner: chiap08 authority host. Sibling of
+Status: built 2026-11-18 (code: `fleet/clients.py`, `clients_ring.py`, `clients_cli.py`,
+`data/skfleet-clients-agent.py`; units: `scripts/fleet/systemd/skfleet-clients*`). Owner: chiap08 authority host. Sibling of
 skfleet-auto-rollout (see DEPLOY-FROM-MAIN.md); it reuses that job's ring order,
 reachability probe, busy locks, HALT streak escalation and ROLLED/HALTED skmail.
 
@@ -42,18 +43,20 @@ clients:
 
 Each version installs into its own directory (`npm install --prefix
 <root>/<client>/<version>` or an unpacked, sha256-checked release tarball). The
-host's `~/.local/bin/<client>` symlink is flipped atomically (`ln -sfn tmp; mv`).
-A running session keeps its old inode, so a flip never needs the host idle. The
-previous version directory is kept for rollback; older ones are pruned.
+host's `~/.local/bin/<client>` is a generated shim (`exec <version dir>/<entry>`
+plus the pin's `env`), replaced atomically. A running session keeps its old
+binary, so a flip never needs the host idle. Whatever the shim replaced is kept
+(`<root>/_displaced/`) and an undo record lets `rollback` put it back. The
+pinned version and one older one are kept; the rest are pruned.
 
-After a host passes, shadowing installs are removed (`npm -g uninstall`, stale
-`~/.opencode/bin`). Root-owned ones (chiwk12 `/usr/local/bin/codex`) are not
-touched; drift reports them. T3 `providerInstances.binaryPath` is pointed at the
-`~/.local/bin` symlink once, so later version flips need no T3 change.
+`~/.local/bin` is ahead of `~/.npm-global/bin`, `/usr/local/bin` and `/snap/bin`
+on every ring host (measured), so older installs are shadowed, not removed;
+drift lists them. T3 `providerInstances.{pi,opencode}.config.binaryPath` is
+pointed at the shims (`templates/t3.yaml`, only where T3 already has them).
 
-Self-updaters off, via managed keys: opencode `autoupdate: false`, codex
-`check_for_update_on_startup = false`, claude `env.DISABLE_AUTOUPDATER = "1"`,
-pi's update check likewise.
+Self-updaters off: `PI_SKIP_VERSION_CHECK=1`, `OPENCODE_DISABLE_AUTOUPDATE=1` and
+`DISABLE_AUTOUPDATER=1` (claude) in the shims, opencode `autoupdate: false` and
+codex `check_for_update_on_startup = false` as managed keys.
 
 ## Configs: managed keys, not whole files
 
@@ -68,16 +71,23 @@ live file, leaving the rest as is:
   providers and the `skfleet_catalog_sync` key are left alone.
 - opencode `opencode.json`: `provider.skgateway`, `autoupdate`.
 - codex `config.toml`: the update-check key (codex models come from its own login).
-- claude `settings.json`: `env.DISABLE_AUTOUPDATER`.
+- T3 `settings.json`: the pi/opencode binaryPath.
+
+A file is rewritten only when a managed value differs, so a client reserializing
+its own file is not drift.
 
 Secrets never leave a host: the merge runs on the target (a stdlib-only payload
 over ssh, so it does not depend on the host's skcapstone version), keeps the live
 `apiKey`, and reports diffs with secret values masked. Every write keeps a
 timestamped backup under `<config dir>/backups/skfleet-clients/` (last 10).
 
+A host with no gateway key in any of its configs (chiap10 today) gets no
+generated pi/opencode config; drift shows `nokey` until a key is placed there.
+
 The pi wrapper's launch-time `sk-pi-gateway-sync.py` rewrites the skgateway
-block on every launch and would fight this; it is switched off on managed hosts
-(the 5 minute catalog watch replaces it).
+block on every launch and would fight this. The agent drops
+`~/.config/skfleet/clients-managed` on each host it manages and the wrapper skips
+the sync when that file exists (the 5 minute catalog watch replaces it).
 
 ## Triggers
 
@@ -112,7 +122,8 @@ Canary smoke (chiap08 only, and on every upstream candidate): one tiny real
 prompt per client (`pi -p`, `opencode run`, `codex exec`, `claude -p`) through
 the configured route, answer must contain a fixed token.
 
-A failed gate restores that host (previous symlink, config backups), stops the
+A halted state is retried hourly, not every tick, and mails once; the fifth
+halt in a row sends an ESCALATE skmail. A failed gate restores that host (previous symlink, config backups), stops the
 ring there (later hosts keep the old state), exits nonzero (OnFailure alert),
 skmails `HALTED at <host>` and counts toward the halt streak. A full ring skmails
 `ROLLED`. Per-host state lives in `~/.local/state/skfleet-clients/`.

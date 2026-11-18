@@ -400,7 +400,9 @@ def apply(p: dict) -> dict:
             row["skipped"] = f"missing secrets {sorted(set(missing))}"
             report["files"].append(row)
             continue
-        if new is not None and new != old:
+        # Rewrite only when a managed value differs: a pure formatting
+        # difference (T3 or pi reserializing) is not drift.
+        if new is not None and (row.get("changed") or old is None):
             undo["files"][str(path)] = backup(path) if old is not None else None
             mode = path.stat().st_mode & 0o777 if old is not None else 0o600
             write_atomic(path, new, mode)
