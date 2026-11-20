@@ -83,19 +83,25 @@ def junit_count(raw: bytes, minimum: int) -> int:
         if root.tag != "testsuites":
             raise ValueError("expected native Node testsuites")
 
-        def count(element: ET.Element, depth: int = 0) -> int:
-            """Count leaf cases; Node suite totals count immediate children."""
+        def count(element: ET.Element, depth: int = 0, suites: tuple[str, ...] = ()) -> int:
+            """Count leaf cases; Node suite totals count immediate children.
+
+            A case's ``classname`` is ``test`` (Node 22, 25, and top-level cases)
+            or, on Node 24, exactly the dotted path of its enclosing suites
+            (``outer.inner``). Anything else is refused.
+            """
             if depth > 64:
                 raise ValueError("JUnit nesting exceeds bound")
             total = 0
             for child in element:
                 if child.tag == "testsuite":
-                    subtotal = count(child, depth + 1)
+                    subtotal = count(child, depth + 1, (*suites, child.get("name", "")))
                     total += subtotal
                 elif child.tag == "testcase":
+                    allowed = {"test"} | ({".".join(suites)} if suites else set())
                     if (
                         not child.get("name")
-                        or child.get("classname") != "test"
+                        or child.get("classname") not in allowed
                         or len(child)
                         or any(key in child.attrib for key in ("failure", "error", "skipped"))
                     ):
