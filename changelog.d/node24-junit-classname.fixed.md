@@ -1,0 +1,1 @@
+Native Node JUnit evidence accepts Node 24's `classname` (the dotted path of the enclosing suites) as well as `test`; any other classname is still refused. CI runners on Node 24 failed `test_real_node_nested_junit` on every PR.
