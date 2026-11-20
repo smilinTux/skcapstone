@@ -1,0 +1,1 @@
+`deploy apply` smokes start from the systemd user manager's environment (caller values still win), so a rollout over a non-interactive ssh no longer fails `skmemory health` for want of `SKAGENT`; `deploy drift --alert` finds `sk-alert` next to the interpreter when systemd's PATH lacks the venv bin.

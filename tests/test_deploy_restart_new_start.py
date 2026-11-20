@@ -132,3 +132,45 @@ def test_unit_without_invocation_id_keeps_the_is_active_check(monkeypatch):
         return subprocess.CompletedProcess(cmd, 0, out, "")
 
     assert rollout.restart_units(["g.service"], runner) == []
+
+
+def test_smoke_env_starts_from_the_user_manager_env(monkeypatch):
+    """A smoke sees environment.d values even when the caller's shell lacks them."""
+    from pathlib import Path
+
+    manifest = Manifest.model_validate({"packages": {}, "smoke": ["skmemory health"]})
+    monkeypatch.delenv("SKAGENT", raising=False)
+    monkeypatch.setenv("SK_CALLER_ONLY", "caller")
+    monkeypatch.setenv("SK_BOTH", "caller-wins")
+    seen = {}
+
+    def runner(cmd, **kw):
+        if cmd == ["systemctl", "--user", "show-environment"]:
+            out = "SKAGENT=lumina\nSK_BOTH=manager\nPATH=/manager/bin\nnot a pair\n"
+            return subprocess.CompletedProcess(cmd, 0, out, "")
+        if cmd[:2] == ["bash", "-c"]:
+            seen.update(kw["env"])
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    assert rollout.smoke(manifest, [], Path("/v"), runner) == []
+    assert seen["SKAGENT"] == "lumina"
+    assert seen["SK_CALLER_ONLY"] == "caller"
+    assert seen["SK_BOTH"] == "caller-wins"
+    assert seen["PATH"].startswith("/v/bin:") and "/manager/bin" not in seen["PATH"]
+
+
+def test_smoke_env_without_a_user_manager_is_the_caller_env(monkeypatch):
+    from pathlib import Path
+
+    manifest = Manifest.model_validate({"packages": {}, "smoke": ["true"]})
+    monkeypatch.setenv("SK_CALLER_ONLY", "caller")
+    seen = {}
+
+    def runner(cmd, **kw):
+        if cmd[0] == "systemctl":
+            raise FileNotFoundError("systemctl")
+        seen.update(kw["env"])
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    assert rollout.smoke(manifest, [], Path("/v"), runner) == []
+    assert seen["SK_CALLER_ONLY"] == "caller"

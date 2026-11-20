@@ -543,6 +543,31 @@ def restart_units(
     return failed
 
 
+def user_manager_env(runner: Runner = subprocess.run) -> dict[str, str]:
+    """The systemd user manager's environment (what the restarted units see).
+
+    A smoke must not depend on the caller's shell. Over a non-interactive ssh,
+    ``environment.d`` is not loaded, so ``SKAGENT`` and friends are unset and
+    ``skmemory health`` refuses to pick an agent: the .41 laptop rollout of
+    2026-11-20 failed its smoke and rolled back for that reason alone. The
+    smoke starts from this environment and the caller's own values win on top,
+    so ``SKAGENT=jarvis skcapstone deploy apply`` still means jarvis. Empty when
+    there is no user manager.
+    """
+    try:
+        proc = _run(["systemctl", "--user", "show-environment"], runner, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if proc.returncode != 0:
+        return {}
+    env: dict[str, str] = {}
+    for line in (proc.stdout or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key and key.replace("_", "").isalnum():
+            env[key] = value
+    return env
+
+
 def smoke(
     manifest: Manifest,
     units: list[str],
@@ -559,7 +584,9 @@ def smoke(
     ``journalctl --user _SYSTEMD_INVOCATION_ID=$SK_DEPLOY_INVOCATION_ID`` or
     ``journalctl --since "$SK_DEPLOY_SINCE"``.
     """
-    env = dict(os.environ, PATH=f"{venv / 'bin'}:{os.environ.get('PATH', '')}")
+    env = dict(user_manager_env(runner))
+    env.update(os.environ)
+    env["PATH"] = f"{venv / 'bin'}:{os.environ.get('PATH', '')}"
     services = manifest.services_for(node)
     jobs: list[tuple[str, dict]] = [(cmd, env) for cmd in manifest.smoke]
     for u in units:
