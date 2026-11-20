@@ -612,3 +612,19 @@ def test_report_mode_apply_does_not_resolve(tmp_path, monkeypatch):
     runner, seen = _capturing_runner(1, "No solution found")
     rollout.apply(_m(), "abc123", paths, "3.12", runner)
     assert "reqs" not in seen
+
+
+def test_alert_sender_falls_back_to_the_venv_bin(tmp_path, monkeypatch):
+    """systemd's PATH may miss the venv bin (the .41 laptop): use sk-alert beside python."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    py = bindir / "python"
+    py.write_text("")
+    alert = bindir / "sk-alert"
+    alert.write_text("#!/bin/sh\n")
+    alert.chmod(0o755)
+    monkeypatch.setattr(drift_mod.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(drift_mod.sys, "executable", str(py))
+    assert drift_mod.find_sender() == str(alert)
+    alert.chmod(0o644)
+    assert drift_mod.find_sender() is None

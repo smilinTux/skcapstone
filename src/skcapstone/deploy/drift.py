@@ -13,6 +13,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -189,6 +190,21 @@ def drifted_files(state_dir: Path) -> list[str]:
     return out
 
 
+def find_sender() -> Optional[str]:
+    """The ``sk-alert`` executable: on PATH, else next to this interpreter.
+
+    The drift timer runs under the systemd user manager, whose PATH need not
+    include the venv's ``bin/`` (the .41 laptop, 2026-11-20: ``alert:
+    no-sender`` every day, so its five version findings never reached anyone).
+    ``sk-alert`` ships in the same venv as skcapstone, so look there too.
+    """
+    found = shutil.which("sk-alert")
+    if found:
+        return found
+    beside = Path(sys.executable).parent / "sk-alert"
+    return str(beside) if os.access(beside, os.X_OK) else None
+
+
 def alert_on_change(report: DriftReport, state_file: Path, sender: Optional[str] = None) -> str:
     """Send one alert when the finding set changed since the last run.
 
@@ -211,7 +227,7 @@ def alert_on_change(report: DriftReport, state_file: Path, sender: Optional[str]
     digest = report.digest() if report.lines() else ""
     if digest == last.get("digest", ""):
         return "unchanged"
-    sender = sender or shutil.which("sk-alert")
+    sender = sender or find_sender()
     host = socket.gethostname()
     group = f"deploy/drift/{host}"
     if sender is None:
