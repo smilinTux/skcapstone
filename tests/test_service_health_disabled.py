@@ -75,8 +75,30 @@ def test_enabled_backends_are_still_probed(monkeypatch, no_env):
 
     names = {r["name"] for r in service_health.check_all_services()}
 
-    assert "skvector (Qdrant)" in names
+    # skvector is retired: an enabled yaml no longer brings its probe back.
+    assert "skvector (Qdrant)" not in names
     assert "skgraph (FalkorDB)" in names
+
+
+def test_retired_skvector_not_probed_without_explicit_url(monkeypatch, no_env):
+    """No env URL and no yaml: no localhost:6333 fallback probe, no false incident."""
+    _stub_probes(monkeypatch)
+    monkeypatch.setattr(service_health, "_load_agent_yaml", lambda name, agent=None: {})
+
+    names = {r["name"] for r in service_health.check_all_services()}
+
+    assert "skvector (Qdrant)" not in names
+
+
+def test_skvector_url_disabled_is_not_probed(monkeypatch, no_env):
+    """SKMEMORY_SKVECTOR_URL=disabled keeps the probe off."""
+    _stub_probes(monkeypatch)
+    monkeypatch.setenv("SKMEMORY_SKVECTOR_URL", "disabled")
+    monkeypatch.setattr(service_health, "_load_agent_yaml", lambda name, agent=None: {})
+
+    names = {r["name"] for r in service_health.check_all_services()}
+
+    assert "skvector (Qdrant)" not in names
 
 
 def test_env_override_wins_over_disabled_config(monkeypatch, no_env):
