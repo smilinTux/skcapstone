@@ -63,8 +63,10 @@ from ..itil import ITILManager
 from . import (
     act_dispatch,
     action_ledger,
+    actuator,
     decisions,
     dispatch,
+    fleet_adapter,
     loop,
     node_local,
     policy,
@@ -72,6 +74,122 @@ from . import (
     safety,
     skchat_adapter,
 )
+
+# ── Throwaway signed CAB grants (card bada5c86) ───────────────────────────────
+#
+# A human approval only counts when the vote stores a signed grant that verifies
+# against a pinned approver key, so the drill signs with in-memory throwaway keys
+# and pins them in a file INSIDE the guarded drill root. ``run_all`` points the
+# pin readers at that file for the run and restores them after. Nothing here can
+# write anywhere else: the root must be one ``fleet_drill`` owns.
+
+
+class _DrillGrants:
+    PASSPHRASE = "drill-throwaway-key"
+
+    def __init__(self, root: Path) -> None:
+        owned = fleet_drill.require_owned_root(root)
+        self.pin_path = owned / "cab-approvers.json"
+        self._keys: dict[str, Any] = {}
+        self._approvers: list[dict] = []
+        self._write()
+
+    def _write(self) -> None:
+        self.pin_path.write_text(json.dumps({"approvers": self._approvers}), encoding="utf-8")
+
+    def _key(self, name: str):
+        from capauth.crypto import get_backend
+        from capauth.models import Algorithm
+
+        from ..cab_approval import identity_key
+
+        k = identity_key(name)
+        if k not in self._keys:
+            self._keys[k] = get_backend().generate_keypair(
+                k, f"{k}@drill.invalid", self.PASSPHRASE, algorithm=Algorithm.ED25519
+            )
+            self._approvers.append(
+                {
+                    "identity": k,
+                    "fingerprint": self._keys[k].fingerprint,
+                    "roles": ["owner", "approver"],
+                    "backend": "pgpy",
+                    "public_key": self._keys[k].public_armor,
+                }
+            )
+            self._write()
+        return self._keys[k]
+
+    def envelope(
+        self,
+        change_id: str,
+        issuer: str,
+        role: str = "approver",
+        decision: str = "approved",
+        issued_at: datetime | None = None,
+    ) -> dict:
+        import secrets
+
+        from capauth.crypto import get_backend
+
+        from ..operator_authorization import AuthorizationEnvelope, authorization_id
+
+        bundle = self._key(issuer)
+        now = issued_at or datetime.now(timezone.utc)
+        env = AuthorizationEnvelope(
+            authorization_id="pending",
+            issuer=issuer,
+            issuer_role=role,
+            issuer_fingerprint=bundle.fingerprint,
+            action=f"itil.cab.vote.{decision}",
+            target="drill-target",
+            change_id=change_id,
+            scope="drill-scope",
+            issued_at=now.isoformat(),
+            expires_at=(now + timedelta(minutes=10)).isoformat(),
+            nonce=secrets.token_urlsafe(24),
+        )
+        env.authorization_id = authorization_id(env)
+        env.signature = get_backend().sign(
+            env.signing_bytes(), bundle.private_armor, self.PASSPHRASE
+        )
+        return env.model_dump()
+
+
+_GRANTS: _DrillGrants | None = None
+
+
+def _grants() -> _DrillGrants:
+    if _GRANTS is None:
+        raise RuntimeError("signed drill grants exist only inside run_all")
+    return _GRANTS
+
+
+def cast_signed_vote(
+    itil: Any,
+    change_id: str,
+    subject: str,
+    role: str = "approver",
+    issued_at: datetime | None = None,
+) -> Any:
+    from ..cab_approval import record_signed_vote
+
+    env = _grants().envelope(change_id, subject, role, issued_at=issued_at)
+    return record_signed_vote(itil, env)
+
+
+def _pin_targets() -> list[tuple[Any, str]]:
+    from .. import cab_approval
+
+    targets: list[tuple[Any, str]] = [(cab_approval, "APPROVERS_FILE")]
+    try:
+        import skcoord.cab_authorization as skcoord_pin
+
+        targets.append((skcoord_pin, "APPROVERS_FILE"))
+    except ImportError:  # an skcoord release without signed-grant verification
+        pass
+    return targets
+
 
 SCHEMA_NOTE = "ATLAS P3.2 fault-injection drill (card b993eaaa, epic fb3cc09d)"
 
@@ -1009,33 +1127,85 @@ def _major_explain() -> dict:
     return explain
 
 
+def _auto_normal_change(itil: ITILManager, title: str = "restart telegram bridge") -> Any:
+    """A normal change with the auto-normal shape, bound to the bridge restart: the fold
+    approves it with no human, which is one of the two ways ATLAS may act."""
+    return itil.propose_change(
+        title=title,
+        change_type="normal",
+        risk="low",
+        rollback_plan="restart again",
+        created_by="operator",
+        tags=[
+            "operator",
+            "auto-normal",
+            dispatch.change_binding_tag("skchat", "restart-telegram-bridge", "telegram-bridge"),
+        ],
+    )
+
+
+def _ledger_intent(
+    ctx: DrillContext,
+    ledger: action_ledger.ActionLedger,
+    change_id: str,
+    tag: str,
+    *,
+    lane: str = "auto",
+    action: str = "restart-telegram-bridge",
+    created: datetime | None = None,
+    catalog_generation: str | None = None,
+) -> str:
+    """Write a PROPOSED intent straight into the ledger, the way the loop records one."""
+    created = created or datetime.now(timezone.utc)
+    core = action_ledger.ActionIntent(
+        condition_fingerprint=f"fp-{tag}-{change_id}",
+        application="skchat",
+        target_kind="CI",
+        target_id="telegram-bridge",
+        action=action,
+        catalog_generation=catalog_generation or _current_catalog_generation(ctx),
+        created_at=created,
+        itil_change_id=change_id,
+        condition_type="BridgeAlive",
+    )
+    ledger.create(core, actor="atlas-p32-drill")
+    for nxt, detail in (
+        (action_ledger.ActionState.DIAGNOSED, {}),
+        (action_ledger.ActionState.PROPOSED, {"disposition": lane, "evidence": fresh_evidence()}),
+    ):
+        ledger.append(
+            core.intent_id, nxt, occurred_at=created, actor="atlas-p32-drill", detail=detail
+        )
+    return core.intent_id
+
+
 def scenario_dispatcher_full_arc(ctx: DrillContext) -> ScenarioResult:
-    """The card's headline acceptance criterion (cf12b21d / SKW-AUTONOMY-E3):
-    a MAJOR proposal parks, a simulated human CAB-approves via
-    ``dispatch.resolve_decision`` (never the literal ``by="human"``), the
-    dispatcher appends AUTHORIZED carrying the change id and the fold's own
-    approval provenance, the CAPTURED actuation fires (no real systemd), the
-    postcondition verifies against the REAL skchat observer, and the ledger
-    lineage reads OBSERVED through VERIFIED end to end."""
-    slug = "s18-dispatcher-full-arc"
+    """Card f8dd9441: an escalation is REPORT-ONLY from end to end.
+
+    A MAJOR proposal escalates. The loop writes one acknowledge-only decision record and
+    nothing else: no ITIL change, no ledger intent. Approving that record refuses before any
+    write and names ratification as the way to let ATLAS act; rejecting it acknowledges it.
+    The dispatcher then finds nothing to run, and the captured runner raises if called.
+    """
+    slug = "s18-escalation-report-only"
     itil = ITILManager(ctx.itil_home)
     ledger = ctx.scenario_ledger(slug)
-    decisions_dir = ctx.decisions_dir / slug
+    decisions_dir = str(ctx.decisions_dir / slug)
 
     ctx.inject_wedge()
     assert ctx.bridge_alive() is False, "harness bug: wedge did not fire"
     proposal = ctx.wedge_proposal()
-
-    # Pass 1: propose. No apply_fn wired -- a MAJOR proposal must never reach
-    # one; this pass only observes, diagnoses, drafts the ITIL change, parks
-    # the decision, and stops.
-    park_result = loop.run_once(
+    changes_before = len(itil.list_changes())
+    calls_before = len(ctx.calls)
+    res = loop.run_once(
         ctx.paths,
         now_iso=_now_iso(),
         propose=lambda b, r: [proposal],
         explain=_major_explain(),
-        decisions_dir=str(decisions_dir),
-        apply_fn=None,
+        decisions_dir=decisions_dir,
+        apply_fn=act_dispatch.build_apply_fn(
+            ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
+        ),
         execute=True,
         emit=lambda _m: None,
         execution_state=ctx.scenario_state(slug),
@@ -1043,162 +1213,160 @@ def scenario_dispatcher_full_arc(ctx: DrillContext) -> ScenarioResult:
         ledger_actor="atlas-p32-drill",
         itil=itil,
     )
-    outcome0 = park_result["outcomes"][0] if park_result["outcomes"] else {}
-    intent_id = outcome0.get("intent_id")
-    parked = decisions.list_pending(str(decisions_dir))
+    outcome0 = res["outcomes"][0] if res["outcomes"] else {}
+    parked = decisions.list_pending(decisions_dir)
 
-    change_id = ledger.read_intent(intent_id).itil_change_id if intent_id else None
-    linked_on_decision = bool(
-        parked and parked[0]["options"][0].get("itil_change_id") == change_id
-    )
-
-    # A simulated human CAB-approves through the write-through path -- this
-    # is the ONLY place a CAB vote gets submitted; by="human" is nowhere.
+    refused = None
+    try:
+        dispatch.resolve_decision(
+            decisions_dir,
+            itil,
+            parked[0]["id"],
+            approve=True,
+            choice=0,
+            subject="capauth:drill-human@scratch",
+            resolved_iso=_now_iso(),
+        )
+    except dispatch.ReportOnlyDecisionError as exc:
+        refused = str(exc)
+    still_pending = len(decisions.list_pending(decisions_dir)) == 1
     dispatch.resolve_decision(
-        str(decisions_dir),
+        decisions_dir,
         itil,
         parked[0]["id"],
-        approve=True,
-        choice=0,
+        approve=False,
+        choice=None,
         subject="capauth:drill-human@scratch",
         resolved_iso=_now_iso(),
     )
-    fold_after_approval = [c for c in itil.list_changes() if c.id == change_id][0]
-
-    # Pass 2 (the slow lane, `skoperator honor-pending`'s own code path): the
-    # dispatcher independently re-reads the fold, authorizes, and actuates
-    # through the CAPTURED runner.
-    apply_fn = act_dispatch.build_apply_fn(
-        ctx.paths, _now_iso(), runner=ctx.runner_success_and_heal(), itil=itil
-    )
-    rollback_fn = act_dispatch.build_rollback_fn(ctx.paths)
-    outcomes = dispatch.run_dispatch_pass(
+    acknowledged = decisions.list_pending(decisions_dir) == []
+    swept = dispatch.run_dispatch_pass(
         ctx.paths,
         ledger,
         itil,
         adapters=loop.ADAPTERS,
         problem_types=loop.PROBLEM_WHEN_TRUE,
-        apply_fn=apply_fn,
-        rollback_fn=rollback_fn,
+        apply_fn=act_dispatch.build_apply_fn(
+            ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
+        ),
         execution_state=ctx.scenario_state(slug),
-        decisions_dir=str(decisions_dir),
+        decisions_dir=decisions_dir,
         now_iso=_now_iso(),
         actor="atlas-p32-drill",
         emit=lambda _m: None,
     )
-    dispatch_outcome = outcomes[0] if outcomes else None
-
-    events = ledger.events(intent_id) if intent_id else []
-    lineage = [e.state.value for e in events]
-    authorized_event = next((e for e in events if e.state.value == "authorized"), None)
-
     passed = (
         outcome0.get("disposition") == "escalate"
+        and str(outcome0.get("outcome", "")).startswith("escalated (report-only")
         and bool(parked)
-        and linked_on_decision
-        and fold_after_approval.status.value == "approved"
-        and dispatch_outcome is not None
-        and dispatch_outcome.outcome == "verified"
-        and lineage == ["observed", "diagnosed", "proposed", "authorized", "executing", "verified"]
-        and authorized_event is not None
-        and authorized_event.detail.get("itil_change_id") == change_id
-        and "approval_provenance" in authorized_event.detail
-        and ctx.bridge_alive() is True
+        and parked[0]["options"][0].get("report_only") is True
+        and ledger.list_intents() == []
+        and len(itil.list_changes()) == changes_before
+        and refused is not None
+        # A major change can never be automated: the hint says so, not "ratify it".
+        and "cannot help" in refused
+        and "apps ratify" not in refused
+        and still_pending
+        and acknowledged
+        and swept == []
+        and len(ctx.calls) == calls_before
+        and ctx.bridge_alive() is False
     )
+    ctx.heal_wedge()
     return ScenarioResult(
-        name="18. dispatcher full arc: park -> CAB approve -> AUTHORIZED -> actuate -> VERIFIED",
+        name="18. an escalation is report-only: no change, no intent, approve refuses",
         passed=passed,
         evidence={
-            "intent_id": intent_id,
-            "itil_change_id": change_id,
-            "parked_decision_linked_to_change": linked_on_decision,
-            "fold_status_after_cab_vote": fold_after_approval.status.value,
-            "dispatch_outcome": dispatch_outcome.outcome if dispatch_outcome else None,
-            "lineage": lineage,
-            "authorized_detail": authorized_event.detail if authorized_event else None,
-            "bridge_alive_after": ctx.bridge_alive(),
+            "loop_outcome": outcome0.get("outcome"),
+            "decision_report_only": parked[0]["options"][0].get("report_only") if parked else None,
+            "intents_written": len(ledger.list_intents()),
+            "changes_written": len(itil.list_changes()) - changes_before,
+            "approve_refusal": refused,
+            "acknowledged_by_reject": acknowledged,
+            "dispatch_pass": [o.outcome for o in swept],
+            "physical_calls": len(ctx.calls) - calls_before,
         },
-        note="the propose-to-approve-to-act handoff cf12b21d exists to build: a MAJOR "
-        "proposal that used to be a dead end at park now actuates once, and only "
-        "once, a human's CAB vote folds the linked ITIL change approved",
+        note="ATLAS has two gates (the freeze, and one-time ratification or auto-normal); an "
+        "escalation gets an acknowledge-only record, and no human approval can make ATLAS run "
+        "it (card f8dd9441)",
     )
 
 
 def scenario_dispatcher_unapproved_never_actuates(ctx: DrillContext) -> ScenarioResult:
-    """Negative test: fails against pre-change behaviour (there was no
-    dispatcher to fail; nothing downstream ever re-read a resolved OR
-    unresolved decision at all). A parked, NOT-yet-approved change must never
-    actuate: the captured runner is `runner_boom`, which raises if it is ever
-    invoked."""
-    slug = "s19-dispatcher-unapproved"
+    """Card f8dd9441: a human CAB vote never makes ATLAS actuate.
+
+    An escalate-lane intent written the way an older loop wrote one, behind a change that a
+    pinned human approver has signed off, is refused as report-only before anything is
+    spent: it stays PROPOSED, the change stays approved, and the captured runner (which
+    raises if called) never runs. The same holds for an auto-lane intent riding the voted
+    change.
+    """
+    slug = "s19-human-vote-never-actuates"
     itil = ITILManager(ctx.itil_home)
     ledger = ctx.scenario_ledger(slug)
-    decisions_dir = ctx.decisions_dir / slug
-
     ctx.inject_wedge()
-    proposal = ctx.wedge_proposal()
-    park_result = loop.run_once(
-        ctx.paths,
-        now_iso=_now_iso(),
-        propose=lambda b, r: [proposal],
-        explain=_major_explain(),
-        decisions_dir=str(decisions_dir),
-        apply_fn=None,
-        execute=True,
-        emit=lambda _m: None,
-        execution_state=ctx.scenario_state(slug),
-        lifecycle_ledger=ledger,
-        ledger_actor="atlas-p32-drill",
-        itil=itil,
+    voted = itil.propose_change(
+        title="restart telegram bridge",
+        change_type="normal",
+        risk="low",
+        rollback_plan="restart again",
+        created_by="atlas-p32-drill",
+        tags=[
+            "operator",
+            dispatch.change_binding_tag("skchat", "restart-telegram-bridge", "telegram-bridge"),
+        ],
     )
-    intent_id = park_result["outcomes"][0]["intent_id"]
-    # Deliberately NOT approved: no CAB vote submitted.
+    cast_signed_vote(itil, voted.id, subject="capauth:drill-human@scratch", role="approver")
+    escalated_id = _ledger_intent(ctx, ledger, voted.id, slug + "-esc", lane="escalate")
+    auto_id = _ledger_intent(ctx, ledger, voted.id, slug + "-auto", lane="auto")
 
     calls_before = len(ctx.calls)
-    apply_fn = act_dispatch.build_apply_fn(
-        ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
-    )
     outcomes = dispatch.run_dispatch_pass(
         ctx.paths,
         ledger,
         itil,
-        adapters=loop.ADAPTERS,
+        adapters={"skchat": skchat_adapter.observe},
         problem_types=loop.PROBLEM_WHEN_TRUE,
-        apply_fn=apply_fn,
+        apply_fn=act_dispatch.build_apply_fn(
+            ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
+        ),
         execution_state=ctx.scenario_state(slug),
-        decisions_dir=str(decisions_dir),
         now_iso=_now_iso(),
         actor="atlas-p32-drill",
         emit=lambda _m: None,
     )
-    outcome = outcomes[0] if outcomes else None
+    by_id = {o.intent_id: o.outcome for o in outcomes}
+    status = next(c for c in itil.list_changes() if c.id == voted.id).status.value
     passed = (
-        outcome is not None
-        and outcome.outcome.startswith("pending:")
-        and ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+        all(
+            by_id.get(i, "").startswith(dispatch.REPORT_ONLY_REFUSAL)
+            and ledger.current_state(i) is action_ledger.ActionState.PROPOSED
+            for i in (escalated_id, auto_id)
+        )
+        and status == "approved"
         and ctx.bridge_alive() is False
-        and len(ctx.calls) == calls_before  # runner_boom would have raised had it been called
+        and len(ctx.calls) == calls_before
     )
+    ctx.heal_wedge()
     return ScenarioResult(
-        name="19. unapproved change never actuates",
+        name="19. a human CAB vote never makes ATLAS actuate",
         passed=passed,
         evidence={
-            "intent_id": intent_id,
-            "dispatch_outcome": outcome.outcome if outcome else None,
-            "ledger_state": ledger.current_state(intent_id).value,
+            "escalate_lane_intent": by_id.get(escalated_id),
+            "auto_lane_intent_on_a_voted_change": by_id.get(auto_id),
+            "change_status_after": status,
+            "physical_calls": len(ctx.calls) - calls_before,
         },
-        note="the ITIL fold never received a qualifying CAB approval, so the "
-        "dispatcher leaves the intent PROPOSED and never calls apply_fn",
+        note="the dispatcher refuses an intent whose approval would come from a human vote, "
+        "before the approval is spent (card f8dd9441)",
     )
 
 
 def scenario_dispatcher_unlinked_decision_never_actuates(ctx: DrillContext) -> ScenarioResult:
-    """Negative test: fails against pre-change behaviour, where `decide
-    --approve` wrote `by="human"` and printed success unconditionally, no
-    matter what the decision's option carried. A decision parked with no
-    itil_change_id (never bound to a change -- the failure mode of any path
-    that skips the loop's own drafting step) must refuse write-through
-    approval BEFORE any write, not merely fail to actuate later."""
+    """Card f8dd9441: approving a decision refuses BEFORE any write, whatever it carries.
+
+    Decisions are acknowledge-only. An approval of this one (no ITIL change behind it)
+    raises, leaves the record pending, and touches no change or vote."""
     slug = "s20-dispatcher-unlinked-decision"
     itil = ITILManager(ctx.itil_home)
     decisions_dir = str(ctx.decisions_dir / slug)
@@ -1224,122 +1392,86 @@ def scenario_dispatcher_unlinked_decision_never_actuates(ctx: DrillContext) -> S
             subject="capauth:drill-human@scratch",
             resolved_iso=_now_iso(),
         )
-    except dispatch.UnauthorizedDecisionError as exc:
+    except dispatch.ReportOnlyDecisionError as exc:
         raised = str(exc)
 
     passed = (
         raised is not None
-        and "no ITIL change linked" in raised
+        and "can never be approved" in raised
         and len(decisions.list_pending(decisions_dir)) == 1  # left pending, not resolved
         and len(itil.list_changes()) == changes_before  # no change/vote was ever touched
     )
     return ScenarioResult(
-        name="20. decisions-store-only approval (no linked change) never actuates",
+        name="20. approving a decision refuses before any write",
         passed=passed,
         evidence={"raised": raised, "still_pending": decisions.list_pending(decisions_dir)},
-        note="resolve_decision refuses BEFORE any write when the chosen option carries no "
-        "itil_change_id; a caller (the skoperator decide CLI) that fails to catch this "
-        "never gets to print success either",
+        note="resolve_decision refuses every approval before any write; a caller (the "
+        "skoperator decide CLI) that fails to catch this never gets to print success either",
     )
 
 
 def scenario_dispatcher_stale_catalog_generation_escalates(ctx: DrillContext) -> ScenarioResult:
-    """Negative test: fails against pre-change behaviour (no re-classification
-    at dispatch time existed at all). The intent is proposed and CAB-approved
-    against one catalog_generation; a human then re-touches the skchat
-    OperatorApp catalog record (generation bumps) before the dispatcher's
-    pass runs. The stale approval must refuse and escalate, never actuate."""
+    """A stale catalog_generation refuses without authorizing.
+
+    An auto-lane intent is proposed against one catalog_generation of the skchat
+    OperatorApp, behind an auto-normal change. A human then re-touches the catalog record
+    (generation bumps) before the dispatcher's pass runs. The stale intent must refuse,
+    never actuate, and never write AUTHORIZED."""
     slug = "s21-dispatcher-stale-generation"
     itil = ITILManager(ctx.itil_home)
     ledger = ctx.scenario_ledger(slug)
-    decisions_dir = ctx.decisions_dir / slug
     human = _human_writer()
 
-    # Establish the BASELINE live generation the proposal will be bound to
-    # (ctx.paths' operatorapp/skchat record may already exist from an earlier
-    # scenario in this same drill run, so read the real resulting generation
-    # back from write_spec rather than assuming "1").
     baseline_record = store.write_spec(
         ctx.paths, "operatorapp", "skchat", {"ratifiedStandardActions": []}, writer=human
     )
     baseline_generation = str(baseline_record["generation"])
-
     ctx.inject_wedge()
-    proposal = ctx.wedge_proposal(catalog_generation=baseline_generation)
-    park_result = loop.run_once(
-        ctx.paths,
-        now_iso=_now_iso(),
-        propose=lambda b, r: [proposal],
-        explain=_major_explain(),
-        decisions_dir=str(decisions_dir),
-        apply_fn=None,
-        execute=True,
-        emit=lambda _m: None,
-        execution_state=ctx.scenario_state(slug),
-        lifecycle_ledger=ledger,
-        ledger_actor="atlas-p32-drill",
-        itil=itil,
+    change = _auto_normal_change(itil)
+    intent_id = _ledger_intent(
+        ctx, ledger, change.id, slug, catalog_generation=baseline_generation
     )
-    intent_id = park_result["outcomes"][0]["intent_id"]
-    change_id = ledger.read_intent(intent_id).itil_change_id
-    parked = decisions.list_pending(str(decisions_dir))
-    dispatch.resolve_decision(
-        str(decisions_dir),
-        itil,
-        parked[0]["id"],
-        approve=True,
-        choice=0,
-        subject="capauth:drill-human@scratch",
-        resolved_iso=_now_iso(),
-    )
-
-    # The live skchat catalog moves on (a human re-touches it) AFTER approval,
-    # so the approval is now stale: the live generation no longer matches
-    # baseline_generation the intent was proposed and approved against.
     store.write_spec(
         ctx.paths, "operatorapp", "skchat", {"ratifiedStandardActions": []}, writer=human
     )
 
     calls_before = len(ctx.calls)
-    apply_fn = act_dispatch.build_apply_fn(
-        ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
-    )
     outcomes = dispatch.run_dispatch_pass(
         ctx.paths,
         ledger,
         itil,
-        adapters=loop.ADAPTERS,
+        adapters={"skchat": skchat_adapter.observe},
         problem_types=loop.PROBLEM_WHEN_TRUE,
-        apply_fn=apply_fn,
+        apply_fn=act_dispatch.build_apply_fn(
+            ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
+        ),
         execution_state=ctx.scenario_state(slug),
-        decisions_dir=str(decisions_dir),
         now_iso=_now_iso(),
         actor="atlas-p32-drill",
         emit=lambda _m: None,
     )
-    outcome = outcomes[0] if outcomes else None
+    outcome = next((o for o in outcomes if o.intent_id == intent_id), None)
     passed = (
         outcome is not None
         and outcome.outcome.startswith("refused:")
         and "stale catalog_generation" in outcome.outcome
-        and ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
         and "authorized" not in [e.state.value for e in ledger.events(intent_id)]
         and ctx.bridge_alive() is False
-        and len(ctx.calls) == calls_before  # runner_boom never ran
+        and len(ctx.calls) == calls_before
     )
+    ctx.heal_wedge()
     return ScenarioResult(
         name="21. stale catalog_generation refuses without authorizing",
         passed=passed,
         evidence={
             "intent_id": intent_id,
-            "itil_change_id": change_id,
+            "itil_change_id": change.id,
             "dispatch_outcome": outcome.outcome if outcome else None,
             "ledger_state": ledger.current_state(intent_id).value,
         },
-        note="a real, approved CAB vote is not enough once the ratified catalog has moved "
-        "on: the dispatcher's own re-classification at dispatch time refuses the stale "
-        "approval, AFTER the human-approval check, leaving the intent PROPOSED with no "
-        "AUTHORIZED written (round 4: a stale catalog must not close an intent)",
+        note="an approved change is not enough once the catalog has moved on: the "
+        "dispatcher's own re-classification at dispatch time refuses the stale intent and "
+        "never writes AUTHORIZED",
     )
 
 
@@ -2075,9 +2207,7 @@ def _leftover_intent_scenario(ctx: DrillContext) -> ScenarioResult:
     auto-approved STANDARD change whose stored evidence is a day old, and one whose
     evidence is fresh but whose condition has since cleared. ``run_dispatch_pass``
     (what ``skoperator honor-pending`` runs) must refuse both without calling the
-    actuator, and void them so they cannot return. A human-approved intent for a
-    condition that is still firing still actuates, because the dispatcher re-observes
-    rather than distrusting the human.
+    actuator, and void them so they cannot return.
     """
     slug = "s24-leftover-intent"
     itil = ITILManager(ctx.itil_home)
@@ -2196,19 +2326,17 @@ def scenario_leftover_intent_is_not_actuated_later(ctx: DrillContext) -> Scenari
 def scenario_escalated_proposal_needs_a_human_and_keeps_its_decision(
     ctx: DrillContext,
 ) -> ScenarioResult:
-    """Review round 3: an ESCALATED proposal never gets an auto-approving change.
+    """An ESCALATED standard-class proposal never gets a change ATLAS could run.
 
-    The old loop typed the ITIL change from the proposal's class and ignored its
-    disposition, so a standard-class proposal the planner escalated (here: its target
-    does not resolve) got a ``standard`` change that auto-approves at the fold, and a
-    later ``run_dispatch_pass`` ran it with no human vote. Now it gets a CAB-gated
-    change, the sweep leaves it pending (and un-voided, so the parked decision still
-    works), and only a real CAB vote lets it run, after a fresh re-observation.
-    """
-    slug = "s25-escalated-needs-human"
+    The planner escalates a ratified standard action because its target does not resolve.
+    Before card f8dd9441 it got a CAB-gated change and an intent a human vote could release;
+    now it is report-only: one decision record, no ITIL change, no intent, and the dispatch
+    pass has nothing to run."""
+    slug = "s25-escalated-is-report-only"
     itil = ITILManager(ctx.itil_home)
     ledger = ctx.scenario_ledger(slug)
     state = ctx.scenario_state(slug)
+    decisions_dir = str(ctx.decisions_dir / slug)
     explain = act_dispatch.merged_explain()
     for entry in explain["actions"]:
         if entry["name"] == "restart-telegram-bridge":
@@ -2218,12 +2346,14 @@ def scenario_escalated_proposal_needs_a_human_and_keeps_its_decision(
     try:
         ctx.inject_wedge()
         proposal = ctx.wedge_proposal()
+        changes_before = len(itil.list_changes())
+        calls_before = len(ctx.calls)
         res = loop.run_once(
             ctx.paths,
             now_iso=_now_iso(),
             propose=lambda b, r: [proposal],
             explain=explain,
-            decisions_dir=str(ctx.decisions_dir / slug),
+            decisions_dir=decisions_dir,
             apply_fn=act_dispatch.build_apply_fn(
                 ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
             ),
@@ -2237,82 +2367,56 @@ def scenario_escalated_proposal_needs_a_human_and_keeps_its_decision(
             catalog_generation=_current_catalog_generation(ctx),
         )
         outcome = res["outcomes"][0]
-        intent_id = outcome["intent_id"]
-        change_id = ledger.read_intent(intent_id).itil_change_id
-        change = next(c for c in itil.list_changes() if c.id == change_id)
-
-        def sweep(runner):
-            return dispatch.run_dispatch_pass(
-                ctx.paths,
-                ledger,
-                itil,
-                adapters={"skchat": skchat_adapter.observe},
-                problem_types=loop.PROBLEM_WHEN_TRUE,
-                apply_fn=act_dispatch.build_apply_fn(
-                    ctx.paths, _now_iso(), runner=runner, itil=itil
-                ),
-                execution_state=state,
-                now_iso=_now_iso(),
-                actor="atlas-p32-drill",
-                emit=lambda _m: None,
-            )
-
-        calls_before = len(ctx.calls)
-        first = sweep(ctx.runner_boom())
-        pending = (
-            outcome["outcome"] == "escalated (parked for approval)"
-            and change.change_type.value == "normal"
-            and change.status.value == "proposed"
-            and bool(first)
-            and first[0].outcome.startswith("pending")
-            and ledger.current_state(intent_id) is action_ledger.ActionState.PROPOSED
+        swept = dispatch.run_dispatch_pass(
+            ctx.paths,
+            ledger,
+            itil,
+            adapters={"skchat": skchat_adapter.observe},
+            problem_types=loop.PROBLEM_WHEN_TRUE,
+            apply_fn=act_dispatch.build_apply_fn(
+                ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
+            ),
+            execution_state=state,
+            now_iso=_now_iso(),
+            actor="atlas-p32-drill",
+            emit=lambda _m: None,
+        )
+        parked = decisions.list_pending(decisions_dir)
+        passed = (
+            str(outcome["outcome"]).startswith("escalated (report-only")
+            and ledger.list_intents() == []
+            and len(itil.list_changes()) == changes_before
+            and len(parked) == 1
+            and parked[0]["options"][0].get("report_only") is True
+            and swept == []
             and len(ctx.calls) == calls_before
-        )
-        itil.submit_cab_vote(
-            change_id,
-            agent="capauth:drill-human@scratch",
-            decision="approved",
-            subject="capauth:drill-human@scratch",
-            subject_role="approver",
-        )
-        second = sweep(ctx.runner_success_and_heal())
-        acted_after_human = (
-            bool(second)
-            and second[0].outcome == "verified"
-            and len(ctx.calls) == calls_before + 1
-            and ledger.current_state(intent_id) is action_ledger.ActionState.VERIFIED
         )
     finally:
         policy.RATIFIED_STANDARD_CATALOG = saved_catalog
         ctx.heal_wedge()
     return ScenarioResult(
-        name="25. an escalated proposal needs a human and keeps its decision",
-        passed=pending and acted_after_human,
+        name="25. an escalated standard-class proposal is report-only",
+        passed=passed,
         evidence={
             "escalated_outcome": outcome["outcome"],
-            "change_type": change.change_type.value,
-            "change_status_before_vote": change.status.value,
-            "sweep_before_the_human": first[0].outcome if first else None,
-            "sweep_after_the_human": second[0].outcome if second else None,
+            "intents_written": len(ledger.list_intents()),
+            "changes_written": len(itil.list_changes()) - changes_before,
+            "decision_records": len(parked),
+            "dispatch_pass": [o.outcome for o in swept],
         },
-        note="the escalate lane gets a CAB-gated change, so nothing runs without a human and "
-        "the pending intent is never voided; after the vote it runs once, after a fresh "
-        "re-observation (review round 3, findings A and B)",
+        note="the escalate lane writes no change and no intent, so nothing a human approves "
+        "can make ATLAS run it (card f8dd9441; supersedes review round 3)",
     )
 
 
 def scenario_approval_authorizes_one_thing_once(ctx: DrillContext) -> ScenarioResult:
-    """Review round 4: a human approval is read from the VOTES, authorizes ONE intent, once.
+    """Review round 4, as amended by card f8dd9441: an approval authorizes ONE intent, once.
 
-    Three holes, closed together. (a) "Human-approved" was inferred from a MISSING
-    ``auto-approved`` marker, but the fold only writes that marker while a change is
-    still PROPOSED, so a standard change that went approved, scheduled, unscheduled
-    read as human: here an ESCALATED intent behind such a change must stay pending.
-    (b) The change was never bound to the intent: a change a human approved for one
-    action also ran an intent for ANOTHER action. (c) The approval was never spent: a
-    second intent on the same change ran again. Now only a qualifying human vote counts,
-    the change is bound to (app, action, target), and a verified run moves it to
-    ``deployed``.
+    (a) An escalate-lane intent behind a standard change that went approved, scheduled,
+    unscheduled is report-only: refused, left PROPOSED. (b) The change is bound to the
+    intent: an auto-normal change for the bridge restart does not run an intent for
+    ANOTHER action. (c) The approval is spent: after a verified run the change is
+    ``deployed`` and a second intent on it stays pending.
     """
     slug = "s26-one-approval-once"
     itil = ITILManager(ctx.itil_home)
@@ -2323,6 +2427,8 @@ def scenario_approval_authorizes_one_thing_once(ctx: DrillContext) -> ScenarioRe
     voter = "capauth:drill-human@scratch"
 
     def draft(change_type: str):
+        if change_type == "normal":
+            return _auto_normal_change(itil)
         return itil.propose_change(
             title="restart telegram bridge",
             change_type=change_type,
@@ -2375,7 +2481,7 @@ def scenario_approval_authorizes_one_thing_once(ctx: DrillContext) -> ScenarioRe
         return next((o.outcome for o in outcomes if o.intent_id == intent_id), None)
 
     ctx.inject_wedge()
-    # (a) a standard change approved, scheduled, unscheduled: no marker, still not human.
+    # (a) a standard change approved, scheduled, unscheduled: an escalation stays report-only.
     standard = draft("standard")
     when = _now_iso()
     for kind, extra in (
@@ -2384,31 +2490,28 @@ def scenario_approval_authorizes_one_thing_once(ctx: DrillContext) -> ScenarioRe
     ):
         itil._append_event(itil.changes_dir, standard.id, voter, kind, **extra)
     escalated_id = intent(standard.id, "restart-telegram-bridge", "escalate", "esc")
-    # (b) one human approval, bound to the bridge restart; another action rides it.
+    # (b) one auto-normal approval, bound to the bridge restart; another action rides it.
     approved = draft("normal")
-    itil.submit_cab_vote(
-        approved.id, agent=voter, decision="approved", subject=voter, subject_role="approver"
-    )
-    other_id = intent(approved.id, "restart-daemon", "escalate", "other")
+    other_id = intent(approved.id, "restart-daemon", "auto", "other")
     calls_before = len(ctx.calls)
     first = sweep(ctx.runner_boom())
-    escalated_pending = (outcome_of(first, escalated_id) or "").startswith("pending") and (
-        ledger.current_state(escalated_id) is action_ledger.ActionState.PROPOSED
-    )
+    escalated_pending = (outcome_of(first, escalated_id) or "").startswith(
+        dispatch.REPORT_ONLY_REFUSAL
+    ) and (ledger.current_state(escalated_id) is action_ledger.ActionState.PROPOSED)
     other_refused = "not bound" in (outcome_of(first, other_id) or "")
     # (c) the bound intent runs once; the approval is then spent.
-    good_id = intent(approved.id, "restart-telegram-bridge", "escalate", "good")
+    good_id = intent(approved.id, "restart-telegram-bridge", "auto", "good")
     second = sweep(ctx.runner_success_and_heal())
     ran_once = outcome_of(second, good_id) == "verified" and len(ctx.calls) == calls_before + 1
     spent = next(c for c in itil.list_changes() if c.id == approved.id).status.value == "deployed"
     ctx.inject_wedge()
-    again_id = intent(approved.id, "restart-telegram-bridge", "escalate", "again")
+    again_id = intent(approved.id, "restart-telegram-bridge", "auto", "again")
     third = sweep(ctx.runner_boom())
     reuse_refused = (outcome_of(third, again_id) or "").startswith("pending: ITIL change status=")
     no_extra_call = len(ctx.calls) == calls_before + 1
     ctx.heal_wedge()
     return ScenarioResult(
-        name="26. an approval authorizes one thing, once, and only a vote is a human",
+        name="26. an approval authorizes one thing, once; an escalation never runs",
         passed=escalated_pending
         and other_refused
         and ran_once
@@ -2423,9 +2526,8 @@ def scenario_approval_authorizes_one_thing_once(ctx: DrillContext) -> ScenarioRe
             "second_intent_on_the_spent_change": outcome_of(third, again_id),
             "physical_calls": len(ctx.calls) - calls_before,
         },
-        note="human approval is derived from votes (not a missing marker), the change is "
-        "bound to its (app, action, target), and a verified run spends it (round 4, "
-        "findings 1 and 2)",
+        note="an escalation is report-only, the change is bound to its (app, action, "
+        "target), and a verified run spends it (round 4, findings 1 and 2; card f8dd9441)",
     )
 
 
@@ -2459,44 +2561,12 @@ def scenario_one_approval_one_actuation_per_episode(ctx: DrillContext) -> Scenar
     itil = ITILManager(ctx.itil_home)
     ledger = ctx.scenario_ledger(slug)
     created = datetime.now(timezone.utc)
-    bind = dispatch.change_binding_tag("skchat", "restart-telegram-bridge", "telegram-bridge")
-    voter = "capauth:drill-human@scratch"
 
     def approved_change():
-        change = itil.propose_change(
-            title="restart telegram bridge",
-            change_type="normal",
-            risk="low",
-            rollback_plan="restart again",
-            created_by="atlas-p32-drill",
-            tags=["operator", bind],
-        )
-        itil.submit_cab_vote(
-            change.id, agent=voter, decision="approved", subject=voter, subject_role="approver"
-        )
-        return change
+        return _auto_normal_change(itil)
 
     def intent(change_id: str, tag: str) -> str:
-        core = action_ledger.ActionIntent(
-            condition_fingerprint=f"fp-{slug}-{tag}",
-            application="skchat",
-            target_kind="CI",
-            target_id="telegram-bridge",
-            action="restart-telegram-bridge",
-            catalog_generation=_current_catalog_generation(ctx),
-            created_at=created,
-            itil_change_id=change_id,
-            condition_type="BridgeAlive",
-        )
-        ledger.create(core, actor="atlas-p32-drill")
-        for nxt, detail in (
-            (action_ledger.ActionState.DIAGNOSED, {}),
-            (action_ledger.ActionState.PROPOSED, {"disposition": "escalate"}),
-        ):
-            ledger.append(
-                core.intent_id, nxt, occurred_at=created, actor="atlas-p32-drill", detail=detail
-            )
-        return core.intent_id
+        return _ledger_intent(ctx, ledger, change_id, f"{slug}-{tag}", created=created)
 
     def dispatch_one(manager, intent_id, apply_fn):
         return dispatch.dispatch_intent(
@@ -2581,71 +2651,32 @@ def scenario_one_approval_one_actuation_per_episode(ctx: DrillContext) -> Scenar
                 (o.outcome for o in swept if o.intent_id == stranded_id), None
             ),
         },
-        note="the spend is a compare-and-swap under a per-change lock, a human approval is "
+        note="the spend is a compare-and-swap under a per-change lock, an approval is "
         "closed with its episode, and a crash-stranded intent is escalated, never re-run "
         "(round 5, findings 1, 2 and 5)",
     )
 
 
 def scenario_single_actuator_live_dispatch_and_future_votes(ctx: DrillContext) -> ScenarioResult:
-    """Review round 6: one actuator node, node-local locks, live dispatches left alone, and a
-    future-dated vote cannot buy time.
+    """Review round 6: one actuator node, node-local locks, live dispatches left alone.
 
     (a) The REAL single-actuator-node rule: with no node designated (the default), or another
     node designated, the loop and ``run_dispatch_pass`` refuse to actuate; designating this node
     opens it. (b) The per-change lock lives in the node-local state directory, never beside the
     (synced) ledger. (c) A dispatch whose actuation outlasts the stranded timeout is NOT
     escalated by a sweeper (its lifecycle events are stamped from the clock at write time and
-    it holds its change lock), and its fix is not rolled back. (d) A vote dated five days ahead
-    closes the intent and retires the change instead of waiting to be honored.
+    it holds its change lock), and its fix is not rolled back.
     """
     slug = "s28-actuator-node-live-dispatch"
     itil = ITILManager(ctx.itil_home)
     ledger = ctx.scenario_ledger(slug)
     created = datetime.now(timezone.utc)
-    bind = dispatch.change_binding_tag("skchat", "restart-telegram-bridge", "telegram-bridge")
-    voter = "capauth:drill-human@scratch"
 
-    def approved(decided_at: str | None = None):
-        change = itil.propose_change(
-            title="restart telegram bridge",
-            change_type="normal",
-            risk="low",
-            rollback_plan="restart again",
-            created_by="atlas-p32-drill",
-            tags=["operator", bind],
-        )
-        itil.submit_cab_vote(
-            change.id, agent=voter, decision="approved", subject=voter, subject_role="approver"
-        )
-        if decided_at:
-            path = itil.cab_dir / f"{change.id}-{voter}.json"
-            data = json.loads(path.read_text())
-            data["decided_at"] = decided_at
-            path.write_text(json.dumps(data))
-        return change
+    def approved():
+        return _auto_normal_change(itil)
 
     def intent(change_id: str, tag: str) -> str:
-        core = action_ledger.ActionIntent(
-            condition_fingerprint=f"fp-{slug}-{tag}",
-            application="skchat",
-            target_kind="CI",
-            target_id="telegram-bridge",
-            action="restart-telegram-bridge",
-            catalog_generation=_current_catalog_generation(ctx),
-            created_at=created,
-            itil_change_id=change_id,
-            condition_type="BridgeAlive",
-        )
-        ledger.create(core, actor="atlas-p32-drill")
-        for nxt, detail in (
-            (action_ledger.ActionState.DIAGNOSED, {}),
-            (action_ledger.ActionState.PROPOSED, {"disposition": "escalate"}),
-        ):
-            ledger.append(
-                core.intent_id, nxt, occurred_at=created, actor="atlas-p32-drill", detail=detail
-            )
-        return core.intent_id
+        return _ledger_intent(ctx, ledger, change_id, f"{slug}-{tag}", created=created)
 
     def sweep(runner, **kwargs):
         return dispatch.run_dispatch_pass(
@@ -2749,35 +2780,10 @@ def scenario_single_actuator_live_dispatch_and_future_votes(ctx: DrillContext) -
     lock_file = node_local.state_dir() / "atlas" / "change-locks" / f"{live_change.id}.lock"
     locks_ok = lock_file.is_file() and not (ledger.root / "change-locks").exists()
 
-    # (d) a vote dated five days ahead closes the intent instead of waiting
-    ctx.inject_wedge()
-    future_change = approved(decided_at=(created + timedelta(days=5)).isoformat())
-    future_id = intent(future_change.id, "future")
-    future = dispatch.dispatch_intent(
-        ctx.paths,
-        ledger,
-        itil,
-        future_id,
-        adapters={"skchat": skchat_adapter.observe},
-        problem_types=loop.PROBLEM_WHEN_TRUE,
-        apply_fn=act_dispatch.build_apply_fn(
-            ctx.paths, _now_iso(), runner=ctx.runner_boom(), itil=itil
-        ),
-        now_iso=_now_iso(),
-        actor="atlas-p32-drill",
-        emit=lambda _m: None,
-        max_approval_age_s=dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS,
-    )
-    retired = next(c for c in itil.list_changes() if c.id == future_change.id).status.value
-    future_ok = (
-        "dated in the future" in future.outcome
-        and ledger.current_state(future_id) is action_ledger.ActionState.ESCALATED
-        and retired in ("rejected", "closed")
-    )
     ctx.heal_wedge()
     return ScenarioResult(
         name="28. one actuator node, node-local locks, live dispatches left alone",
-        passed=rule_ok and live_ok and locks_ok and future_ok,
+        passed=rule_ok and live_ok and locks_ok,
         evidence={
             "no_designation": undesignated,
             "loop_without_designation": refused_loop,
@@ -2787,28 +2793,24 @@ def scenario_single_actuator_live_dispatch_and_future_votes(ctx: DrillContext) -
             "sweeper_during_the_live_dispatch": swept,
             "rollbacks": len(rollbacks),
             "lock_file_node_local": str(lock_file),
-            "future_dated_vote": future.outcome,
         },
         note="actuation needs a designated actuator node (default none), the change lock is "
-        "node-local, a live dispatch is never swept as stranded or rolled back, and a "
-        "future-dated vote is closed (round 6, findings 1, 2 and 4)",
+        "node-local, and a live dispatch is never swept as stranded or rolled back (round 6, "
+        "findings 1 and 2)",
     )
 
 
 def scenario_actuator_rule_decided_once_and_decisions_not_shadowed(
     ctx: DrillContext,
 ) -> ScenarioResult:
-    """Review round 8: the actuator rule is decided ONCE per pass, and a non-actuator's
-    unbound decision cannot shadow the actuator's bound one.
+    """Review round 8: the actuator rule is decided ONCE per pass.
 
     (a) The rule refuses on its first call and answers "designated" on every later one (a
     designation file written mid-pass, or a failed read). The loop drops its ledger wiring
     for the refused pass; a second evaluation used to flip it back and let the proposal fall
     into the inline lane (a systemctl restart with no ledger intent). Now the pass refuses
-    and runs nothing. (b) The decisions store is replicated and its ids are content-based: a
-    non-actuator parks the decision with no ITIL change, and the actuator's bound park used
-    to be skipped, leaving a decision that could never be approved. A pending unbound record
-    is now upgraded to the bound option (never the other way, never a resolved record).
+    and runs nothing. (Its second half, decision shadowing, is gone with card f8dd9441:
+    decisions are report-only, so no record is ever bound to a change.)
     """
     slug = "s29-one-evaluation-no-shadowing"
     calls = {"n": 0}
@@ -2844,29 +2846,163 @@ def scenario_actuator_rule_decided_once_and_decisions_not_shadowed(
         and ledger.list_intents() == []
     )
 
-    store_dir = ctx.decisions_dir / (slug + "-store")
-    unbound = {"action": "restart-telegram-bridge", "object": "telegram-bridge"}
-    bound = {**unbound, "itil_change_id": "chg-drill"}
-    decisions.park(store_dir, [unbound], decision_id="d-shadow", created_iso=_now_iso())
-    upgraded = decisions.park(store_dir, [bound], decision_id="d-shadow", created_iso=_now_iso())
-    downgraded = decisions.park(
-        store_dir, [unbound], decision_id="d-shadow", created_iso=_now_iso()
-    )
-    shadow_ok = upgraded["options"] == [bound] and downgraded["options"] == [bound]
     ctx.heal_wedge()
     return ScenarioResult(
-        name="29. the actuator rule is decided once; decisions are not shadowed",
-        passed=once_ok and shadow_ok,
+        name="29. the actuator rule is decided once per pass",
+        passed=once_ok,
         evidence={
             "outcome_of_the_flapping_pass": outcome,
             "rule_evaluations_in_the_pass": calls["n"],
             "systemctl_calls": len(ctx.calls) - calls_before,
-            "decision_after_the_bound_park": upgraded["options"],
-            "decision_after_a_later_unbound_park": downgraded["options"],
         },
-        note="one evaluation per pass so a refusal cannot flip into an inline actuation, and "
-        "a pending unbound decision is upgraded to the actuator's bound option (round 8, "
-        "findings 1 and 2)",
+        note="one evaluation per pass so a refusal cannot flip into an inline actuation "
+        "(round 8, finding 1)",
+    )
+
+
+def _drill_sign(data: bytes) -> str:
+    import hashlib
+
+    return "drill-sig-" + hashlib.sha256(data).hexdigest()
+
+
+def _drill_verify(data: bytes, signature: str) -> bool:
+    return signature == _drill_sign(data)
+
+
+def scenario_fleet_restart_target_is_bound(ctx: DrillContext) -> ScenarioResult:
+    """Card 21b01d01: the fleet honor path restarts only the approved, signed, local unit.
+
+    (a) A typed rollback the brain attached to object A that names object B (whose
+    ``spec.unit`` is ``default.target``), or names that unit directly, is refused before
+    systemctl. (b) An approved change for an object placed on ANOTHER node is refused in
+    the dispatcher's preflight (``fleet_target_known`` uses the resolver): nothing is
+    authorized, EXECUTING is never written, the change is not spent, systemctl never runs.
+    Spec and placement are signed with a drill-only key and verified with
+    ``converge.verify_desired``, exactly as the production path verifies them.
+    """
+    slug = "s30-fleet-target-bound"
+    here = self_node_name()
+    operator = _human_writer(here)
+    scheduler = store.Writer(role="scheduler", node=here, identity="capauth:drill@scratch")
+
+    def service(name: str, unit: str, node: str) -> None:
+        store.write_spec(
+            ctx.paths, "service", name, {"unit": unit}, writer=operator, signer=_drill_sign
+        )
+        store.write_placement(
+            ctx.paths,
+            "service",
+            name,
+            node=node,
+            reason="drill",
+            writer=scheduler,
+            signer=_drill_sign,
+        )
+
+    service("drill-fleet-a", "drill-fleet-a.service", here)
+    service("drill-fleet-b", "default.target", here)
+    service("drill-fleet-remote", "drill-fleet-remote.service", "drill-other-node")
+
+    calls: list[list[str]] = []
+
+    def runner(cmd: list[str]) -> subprocess.CompletedProcess:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    rollback_fn = act_dispatch.build_rollback_fn(ctx.paths, runner=runner, verifier=_drill_verify)
+    refusals: dict[str, str] = {}
+    for label, rollback in (
+        ("other_object", {"action": "restart_service", "object": "drill-fleet-b"}),
+        ("other_unit", {"action": "restart_service", "unit": "default.target"}),
+    ):
+        prop = {"action": "restart_service", "object": "drill-fleet-a", "rollback": rollback}
+        try:
+            rollback_fn(prop, {"change_class": "standard"}, None)
+            refusals[label] = "NOT REFUSED"
+        except actuator.NotAttemptedError as exc:
+            refusals[label] = str(exc)
+    rollback_ok = calls == [] and all(v != "NOT REFUSED" for v in refusals.values())
+
+    itil = ITILManager(ctx.itil_home)
+    ledger = ctx.scenario_ledger(slug)
+    chg = itil.propose_change(
+        title="restart drill-fleet-remote",
+        change_type="standard",
+        risk="low",
+        rollback_plan="restart again",
+        created_by="atlas",
+        tags=["operator", "op-bind:fleet|restart_service|drill-fleet-remote"],
+    )
+    created = datetime.now(timezone.utc) - timedelta(seconds=5)
+    intent = action_ledger.ActionIntent(
+        condition_fingerprint="fp-drill-fleet-remote",
+        application="fleet",
+        target_kind="CI",
+        target_id="drill-fleet-remote",
+        action="restart_service",
+        catalog_generation="gen-0",
+        created_at=created,
+        itil_change_id=chg.id,
+        rollback={},
+        condition_type="Ready",
+    )
+    ledger.create(intent, actor="atlas-p32-drill")
+    ledger.append(
+        intent.intent_id,
+        action_ledger.ActionState.DIAGNOSED,
+        occurred_at=created,
+        actor="atlas-p32-drill",
+    )
+    ledger.append(
+        intent.intent_id,
+        action_ledger.ActionState.PROPOSED,
+        occurred_at=created,
+        actor="atlas-p32-drill",
+        detail={
+            "disposition": "auto",
+            "evidence": {"source": "drill:fleet", "observed_at": _now_iso()},
+        },
+    )
+    outcome = dispatch.dispatch_intent(
+        ctx.paths,
+        ledger,
+        itil,
+        intent.intent_id,
+        adapters={"fleet": fleet_adapter.fleet_observe},
+        problem_types=set(fleet_adapter.PROBLEM_WHEN_TRUE),
+        apply_fn=act_dispatch.build_apply_fn(
+            ctx.paths, _now_iso(), runner=runner, itil=itil, verifier=_drill_verify
+        ),
+        execution_state=ctx.scenario_state(slug),
+        now_iso=_now_iso(),
+        actor="atlas-p32-drill",
+        target_known=lambda p: fleet_adapter.fleet_target_known(
+            ctx.paths, p, verifier=_drill_verify
+        ),
+        postcondition_sleep=lambda _s: None,
+    ).outcome
+    lineage = [e.state.value for e in ledger.events(intent.intent_id)]
+    change_status = next(c.status.value for c in itil.list_changes() if c.id == chg.id)
+    remote_ok = (
+        outcome.startswith("refused: ")
+        and "authorized" not in lineage
+        and "executing" not in lineage
+        and change_status == "approved"
+        and calls == []
+    )
+    return ScenarioResult(
+        name="30. fleet restart is bound to the approved, local object",
+        passed=rollback_ok and remote_ok,
+        evidence={
+            "rollback_refusals": refusals,
+            "remote_outcome": outcome,
+            "remote_lineage": lineage,
+            "remote_change_status": change_status,
+            "systemctl_calls": calls,
+        },
+        note="a rollback naming another object or unit is refused, and an object placed on "
+        "another node is refused in preflight without spending the change (card 21b01d01)",
     )
 
 
@@ -2902,6 +3038,7 @@ SCENARIOS: list[Callable[[DrillContext], ScenarioResult]] = [
     scenario_one_approval_one_actuation_per_episode,
     scenario_single_actuator_live_dispatch_and_future_votes,
     scenario_actuator_rule_decided_once_and_decisions_not_shadowed,
+    scenario_fleet_restart_target_is_bound,
 ]
 
 
@@ -2938,6 +3075,14 @@ def run_all(root: Path | str | None = None, *, keep_root: bool = True) -> DrillR
     # opened for it (scenario 28 restores the real rule to prove it refuses).
     previous_gate = node_local.actuator_refusal  # captured at call time, never at import
     node_local.actuator_refusal = lambda: None
+    # Card bada5c86: human approvals in the drill are real signed grants from a
+    # throwaway key, pinned in a scratch pin file inside the drill root. The
+    # operator's real pin file is never read or written.
+    global _GRANTS
+    _GRANTS = _DrillGrants(ctx.root)
+    previous_pins = [(m, a, getattr(m, a)) for m, a in _pin_targets()]
+    for module, attr, _ in previous_pins:
+        setattr(module, attr, _GRANTS.pin_path)
     results: list[ScenarioResult] = []
     try:
         for scenario in SCENARIOS:
@@ -2959,6 +3104,9 @@ def run_all(root: Path | str | None = None, *, keep_root: bool = True) -> DrillR
             _unfreeze(ctx.paths)
     finally:
         node_local.actuator_refusal = previous_gate
+        for module, attr, value in previous_pins:
+            setattr(module, attr, value)
+        _GRANTS = None
         ctx.restore_daemon_probe()
         ctx.restore_env()
     finished = _now_iso()

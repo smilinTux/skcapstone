@@ -168,20 +168,46 @@ _PARITY_CHECK = (
     "--constraints {repo}/deploy/fleet-constraints.txt; fi"
 )
 
+#: Installs the package with the fleet lock. Three generations of checkout:
+#:
+#: * with ``deploy/fleet-requirements.in`` (the lock era, 2026-11-15): the SK
+#:   pins from that file are required, and every lock entry this host already
+#:   has installed is pinned too (``--write-installed``), so a third-party tool
+#:   in the venv moves to the lock instead of keeping a version that conflicts
+#:   with the new set (huggingface-hub vs click, #1382). A tool the host never
+#:   had is not pushed onto it;
+#: * with only ``deploy/fleet-constraints.txt`` (an older revision, rollback):
+#:   ``-r`` as well as ``-c``, so a pin outside ``.[fleet-qualify]`` (skwhisper)
+#:   still moves (chiap03, 2026-11-08);
+#: * with neither: unconstrained, as before.
+_PIP_INSTALL = (
+    "cd {repo} && if test -f deploy/fleet-requirements.in; then "
+    "~/.skenv/bin/python src/skcapstone/fleet/dependency_parity.py "
+    "--constraints deploy/fleet-constraints.txt "
+    "--write-installed ~/.cache/skcapstone-rollout/installed-lock.txt && "
+    "pip install -c deploy/fleet-constraints.txt -r deploy/fleet-requirements.in "
+    "-r ~/.cache/skcapstone-rollout/installed-lock.txt '.[fleet-qualify]'; "
+    "elif test -f deploy/fleet-constraints.txt; then "
+    "pip install -c deploy/fleet-constraints.txt "
+    "-r deploy/fleet-constraints.txt '.[fleet-qualify]'; "
+    "else pip install '.[fleet-qualify]'; fi"
+)
+
+#: ``pip check`` on the live venv after the install: a set whose requirements
+#: conflict halts the rollout on the first (canary) host, before any other host
+#: is touched. The lock's CI gate (.github/workflows/fleet-lock.yml) already ran
+#: the same check in a fresh venv; this one also covers packages a host carries
+#: outside the lock.
+_PIP_CHECK = "~/.skenv/bin/python -m pip check"
+
 #: The deploy steps, in the load-bearing order described in the module
 #: docstring: package before scripts. Formatted with ``repo=`` (the remote
 #: checkout path) at call time.
 _DEPLOY_STEPS: tuple[tuple[str, str], ...] = (
     ("git_pull", "git -C {repo} pull"),
-    (
-        "pip_install",
-        # `-r` as well as `-c`: a pin on a package outside `.[fleet-qualify]`
-        # (skwhisper) is otherwise never upgraded, and the parity gate below
-        # then halts every rollout of that bump (chiap03, 2026-11-08).
-        "cd {repo} && pip install -c deploy/fleet-constraints.txt "
-        "-r deploy/fleet-constraints.txt '.[fleet-qualify]'",
-    ),
+    ("pip_install", _PIP_INSTALL),
     ("verify_dependency_parity", _PARITY_CHECK),
+    ("verify_pip_check", _PIP_CHECK),
     (
         "qualify_env",
         "if test -f {repo}/src/skcapstone/fleet/qualify_env.py; then "
@@ -245,15 +271,10 @@ _ROLLBACK_STEPS: tuple[tuple[str, str], ...] = (
         'git -C {repo} checkout "$branch" && '
         "git -C {repo} reset --hard {git_sha}",
     ),
-    (
-        "pip_install",
-        # A revision older than the constraints file installs unconstrained, as before.
-        "cd {repo} && if test -f deploy/fleet-constraints.txt; then "
-        "pip install -c deploy/fleet-constraints.txt "
-        "-r deploy/fleet-constraints.txt '.[fleet-qualify]'; "
-        "else pip install '.[fleet-qualify]'; fi",
-    ),
+    # A revision older than the constraints file installs unconstrained, as before.
+    ("pip_install", _PIP_INSTALL),
     ("verify_dependency_parity", _PARITY_CHECK),
+    ("verify_pip_check", _PIP_CHECK),
     (
         "qualify_env",
         "if test -f {repo}/src/skcapstone/fleet/qualify_env.py; then "

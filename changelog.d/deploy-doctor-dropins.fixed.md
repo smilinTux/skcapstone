@@ -1,0 +1,2 @@
+- `skcapstone doctor` now prints the `deploy:*` checks (they were counted in the totals but never shown) and any other category it has no label for.
+- `skcapstone deploy drift` reads unit drop-ins (`<unit>.d/*.conf`) the way systemd does, so a drop-in that moves a unit out of a working tree clears its exec-in-tree finding.

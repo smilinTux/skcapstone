@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- **The next tool apply would have dropped hermes-gateway's managed drop-in.**
+  Hermes regenerates its own unit at boot from its resolved path, so the base
+  unit names `sk-tools/hermes-agent/<sha12>` instead of the checkout. The
+  rewrite found no checkout path, would remove the drop-in, and the unit would
+  keep starting the old export after `current` moved. A tool's own versioned
+  exports (`<root>/<tool>/<sha12>`) now map to `current` like its checkouts.
+
+- **A deploy smoke could pass on the previous start of a unit.** `try-restart`
+  timed out while hermes-gateway was still stopping, deploy went on, and the
+  smoke matched log lines of the old start, so a gateway with 0 MCP servers
+  passed (noroc2027, 2026-11-15). A restart now counts only when the unit is
+  active under a new `InvocationID` (300 s budget, a restart timeout is no
+  longer fatal by itself), and unit smokes get `SK_DEPLOY_INVOCATION_ID` and
+  `SK_DEPLOY_SINCE` to judge only that start.
+
+- **A tool export left a unit's stop running the checkout.** The managed
+  drop-in re-stated only `ExecStart*` and `WorkingDirectory`, so
+  hermes-gateway's `ExecStop`/`ExecStopPost` still ran the checkout's
+  launcher, which finished a source update there and timed the stop out. It
+  now re-states `ExecStop`, `ExecStopPost`, `ExecReload` and `ExecCondition`
+  too, and drift checks see them.
+
+- **A tool that provisions itself could not ship as a `tools:` export.**
+  Hermes runs a launcher and a dependency environment that its own installer
+  generates from the tree, keyed to the tree's path; neither is in `git
+  archive`, so the export was refused. Tools gain `setup` (argv),
+  `setup_env` and `setup_timeout`: setup runs inside the export at its final
+  `<name>/<sha12>` path before it is marked complete or published. A failed
+  setup removes the export and publishes nothing.
+
 - **A fleet pin outside `.[fleet-qualify]` could never roll out.** The rollout
   install step used the pins file only as `-c` constraints, so a bump of a
   package the extra does not pull in (skwhisper 0.6.4 to 0.6.5) was never

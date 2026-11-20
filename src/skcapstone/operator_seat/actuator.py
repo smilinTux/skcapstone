@@ -15,6 +15,17 @@ from __future__ import annotations
 from ..fleet import actuation, store
 
 
+class NotAttemptedError(RuntimeError):
+    """An actuation was refused BEFORE anything physical ran.
+
+    Raised by an honor path that cannot resolve a safe, concrete target (an
+    object placed on another node, no unit mapping, a runtime with no muscle
+    here). The dispatcher treats it like its own preflight refusals: nothing
+    was attempted, so it never feeds the circuit breaker and never triggers a
+    rollback, and the intent escalates to a human with the reason.
+    """
+
+
 def action_key(action: dict) -> str:
     """Stable identity of one operator action (for consumed-once tracking)."""
     return f"{action.get('ts')}|{action.get('action')}"

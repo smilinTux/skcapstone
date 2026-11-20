@@ -1,0 +1,85 @@
+# Third-party tools that live in the fleet's ~/.skenv next to the SK packages.
+#
+# Inventoried 2026-11-15 from `pip list --not-required` on the five fleet
+# hosts' venvs. Not every host carries every tool: the rollout
+# pins only the lock entries a host already has installed, so a tool listed here
+# is not pushed onto a host that never had it. Listing it here is what makes its
+# version part of the lock, so it can no longer conflict with an SK package
+# silently (huggingface-hub vs skbrain's click cap, twine vs the rich<14 caps).
+#
+# Unpinned on purpose: the lock (deploy/fleet-constraints.txt) holds the
+# versions, and scripts/fleet-lock.sh keeps every existing pin unless an input
+# forces a change. Renovate moves them by PR.
+#
+# Left out: pip and setuptools (bootstrap), nvidia-* wheels (they arrive via
+# torch), and stale SK leftovers no package requires any more (skcomm,
+# cloud9-protocol, sklegal-calendar, skseal from git on one host).
+aiohttp
+ansible-core
+black
+boto3
+# Security floors (CVE-2026-111497, GHSA-9v8h-qqgm-4m35, PYSEC-2026-4322/4323:
+# out-of-bounds write in the Brotli decoder). No fleet host installs either one
+# today; aiohttp, httpx and urllib3 pull them in through their brotli extras, so
+# the floor keeps any host that gets one on a fixed release.
+brotli>=1.2.1
+brotlicffi>=1.2.1.0
+browserforge
+build
+curl-cffi
+detect-secrets
+docker
+email-validator
+flask-cors
+fusepy
+google-cloud-compute
+grpcio-status
+h2
+hatchling
+httptools
+huggingface-hub
+icalendar
+msgspec
+mypy
+numpy
+openai
+openpyxl
+patchright
+pgvector
+playwright
+prompt-toolkit
+protego
+psycopg-binary
+pydantic-ai-slim
+pymupdf
+pypdf
+pyte
+pytesseract
+pytest-asyncio
+pytest-cov
+pytest-mock
+pytest-timeout
+python-docx
+pywebpush
+qdrant-client
+redis
+reportlab
+ruamel-yaml
+ruff
+scrapling
+sentence-transformers
+setuptools-scm
+soft-webauthn
+sqlalchemy
+standard-imghdr ; python_version >= "3.13"
+temporalio
+towncrier
+twine
+uv
+uvloop
+watchdog
+watchfiles
+webauthn
+websocket-client
+wheel
+zeroconf

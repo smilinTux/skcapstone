@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-SKENV="$HOME/.skenv"
+SKENV="${SKENV:-$HOME/.skenv}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 DEV_MODE=false
@@ -30,6 +30,14 @@ for arg in "$@"; do
         --non-interactive) NON_INTERACTIVE=true ;;
     esac
 done
+
+# Editable installs are DEV ONLY and never go into the deploy venv. ~/.skenv is
+# what every unit, timer and MCP server runs, so an editable install there makes
+# production whatever branch a shared checkout is on. --dev targets ~/.skenv-dev;
+# production nodes are rolled out with `skcapstone deploy apply` (released main).
+if [[ "$DEV_MODE" == "true" ]] && [[ "$SKENV" == "$HOME/.skenv" ]]; then
+    SKENV="$HOME/.skenv-dev"
+fi
 
 echo "=== Sovereign Agent Suite Installer ==="
 echo ""
@@ -92,14 +100,14 @@ guarded_pip_install --upgrade pip -q || echo "  (pip self-upgrade skipped)" >&2
 # ---------------------------------------------------------------------------
 echo "[3/6] Installing SK* packages..."
 
-# Helper: install editable if local dir exists, else from PyPI
+# Helper: --dev installs editable from a local checkout; otherwise the PyPI release
 install_pkg() {
     local name="$1"
     local extras="${2:-}"
     local paths="${3:-}"
 
     for path in $paths; do
-        if [[ -d "$path" ]]; then
+        if [[ "$DEV_MODE" == "true" ]] && [[ -d "$path" ]]; then
             if [[ -n "$extras" ]]; then
                 guarded_pip_install -e "${path}[${extras}]" -q && echo "  $name (editable: $path)" && return 0
                 # Retry without extras if they fail

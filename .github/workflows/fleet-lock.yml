@@ -1,0 +1,143 @@
+name: fleet lock
+
+# The gate on the fleet runtime's dependency set (docs/fleet/DEPLOY-FROM-MAIN.md
+# "The fleet lock"). Every PR that touches the lock, its inputs, the caps list or
+# pyproject.toml must prove, in a fresh venv on the fleet's Pythons, that the
+# whole set installs together: the lock is current for its inputs, `pip check`
+# is clean, every SK package imports and its CLIs answer --help, no
+# security-relevant package goes down without a stated reason, the resolved set
+# has no known vulnerability, and every upper cap is on deploy/dependency-caps.md.
+#
+# The jobs always run and report, so they can be required checks; on a PR that
+# touches none of the lock files the steps are skipped and the job passes.
+# skcapstone #1382 is why: its pins held only SK packages, so a cap that broke
+# huggingface-hub (a tool in the same venv) merged with every check green.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+  schedule:
+    # Daily: a new advisory against an unchanged lock still turns main red.
+    - cron: "17 6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fleet-lock-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LOCK_PATHS: >-
+    deploy/fleet-constraints.txt deploy/fleet-requirements.in deploy/fleet-tools.in deploy/fleet-self.in
+    deploy/dependency-caps.md pyproject.toml scripts/fleet-lock.sh
+    scripts/ci/fleet_lock_gate.py src/skcapstone/fleet/dependency_parity.py
+    deploy/audit-canary.txt .github/workflows/fleet-lock.yml
+
+jobs:
+  resolve:
+    name: fleet lock resolve (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        # The fleet runs both: the lock is universal for 3.12 and 3.14.
+        python: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Does this change touch the lock?
+        id: scope
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          base="origin/${{ github.base_ref }}"
+          if git diff --quiet "$(git merge-base "$base" HEAD)" HEAD -- $LOCK_PATHS; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "no lock input changed: nothing to resolve"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: steps.scope.outputs.run == 'true'
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install uv
+        if: steps.scope.outputs.run == 'true'
+        run: python -m pip install "uv==0.9.27" "packaging>=23"
+      - name: The lock is current for its inputs
+        if: steps.scope.outputs.run == 'true' && matrix.python == '3.12'
+        run: scripts/fleet-lock.sh --check
+      - name: Install the whole lock in a fresh venv
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          uv venv "$RUNNER_TEMP/fleet" --python "$(command -v python)"
+          VIRTUAL_ENV="$RUNNER_TEMP/fleet" uv pip install pip \
+            -c deploy/fleet-constraints.txt -r deploy/fleet-constraints.txt \
+            ".[fleet-qualify]"
+      - name: pip check
+        if: steps.scope.outputs.run == 'true'
+        run: '"$RUNNER_TEMP/fleet/bin/python" -m pip check'
+      - name: Every pin is what got installed
+        if: steps.scope.outputs.run == 'true'
+        run: >-
+          "$RUNNER_TEMP/fleet/bin/python" src/skcapstone/fleet/dependency_parity.py
+          --constraints deploy/fleet-constraints.txt
+      - name: Import every SK package and smoke its CLIs
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          export SMOKE_HOME="$RUNNER_TEMP/home"; mkdir -p "$SMOKE_HOME"
+          HOME="$SMOKE_HOME" "$RUNNER_TEMP/fleet/bin/python" scripts/ci/fleet_lock_gate.py \
+            smoke deploy/fleet-requirements.in
+      - name: Every upper cap is on deploy/dependency-caps.md
+        if: steps.scope.outputs.run == 'true'
+        run: >-
+          "$RUNNER_TEMP/fleet/bin/python" scripts/ci/fleet_lock_gate.py
+          caps deploy/dependency-caps.md deploy/fleet-requirements.in
+
+  security:
+    name: fleet lock security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "packaging>=23" "pip-audit==2.10.0"
+      - name: No security package lowered without a stated reason
+        if: github.event_name == 'pull_request'
+        env:
+          # The PR body is data: it is read only for `security-downgrade:` lines.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          base="$(git merge-base "origin/${{ github.base_ref }}" HEAD)"
+          git show "$base:deploy/fleet-constraints.txt" > "$RUNNER_TEMP/base-lock.txt" || : > "$RUNNER_TEMP/base-lock.txt"
+          python scripts/ci/fleet_lock_gate.py security-downgrades \
+            "$RUNNER_TEMP/base-lock.txt" deploy/fleet-constraints.txt
+      - name: pip-audit can see (known-vulnerable canary, PyPI + OSV)
+        run: |
+          for svc in pypi osv; do
+            # Exit 1 is expected: the canary is vulnerable on purpose.
+            pip-audit -r deploy/audit-canary.txt --no-deps --disable-pip \
+              --progress-spinner off --vulnerability-service "$svc" \
+              -f json -o "$RUNNER_TEMP/canary-$svc.json" || true
+            python scripts/ci/fleet_lock_gate.py audit-sees \
+              "$RUNNER_TEMP/canary-$svc.json" deploy/audit-canary.txt
+          done
+      - name: No known vulnerability in the resolved set (pip-audit, PyPI + OSV)
+        run: |
+          pip-audit -r deploy/fleet-constraints.txt --no-deps --disable-pip \
+            --progress-spinner off --vulnerability-service pypi
+          pip-audit -r deploy/fleet-constraints.txt --no-deps --disable-pip \
+            --progress-spinner off --vulnerability-service osv

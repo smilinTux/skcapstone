@@ -1,0 +1,4 @@
+# skcapstone itself, from this checkout: hosts install ".[fleet-qualify]" from the
+# repo, never a PyPI release. Paths are relative to the repo root, where
+# scripts/fleet-lock.sh and Renovate run uv. --no-emit-package keeps it out of the lock.
+-e .[fleet-qualify]

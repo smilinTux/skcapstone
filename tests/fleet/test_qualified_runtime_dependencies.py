@@ -131,7 +131,7 @@ def test_controller_extra_supports_python_311_and_matches_312_source_ci():
     root = Path(__file__).resolve().parents[2]
     config = tomllib.loads((root / "pyproject.toml").read_text())
     items = [Requirement(x) for x in config["project"]["optional-dependencies"]["fleet-qualify"]]
-    for version, pin in [("3.11", "2.19.5"), ("3.12", "2.21.3")]:
+    for version, pin in [("3.11", "2.19.11"), ("3.12", "2.21.3")]:
         matches = [
             r
             for r in items

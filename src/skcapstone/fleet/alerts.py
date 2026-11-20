@@ -9,16 +9,16 @@ also the alert rate cap (R2).
 from __future__ import annotations
 
 import logging
-import os
-import shutil
 import subprocess
+
+from ..sk_alert_bin import sk_alert_bin
 
 logger = logging.getLogger("skcapstone.fleet.alerts")
 
 
 def send_alert(message: str, *, level: str = "warn") -> bool:
     """Fire one sk-alert. Returns False (never raises) on any failure."""
-    alert = shutil.which("sk-alert") or os.path.expanduser("~/.skenv/bin/sk-alert")
+    alert = sk_alert_bin()
     try:
         out = subprocess.run([alert, "-l", level, message], timeout=30, check=False)
         return out.returncode == 0

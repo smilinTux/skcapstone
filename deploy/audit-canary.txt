@@ -1,0 +1,8 @@
+# Known-vulnerable pins the fleet-lock CI gate feeds to pip-audit on purpose.
+# NEVER install this file. If pip-audit stops reporting any package here, the
+# audit is blind (service down, database gap, wrong flags) and the gate fails,
+# so a clean audit of the real lock always means something.
+# One package per advisory that the fleet has had to fix by hand.
+#   brotli, brotlicffi: CVE-2026-111497 (GHSA-9v8h-qqgm-4m35), fixed 1.2.1 / 1.2.1.0
+brotli==1.2.0
+brotlicffi==1.2.0.0

@@ -37,12 +37,13 @@ from __future__ import annotations
 import logging
 import os
 import re
-import shutil
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+from .sk_alert_bin import sk_alert_bin
 
 logger = logging.getLogger("skcapstone.gfs_backup")
 
@@ -820,7 +821,7 @@ def _send_alert(message: str, level: str = "warn") -> None:
         message: Alert body.
         level: sk-alert level (``info``/``warn``/``error``).
     """
-    alert = shutil.which("sk-alert") or os.path.expanduser("~/.skenv/bin/sk-alert")
+    alert = sk_alert_bin()
     try:
         subprocess.run([alert, "-l", level, message], timeout=30, check=False)
     except Exception as exc:  # noqa: BLE001 - alerting must never break the caller

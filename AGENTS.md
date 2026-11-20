@@ -37,7 +37,7 @@ the required check), `providers.yml`, `secret-scan.yml` (gitleaks),
 
 ```bash
 # install (dev: editable with all extras, as CI's test-env action does)
-python -m pip install -c deploy/fleet-constraints.txt -e ".[all,dev]"
+python -m pip install -c deploy/fleet-constraints.txt -r deploy/fleet-requirements.in -e ".[all,dev]"
 # end users: bash scripts/install.sh   (creates ~/.skenv and installs every SK package)
 # test (CI shards this on py3.12)
 python -m pytest tests/ --strict-markers -m "not integration and not e2e"
@@ -85,7 +85,10 @@ only `src/`.
 - **Code style:** Python 3.12+, type hints, Pydantic models, Google-style docstrings. Tests in
   pytest covering happy path, edge case and failure.
 - **Install:** SK packages go into `~/.skenv/` (CLIs in `~/.skenv/bin/`), never
-  `pip install --user` or system pip.
+  `pip install --user` or system pip. `~/.skenv` is production: it holds released
+  builds only, rolled out with `skcapstone deploy apply` (docs/DEPLOY.md). Never
+  `pip install -e` into it; editable dev installs go in `~/.skenv-dev` or a
+  per-worktree venv. `skcapstone doctor` flags it (`deploy:editable`).
 - **Generated files:** `skcapstone context generate` and `refresh-context` write AGENTS.md /
   CLAUDE.md for an agent's own context, not for this repo; never run them at the repo root.
   `src/skcapstone/defaults/claude/CLAUDE.md` is a packaged template for a user's

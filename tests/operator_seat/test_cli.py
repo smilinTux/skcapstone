@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import click
+import pytest
 from click.testing import CliRunner
 
 from skcapstone.fleet import sknoded, store
@@ -89,13 +93,9 @@ def test_pending_and_decide_reject(tmp_path, monkeypatch):
 
 
 def test_decide_approve_with_no_linked_change_refuses_and_names_reason(tmp_path, monkeypatch):
-    """Negative test (coord card cf12b21d): a decisions-store-only approval
-    with no linked ITIL change must never actuate, and the CLI must name the
-    reason instead of printing success. This is the exact bug the card
-    describes: `decide --approve` used to write `by="human"` and print
-    "approved" unconditionally, with nothing downstream ever re-reading the
-    record. Fails against pre-change behaviour (the old body always exited 0
-    and always printed "approved")."""
+    """A decisions-store-only approval never actuates, and the CLI names the reason instead
+    of printing success (coord card cf12b21d). Every ATLAS escalation is report-only (card
+    f8dd9441), so the reason is that ratification is the path."""
     paths = _enroll(tmp_path, monkeypatch)
     ddir = str(paths.root / "decisions")
     decisions.park(
@@ -107,17 +107,36 @@ def test_decide_approve_with_no_linked_change_refuses_and_names_reason(tmp_path,
     out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0"])
     assert out.exit_code != 0
     assert "d1 ->" not in out.output  # never prints the success line
-    assert "no ITIL change linked" in out.output
+    assert "skoperator apps ratify" in out.output
     # Never actuates: the decision is left pending, not silently resolved.
     assert len(decisions.list_pending(ddir)) == 1
 
 
-def test_decide_approve_with_linked_change_submits_a_cab_vote(tmp_path, monkeypatch):
-    """Positive counterpart: a decision whose option carries a real
-    itil_change_id write-throughs to a provenance-bound CAB vote (never the
-    literal by="human"), and the ITIL change folds approved as a result."""
-    from skcapstone.fleet import store as fleet_store
+_SCOPE = "op-bind:unknown|restart_service|x"
 
+
+def _grant_file(tmp_path, change_id, **kw):
+    """Write a real signed grant (throwaway pinned key) and return the CLI args."""
+    import json
+
+    from tests.cab_grants import envelope
+
+    kw.setdefault("target", "x")
+    kw.setdefault("scope", _SCOPE)
+    env = envelope(change_id, **kw)
+    path = tmp_path / "grant.json"
+    path.write_text(json.dumps(env), encoding="utf-8")
+    return env, ["--authorization", str(path), "--target", kw["target"], "--scope", kw["scope"]]
+
+
+def _nonces_used():
+    from skcapstone.cli import itil as itil_cli
+
+    store_dir = itil_cli._cab_nonce_store()
+    return sorted(p.name for p in store_dir.glob("*.used")) if store_dir.exists() else []
+
+
+def _linked_decision(tmp_path, monkeypatch):
     paths = _enroll(tmp_path, monkeypatch)
     home = _redirect_kedb_home(tmp_path, monkeypatch)
     itil = ITILManager(home)
@@ -137,17 +156,41 @@ def test_decide_approve_with_linked_change_submits_a_cab_vote(tmp_path, monkeypa
         decision_id="d1",
         created_iso="2026-07-29T00:00:00Z",
     )
-    out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0"])
-    assert out.exit_code == 0, out.output
-    assert "approved" in out.output
-    assert decisions.list_pending(ddir) == []  # resolved, no longer pending
+    return itil, chg, ddir
 
-    votes = itil.get_cab_votes(chg.id)
-    assert len(votes) == 1
-    assert votes[0].agent == fleet_store.resolved_writer_identity()  # never "human"
-    assert votes[0].subject_role == "approver"
-    refolded = [c for c in itil.list_changes() if c.id == chg.id][0]
-    assert refolded.status.value == "approved"
+
+def test_decide_approve_refuses_a_linked_decision_before_asking_for_a_grant(tmp_path, monkeypatch):
+    """Card f8dd9441 (fewest gates): even a decision bound to a change cannot be approved.
+    The refusal comes before any grant is asked for and writes nothing: no CAB vote, no
+    nonce spent, the decision still pending."""
+    itil, chg, ddir = _linked_decision(tmp_path, monkeypatch)
+    out = CliRunner().invoke(cli.operator, ["decide", "d1", "--approve", "--choice", "0"])
+    assert out.exit_code != 0
+    assert "report-only" in out.output and "skoperator apps ratify" in out.output
+    assert "grant" not in out.output
+    assert itil.get_cab_votes(chg.id) == []
+    assert _nonces_used() == []
+    assert len(decisions.list_pending(ddir)) == 1
+
+
+def test_decide_no_longer_takes_a_grant(tmp_path, monkeypatch):
+    _linked_decision(tmp_path, monkeypatch)
+    out = CliRunner().invoke(
+        cli.operator, ["decide", "d1", "--approve", "--authorization", "grant.json"]
+    )
+    assert out.exit_code == 2 and "No such option" in out.output
+
+
+def test_decide_grant_is_single_use(tmp_path, monkeypatch):
+    itil, chg, ddir = _linked_decision(tmp_path, monkeypatch)
+    _, args = _grant_file(tmp_path, chg.id)
+    from skcapstone.cli import itil as itil_cli
+
+    path = args[1]
+    target, scope = args[3], args[5]
+    itil_cli._verified_cab_authorization(Path(path), chg.id, "approved", target, scope)
+    with pytest.raises(click.ClickException, match="already been consumed"):
+        itil_cli._verified_cab_authorization(Path(path), chg.id, "approved", target, scope)
 
 
 def test_pending_empty(tmp_path, monkeypatch):
@@ -378,17 +421,7 @@ def test_run_rejects_a_max_evidence_age_above_the_cap(tmp_path, monkeypatch):
     assert at_cap.exit_code == 0, at_cap.output
 
 
-def test_honor_pending_rejects_a_max_approval_age_above_the_cap():
-    from skcapstone.operator_seat import dispatch
-
-    runner = CliRunner()
-    too_big = runner.invoke(
-        cli.operator,
-        [
-            "honor-pending",
-            "--max-approval-age",
-            str(dispatch.MAX_ALLOWED_APPROVAL_AGE_SECONDS + 1),
-        ],
-    )
-    assert too_big.exit_code == 2
-    assert "max-approval-age" in too_big.output.lower() or "invalid" in too_big.output.lower()
+def test_honor_pending_has_no_human_approval_age_option():
+    """There is no human-approval lane to age (card f8dd9441)."""
+    out = CliRunner().invoke(cli.operator, ["honor-pending", "--max-approval-age", "60"])
+    assert out.exit_code == 2 and "No such option" in out.output

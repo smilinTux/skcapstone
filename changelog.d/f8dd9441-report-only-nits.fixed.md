@@ -1,0 +1,1 @@
+A report-only decision parked with no observing node (from before the field, or by the stranded sweep) can now end on any node, so a later escalation of the same condition gets a new record and a new notification. An escalation whose target did not resolve no longer suggests ratifying.

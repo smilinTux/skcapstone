@@ -19,6 +19,7 @@ from skcapstone.fleet import store
 from skcapstone.fleet.paths import FleetPaths
 from skcapstone.itil import ITILManager
 from skcapstone.operator_seat import action_ledger, dispatch, safety
+from tests.cab_grants import cast_signed_vote
 
 _NOW = "2026-08-25T00:00:00Z"
 #: The injected REAL clock the dispatcher measures evidence age against.
@@ -44,6 +45,12 @@ def _votes_decided_before_the_test_clock(monkeypatch):
         return vote
 
     monkeypatch.setattr(ITILManager, "submit_cab_vote", patched)
+    # Card bada5c86: the approval age is read from the signed grant's issued_at.
+    from datetime import datetime as _dt
+
+    from tests import cab_grants
+
+    monkeypatch.setattr(cab_grants, "ISSUED_AT", _dt.fromisoformat("2026-08-24T23:00:00+00:00"))
 
 
 def _paths(tmp_path) -> FleetPaths:
@@ -167,17 +174,8 @@ def test_dispatch_intent_actuates_and_verifies_an_approved_change(tmp_path):
         change_type="normal",
         risk="low",
         rollback_plan="revert",
-        created_by="atlas",
-        tags=["operator"],
-    )
-    # A simulated human CAB-approves via a provenance-bound vote (never a bare
-    # "human" string), exactly what dispatch.resolve_decision submits.
-    itil.submit_cab_vote(
-        chg.id,
-        agent="capauth:approver@scratch",
-        decision="approved",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
+        created_by="operator",
+        tags=["operator", "auto-normal"],
     )
 
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
@@ -275,12 +273,8 @@ def test_rejected_change_never_actuates(tmp_path):
         created_by="atlas",
         tags=["operator"],
     )
-    itil.submit_cab_vote(
-        chg.id,
-        agent="capauth:approver@scratch",
-        decision="rejected",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
+    cast_signed_vote(
+        itil, chg.id, subject="capauth:approver@scratch", role="approver", decision="rejected"
     )
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
 
@@ -349,29 +343,32 @@ def test_intent_with_no_linked_change_is_invisible_to_the_dispatcher(tmp_path):
     assert direct.outcome == "skipped: no linked ITIL change"
 
 
-def test_resolve_decision_with_no_linked_change_refuses_before_any_write(tmp_path):
+def test_approving_any_decision_refuses_before_any_write(tmp_path):
+    """Every ATLAS escalation is report-only (card f8dd9441): no option, bound or not, can
+    be approved, and the refusal names ratification as the path."""
     from skcapstone.operator_seat import decisions
 
     itil = ITILManager(tmp_path / "itil")
     ddir = str(tmp_path / "decisions")
-    decisions.park(
-        ddir,
-        [{"action": "restart_service", "object": "x"}],  # no itil_change_id
-        decision_id="d1",
-        created_iso=_NOW,
-    )
-    with pytest.raises(dispatch.UnauthorizedDecisionError):
-        dispatch.resolve_decision(
+    for did, extra in (("d1", {}), ("d2", {"itil_change_id": "chg-1"})):
+        decisions.park(
             ddir,
-            itil,
-            "d1",
-            approve=True,
-            choice=0,
-            subject="capauth:approver@scratch",
-            resolved_iso=_NOW,
+            [{"app": "widget", "action": "restart_service", "object": "x", **extra}],
+            decision_id=did,
+            created_iso=_NOW,
         )
-    # Never actuates: the decision is left pending, not silently resolved.
-    assert len(decisions.list_pending(ddir)) == 1
+        with pytest.raises(dispatch.ReportOnlyDecisionError, match="skoperator apps ratify"):
+            dispatch.resolve_decision(
+                ddir,
+                itil,
+                did,
+                approve=True,
+                choice=0,
+                subject="capauth:approver@scratch",
+                resolved_iso=_NOW,
+            )
+    # Never actuates: the decisions are left pending, not silently resolved.
+    assert len(decisions.list_pending(ddir)) == 2
     assert itil.list_changes() == []  # no CAB vote / change ever touched
 
 
@@ -409,15 +406,8 @@ def test_stale_catalog_generation_refuses_and_escalates(tmp_path):
         change_type="normal",
         risk="low",
         rollback_plan="revert",
-        created_by="atlas",
-        tags=["operator"],
-    )
-    itil.submit_cab_vote(
-        chg.id,
-        agent="capauth:approver@scratch",
-        decision="approved",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
+        created_by="operator",
+        tags=["operator", "auto-normal"],
     )
     # Proposed against generation "1" (now stale: the live record is "2").
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id, catalog_generation="1")
@@ -651,15 +641,8 @@ def test_freeze_landing_during_dispatch_does_not_feed_the_circuit_breaker(tmp_pa
         change_type="normal",
         risk="low",
         rollback_plan="revert",
-        created_by="atlas",
-        tags=["operator"],
-    )
-    itil.submit_cab_vote(
-        chg.id,
-        agent="capauth:approver@scratch",
-        decision="approved",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
+        created_by="operator",
+        tags=["operator", "auto-normal"],
     )
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
 
@@ -696,15 +679,8 @@ def test_a_real_failure_that_coincides_with_a_freeze_still_feeds_the_circuit_bre
         change_type="normal",
         risk="low",
         rollback_plan="revert",
-        created_by="atlas",
-        tags=["operator"],
-    )
-    itil.submit_cab_vote(
-        chg.id,
-        agent="capauth:approver@scratch",
-        decision="approved",
-        subject="capauth:approver@scratch",
-        subject_role="approver",
+        created_by="operator",
+        tags=["operator", "auto-normal"],
     )
     intent_id = _make_proposed_intent(ledger, itil_change_id=chg.id)
 

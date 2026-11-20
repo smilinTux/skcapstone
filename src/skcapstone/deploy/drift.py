@@ -1,0 +1,237 @@
+"""Deploy drift: anything that makes production something other than released main.
+
+One function computes the findings; ``doctor`` renders them as checks and the
+drift timer turns a CHANGE in them into one alert. An unchanged finding set
+sends nothing, so a known, accepted state never becomes noise.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import socket
+import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Optional
+
+from .inspect import (
+    default_unit_dir,
+    exec_paths_in_trees,
+    list_dists,
+    live_units,
+    normalize,
+    unit_missing_paths,
+)
+from .manifest import Manifest
+from .tools import CONFIG_SUFFIX, default_root, installed
+
+
+@dataclass
+class DriftReport:
+    """Findings, grouped by kind. Each entry is one stable, sortable line."""
+
+    editable: list[str] = field(default_factory=list)
+    exec_in_tree: list[str] = field(default_factory=list)
+    behind: list[str] = field(default_factory=list)
+    tools: list[str] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
+    missing: list[str] = field(default_factory=list)
+    unknown: list[str] = field(default_factory=list)
+    #: Units nothing can start that still name a tree or a missing path.
+    #: Informational only: not a finding, not alerted.
+    dormant: list[str] = field(default_factory=list)
+
+    def lines(self) -> list[str]:
+        """Every finding as one line, prefixed with its kind."""
+        return (
+            [f"editable: {x}" for x in self.editable]
+            + [f"exec-in-tree: {x}" for x in self.exec_in_tree]
+            + [f"exec-missing: {x}" for x in self.missing]
+            + [f"version: {x}" for x in self.behind]
+            + [f"tool: {x}" for x in self.tools]
+            + [f"files: {x}" for x in self.files]
+        )
+
+    def digest(self) -> str:
+        """Stable fingerprint of the findings, for change detection."""
+        return hashlib.sha256("\n".join(sorted(self.lines())).encode()).hexdigest()[:16]
+
+
+def compute(
+    home: Path,
+    venv_python: Path,
+    manifest: Optional[Manifest] = None,
+    unit_dir: Optional[Path] = None,
+    node: Optional[str] = None,
+    tools_root: Optional[Path] = None,
+    runner=subprocess.run,
+    state_dir: Optional[Path] = None,
+) -> DriftReport:
+    """Compute the drift findings for this node.
+
+    Args:
+        home: The user's home directory.
+        venv_python: The deploy venv's interpreter (``~/.skenv/bin/python``).
+        manifest: The release set, when available; without it the version
+            comparison is reported as unknown rather than as a pass.
+        unit_dir: systemd user unit directory override.
+        node: Node profile override.
+        tools_root: Where tool exports live (``~/.local/share/sk-tools``).
+        runner: subprocess.run, replaceable in tests (asks systemd which
+            units can run at all).
+        state_dir: Deploy state directory; its last live tools change record is
+            what managed files are compared with (no record, no file findings).
+
+    Returns:
+        The drift report.
+    """
+    report = DriftReport()
+    try:
+        dists = list_dists(venv_python)
+    except (RuntimeError, OSError, ValueError) as exc:
+        report.unknown.append(f"cannot list {venv_python}: {exc}")
+        dists = []
+    declared = {}
+    if manifest is not None:
+        declared = {
+            normalize(n): spec.reason
+            for n, spec in manifest.packages_for(node).items()
+            if spec.source == "editable"
+        }
+    for dist in dists:
+        if dist.editable:
+            where = dist.location.removeprefix("file://")
+            note = declared.get(normalize(dist.name))
+            suffix = f" (declared exception: {note})" if note else ""
+            report.editable.append(f"{dist.name} {dist.version} -> {where}{suffix}")
+    allow = manifest.allow_exec_in_tree if manifest else []
+    units = unit_dir or default_unit_dir(home)
+    live = live_units(units, runner)
+    for ep, tree in exec_paths_in_trees(home, units, allow):
+        line = f"{ep.origin}: {ep.path} (tree {tree})"
+        if live is None or not ep.origin.startswith("unit ") or ep.origin[5:] in live:
+            report.exec_in_tree.append(line)
+        else:
+            report.dormant.append(f"exec-in-tree {line}")
+    for ep in unit_missing_paths(units, home):
+        line = f"{ep.origin}: {ep.path}"
+        if live is None or ep.origin[5:] in live:
+            report.missing.append(line)
+        else:
+            report.dormant.append(f"exec-missing {line}")
+    if manifest is not None:
+        root = tools_root or default_root(home)
+        for name in manifest.tools_for(node):
+            _url, ref, _branch = manifest.tool_source(name)
+            meta = installed(root, name)
+            if meta is None:
+                report.tools.append(f"{name} not exported (manifest {ref})")
+            elif meta.get("ref") != ref:
+                report.tools.append(f"{name} {meta.get('ref')} != manifest {ref}")
+        for name, cfg in manifest.configs_for(node).items():
+            cname = name + CONFIG_SUFFIX
+            meta = installed(root, cname)
+            if meta is None:
+                report.tools.append(f"{cname} not exported (manifest {cfg.ref})")
+            elif meta.get("ref") != cfg.ref:
+                report.tools.append(f"{cname} {meta.get('ref')} != manifest {cfg.ref}")
+    report.files = drifted_files(state_dir or Path(home) / ".local/state/sk-deploy")
+    if manifest is None:
+        report.unknown.append("no release manifest on this node; versions not compared")
+    elif dists:
+        have = {normalize(d.name): d for d in dists}
+        for name, spec in manifest.packages_for(node).items():
+            dist = have.get(normalize(name))
+            if dist is None:
+                report.behind.append(f"{name} not installed (manifest {spec.version or spec.ref})")
+            elif spec.source == "pypi" and dist.version != spec.version:
+                report.behind.append(f"{name} {dist.version} != manifest {spec.version}")
+    return report
+
+
+def drifted_files(state_dir: Path) -> list[str]:
+    """Managed files that differ from what the last live tools change wrote.
+
+    Only the record is read (it holds the sha256 of each whole file and of
+    each block body), so this needs no network and no manifest. An edit
+    outside a managed block is not a finding.
+    """
+    from .files import _decode, _encode, block_body, sha256
+    from .rollout import Paths, last_change
+
+    rec = last_change(Paths(Path(), Path(), state_dir))
+    out: list[str] = []
+    for key, want in sorted(((rec or {}).get("written") or {}).items()):
+        mode = want.get("mode")
+        path = Path(key)
+        if mode == "link":
+            if not path.is_symlink() or os.readlink(path) != want.get("target"):
+                out.append(f"{key} is not the link the last deploy made")
+        elif mode == "whole":
+            try:
+                have = sha256(path.read_bytes())
+            except OSError:
+                out.append(f"{key} is missing (the last deploy wrote it)")
+                continue
+            if have != want.get("sha256"):
+                out.append(f"{key} was edited since the last deploy")
+        elif mode == "block":
+            try:
+                body = block_body(_decode(path.read_bytes()), want.get("block", ""))
+            except OSError:
+                out.append(f"{key} is missing (the last deploy wrote it)")
+                continue
+            if body is None or sha256(_encode(body)) != want.get("block_sha256"):
+                out.append(f"{key} block {want.get('block')} was edited since the last deploy")
+    return out
+
+
+def alert_on_change(report: DriftReport, state_file: Path, sender: Optional[str] = None) -> str:
+    """Send one alert when the finding set changed since the last run.
+
+    New or changed findings send a warning into the ``deploy/drift/<host>``
+    thread; findings that all cleared send the resolving last word. Nothing
+    changed means nothing is sent.
+
+    Args:
+        report: This run's findings.
+        state_file: Where the last digest is kept (host-local).
+        sender: The ``sk-alert`` executable (found on PATH by default).
+
+    Returns:
+        ``sent``, ``resolved``, ``unchanged`` or ``no-sender``.
+    """
+    try:
+        last = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        last = {}
+    digest = report.digest() if report.lines() else ""
+    if digest == last.get("digest", ""):
+        return "unchanged"
+    sender = sender or shutil.which("sk-alert")
+    host = socket.gethostname()
+    group = f"deploy/drift/{host}"
+    if sender is None:
+        return "no-sender"
+    if digest:
+        lines = report.lines()
+        body = (
+            f"{host}: {len(lines)} deploy drift finding(s), production is not released main.\n"
+            + "\n".join(lines[:25])
+        )
+        if len(lines) > 25:
+            body += f"\n... and {len(lines) - 25} more (skcapstone deploy drift)"
+        cmd = [sender, "-l", "warn", "-g", group, "--title", f"deploy drift on {host}", body]
+        outcome = "sent"
+    else:
+        cmd = [sender, "-g", group, "--resolve", f"{host}: deploy drift cleared"]
+        outcome = "resolved"
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+    if proc.returncode != 0:
+        return f"send-failed: {proc.stderr.strip()[-200:]}"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(json.dumps({"digest": digest}), encoding="utf-8")
+    return outcome

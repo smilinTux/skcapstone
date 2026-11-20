@@ -159,10 +159,13 @@ class _NoFindings:
         return []
 
 
-def test_fleet_conditions_are_evaluated_as_of_the_pass_clock(tmp_path):
+def test_fleet_never_reports_the_pass_clock_as_a_source_time(tmp_path):
+    # Card 21b01d01: the pass clock is the evaluation instant, not when the source data
+    # was true. Each fleet condition carries its own status write time instead (see
+    # test_fleet_actuation_target.py); the payload carries none.
     paths = FleetPaths(root=tmp_path / "fleet")
     out = fleet_adapter.fleet_observe(paths, "2026-08-20T00:00:00Z")
-    assert out["source_observed_at"] == "2026-08-20T00:00:00Z"
+    assert "source_observed_at" not in out
 
 
 def test_skos_backlog_reports_the_digest_time_and_live_probes_report_now(monkeypatch):

@@ -475,3 +475,39 @@ class TestDoctorCLI:
         assert "passed" in data
         assert "failed" in data
         assert isinstance(data["checks"], list)
+
+
+class TestDoctorCategoryDisplay:
+    """Every category in the report is printed, not only the listed ones."""
+
+    def _report(self, category: str):
+        from skcapstone.doctor import Check, DiagnosticReport
+
+        return DiagnosticReport(
+            checks=[
+                Check(
+                    name=f"{category}:probe",
+                    description=f"{category} probe ran",
+                    passed=False,
+                    detail="found one",
+                    category=category,
+                )
+            ]
+        )
+
+    @pytest.mark.parametrize("category", ["deploy", "zz-new-category"])
+    def test_category_is_printed(self, tmp_path: Path, category: str):
+        """A check in a category is shown, so the totals match what is listed."""
+        from skcapstone.cli import main
+
+        with patch("skcapstone.doctor.run_diagnostics", return_value=self._report(category)):
+            result = CliRunner().invoke(main, ["doctor", "--home", str(tmp_path), "--verbose"])
+        assert f"{category} probe ran" in result.output
+
+    def test_deploy_label(self, tmp_path: Path):
+        """The deploy category gets its own heading."""
+        from skcapstone.cli import main
+
+        with patch("skcapstone.doctor.run_diagnostics", return_value=self._report("deploy")):
+            result = CliRunner().invoke(main, ["doctor", "--home", str(tmp_path)])
+        assert "Deploy (released main)" in result.output

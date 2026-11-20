@@ -540,3 +540,70 @@ class TestCompressionConverges:
             age_hours=24 * 30,
         )
         assert engine.compress_memories() == 1
+
+
+# ---------------------------------------------------------------------------
+# Sealed SKMemory records are not this sweep's to rewrite
+# ---------------------------------------------------------------------------
+
+
+def _sealed_skmemory_record(home: Path, memory_id: str, layer: str, content: str) -> Path:
+    """A unified skmemory file (`id`, `integrity_hash`) as the fortress verifier sees it.
+
+    The seal is sha256 over ``id:title:content:emotional-signature``
+    (skmemory ``Memory.compute_integrity_hash``).
+    """
+    import hashlib
+
+    title = "Sealed record"
+    seal = hashlib.sha256(f"{memory_id}:{title}:{content}:neutral@0.0/+0.0".encode()).hexdigest()
+    path = home / "memory" / layer / f"{memory_id}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "id": memory_id,
+                # Both keys, as in the 2026-10-20 incident: a record carrying `memory_id`
+                # too must still be skipped, or the legacy model rewrites it.
+                "memory_id": memory_id,
+                "title": title,
+                "content": content,
+                "layer": layer,
+                "created_at": (datetime.now(timezone.utc) - timedelta(days=90)).isoformat(),
+                "updated_at": (datetime.now(timezone.utc) - timedelta(days=90)).isoformat(),
+                "emotional": {"intensity": 0.0, "valence": 0.0, "labels": []},
+                "integrity_hash": seal,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+class TestSealedRecordsAreLeftAlone:
+    """compress/curate work on the legacy `MemoryEntry`, which has no seal field.
+
+    Rewriting a sealed unified record through it would change `content` and drop
+    `integrity_hash`, and `skmemory fortress verify` would then report tampering
+    (or silently stop sealing). `_load_entry` skips every record that carries `id`;
+    this pins that, because the compress sweep once looked like the writer behind
+    the lumina "tampered" reports of 2026-11 (it was not: the cause was in skmemory).
+    """
+
+    def test_compress_does_not_touch_a_sealed_record(
+        self, engine: PromotionEngine, home: Path
+    ) -> None:
+        path = _sealed_skmemory_record(home, "sealed-mid", "mid-term", "z" * 2000)
+        before = path.read_bytes()
+
+        assert engine.compress_memories() == 0
+        assert path.read_bytes() == before
+
+    def test_curate_does_not_touch_a_sealed_record(self, home: Path) -> None:
+        from skcapstone.memory_curator import MemoryCurator
+
+        path = _sealed_skmemory_record(home, "sealed-short", "short-term", "deploy the mcp server")
+        before = path.read_bytes()
+
+        MemoryCurator(home).curate()
+        assert path.read_bytes() == before

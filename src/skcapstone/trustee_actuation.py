@@ -205,7 +205,33 @@ def change_is_approved(change_id: str, *, shared_root: Path) -> bool:
     except Exception:  # noqa: BLE001 - an unreadable change record is not an approved one
         logger.warning("change_is_approved: could not fold change %r", change_id, exc_info=True)
         return False
-    return change.status.value == "approved"
+    # Card bada5c86: the fold's status alone is not enough (an older skcoord folds a
+    # normal change approved on a bare `human` vote). The change must also be
+    # standard or auto-normal by its own shape, or carry a verified human grant.
+    from .cab_approval import approval_basis
+
+    if change.status.value != "approved":
+        return False
+    basis = approval_basis(mgr, change)
+    if basis == "auto":
+        return True
+    if basis != "human":
+        return False
+    # A human approval expires DEFAULT_MAX_APPROVAL_AGE_SECONDS after its signed
+    # grant's issued_at, exactly as at the dispatcher.
+    from datetime import datetime, timezone
+
+    from .cab_approval import DEFAULT_MAX_APPROVAL_AGE_SECONDS, human_approval_times
+    from .operator_seat.dispatch import approval_refusal
+
+    return (
+        approval_refusal(
+            human_approval_times(mgr, change),
+            datetime.now(timezone.utc).isoformat(),
+            DEFAULT_MAX_APPROVAL_AGE_SECONDS,
+        )
+        is None
+    )
 
 
 def guard(

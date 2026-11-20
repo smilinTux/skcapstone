@@ -17,7 +17,30 @@ from typing import Callable
 from ..fleet import actuation, store
 from . import adapter
 
+#: The conditions this adapter observes. ``loop.CONDITION_SCHEMAS`` is built from
+#: this module attribute: without it the schema is empty and the loop drops every
+#: cmdb observation. All three are health-type (they fire when False), so
+#: PROBLEM_WHEN_TRUE stays empty.
+CONDITIONS = [
+    "CmdbReconcileFresh",
+    "CmdbLastScanComplete",
+    "CmdbAuditClean",
+]
+
 PROBLEM_WHEN_TRUE = frozenset()
+
+#: Which conditions make each action eligible to be proposed. The shadow is the
+#: remedy for stale or incomplete reconcile evidence. Neither condition is
+#: remedied by a shadow when CmdbAuditClean is False (that is store corruption a
+#: human repairs). Apply is non-standard and irreversible: no condition makes it
+#: eligible for any autonomous lane, it runs only through ``cmdb_act`` and
+#: ``_apply_gate`` with a signed human vote. loop._operatorapp_allows enforces
+#: this table on top of the app spec and ratification: an action with no row, or
+#: an empty row, is eligible for no condition.
+ACTION_CONDITIONS: dict[str, tuple[str, ...]] = {
+    "run-cmdb-shadow": ("CmdbReconcileFresh", "CmdbLastScanComplete"),
+    "apply-cmdb-reconcile": (),
+}
 _MAX_ARTIFACT_AGE = timedelta(hours=4)
 _SHADOW_UNIT = "skcapstone-cmdb-reconcile-shadow.service"
 _APPLY_UNIT = "skcapstone-cmdb-reconcile-network.service"
@@ -49,7 +72,7 @@ def cmdb_explain() -> dict:
     """Return the CMDB operator contract."""
     return {
         "kinds": ["cmdb"],
-        "conditions": ["CmdbReconcileFresh", "CmdbLastScanComplete", "CmdbAuditClean"],
+        "conditions": list(CONDITIONS),
         "actions": list(_ACTIONS),
     }
 
@@ -100,8 +123,13 @@ def _apply_gate(
     *,
     itil_factory=None,
     manager_factory=None,
+    now_iso: str | None = None,
 ) -> str | None:
-    """Return a refusal reason unless the governed network-apply gate passes."""
+    """Return a refusal reason unless the governed network-apply gate passes.
+
+    A human approval is usable for ``DEFAULT_MAX_APPROVAL_AGE_SECONDS`` from its
+    signed grant's ``issued_at``, as in the dispatcher (card bada5c86).
+    """
     if not change_id.startswith("chg-"):
         return "a valid --change-id is required"
     if itil_factory is None:
@@ -114,21 +142,25 @@ def _apply_gate(
         return f"unknown ITIL change: {change_id}"
     if change.status.value not in {"approved", "scheduled"}:
         return f"ITIL change is {change.status.value}, not approved or scheduled"
-    approvals = [
-        vote
-        for vote in itil.get_cab_votes(change_id)
-        if vote.decision.value == "approved"
-        and (
-            vote.agent == "human"
-            or (
-                getattr(vote, "subject_role", "") in {"owner", "approver"}
-                and bool(getattr(vote, "subject_fingerprint", ""))
-                and bool(getattr(vote, "authorization_id", ""))
-            )
-        )
-    ]
+    # Card bada5c86: the same rule as the dispatcher. A bare `human` vote, or
+    # provenance fields without a verifying signed grant from a pinned approver,
+    # never counted as authenticated; nor does a vote by the change's own drafter,
+    # creator, managed-by owner or the operator seat.
+    from ..cab_approval import human_approval_times
+
+    approvals = human_approval_times(itil, change)
     if not approvals:
         return "independent authenticated human CAB approval is required"
+    from ..cab_approval import DEFAULT_MAX_APPROVAL_AGE_SECONDS
+    from .dispatch import approval_refusal
+
+    stale = approval_refusal(
+        approvals,
+        now_iso or datetime.now(timezone.utc).isoformat(),
+        DEFAULT_MAX_APPROVAL_AGE_SECONDS,
+    )
+    if stale is not None:
+        return stale[1]
 
     artifacts = _verified_artifacts(home)
     complete = [
@@ -265,4 +297,11 @@ def cmdb_act(
     return {"performed": bool(ok), "action": action, "unit": units[action]}
 
 
-__all__ = ["PROBLEM_WHEN_TRUE", "cmdb_act", "cmdb_explain", "observe"]
+__all__ = [
+    "ACTION_CONDITIONS",
+    "CONDITIONS",
+    "PROBLEM_WHEN_TRUE",
+    "cmdb_act",
+    "cmdb_explain",
+    "observe",
+]
