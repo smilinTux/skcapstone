@@ -191,7 +191,9 @@ def test_write_atomic_preserves_mode_and_backs_up(tmp_path):
 def test_picker_wraps_pi_with_the_sync_and_honours_the_opt_out():
     source = PICKER.read_text()
     assert "function skpisync" in source
-    assert 'if [[ "${SK_PI_SYNC:-1}" == "1" ]]; then' in source
+    assert '"${SK_PI_SYNC:-1}" == "1"' in source
+    # skfleet-clients-managed hosts skip the launch-time rewrite (docs/fleet/CLIENTS.md).
+    assert '! -e "$HOME/.config/skfleet/clients-managed"' in source
     assert "export -f skpisync" in source
 
 

@@ -1,0 +1,15 @@
+# Daily upstream check for skfleet-clients: a newer pi/opencode/codex/claude is
+# smoked on the canary (candidate binary, pin not moved) and opened as a pin PR
+# in skgateway-config-chi; auto-merge is armed unless the bump is held.
+[Unit]
+Description=skfleet-clients: daily upstream version check and pin-bump PRs
+Documentation=https://github.com/smilinTux/skcapstone/blob/main/docs/fleet/CLIENTS.md
+OnFailure=skcapstone-alert@skfleet-clients-upstream.service
+
+[Service]
+UMask=0077
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=SKFLEET_CLIENTS_REPO=%h/deploy/skgateway-config-chi
+ExecStart=%h/.skenv/bin/skcapstone fleet clients upstream
+TimeoutStartSec=3600

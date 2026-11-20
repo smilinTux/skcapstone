@@ -1,0 +1,10 @@
+[Unit]
+Description=skfleet-clients: daily upstream client version check
+
+[Timer]
+OnCalendar=*-*-* 14:00:00 UTC
+RandomizedDelaySec=20min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

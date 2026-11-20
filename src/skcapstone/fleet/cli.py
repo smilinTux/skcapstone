@@ -1785,6 +1785,11 @@ def register_fleet_commands(main: click.Group) -> None:
     main.add_command(fleet)
 
 
+from .clients_cli import clients as _clients_group  # noqa: E402
+
+fleet.add_command(_clients_group)
+
+
 def main() -> None:
     """Console script entry point (skfleet)."""
     fleet()

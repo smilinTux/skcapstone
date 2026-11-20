@@ -525,7 +525,9 @@ function skpisync {
 # pi coding agent — always launched against a freshly synced gateway catalog.
 # Set SK_PI_SYNC=0 to launch without touching ~/.pi/agent/models.json.
 function pi {
-    if [[ "${SK_PI_SYNC:-1}" == "1" ]]; then
+    # skfleet-clients owns models.json on managed hosts (docs/fleet/CLIENTS.md):
+    # a launch-time rewrite would fight the rendered gateway blocks.
+    if [[ "${SK_PI_SYNC:-1}" == "1" && ! -e "$HOME/.config/skfleet/clients-managed" ]]; then
         skpisync || true
     fi
     _sk_launch pi "" "$@"

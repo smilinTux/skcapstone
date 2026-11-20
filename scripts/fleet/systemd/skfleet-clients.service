@@ -1,0 +1,26 @@
+# skfleet-clients: keep pi, opencode, codex and claude pinned on every chi host,
+# with configs rendered from skgateway's live model list. docs/fleet/CLIENTS.md.
+#
+# Hand-installed on exactly ONE authority host (chiap08), next to
+# skfleet-auto-rollout. Two rollers race, so never enable it on a second host.
+#
+# Install (deploy checkouts on main):
+#   git clone git@github.com:smilinTux/skgateway-config-chi.git ~/deploy/skgateway-config-chi
+#   cp scripts/fleet/systemd/skfleet-clients{,-upstream}.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now skfleet-clients.timer skfleet-clients-upstream.timer
+#
+# A halted roll exits nonzero, which fires the estate's skcapstone-alert@ hook;
+# the job also skmails HALTED/ROLLED itself (pins.yaml notify).
+[Unit]
+Description=skfleet-clients: roll pinned coding clients and gateway configs to the ring
+Documentation=https://github.com/smilinTux/skcapstone/blob/main/docs/fleet/CLIENTS.md
+OnFailure=skcapstone-alert@skfleet-clients.service
+
+[Service]
+UMask=0077
+Type=oneshot
+Environment=PATH=%h/.skenv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=SKFLEET_CLIENTS_REPO=%h/deploy/skgateway-config-chi
+ExecStart=%h/.skenv/bin/skcapstone fleet clients tick
+TimeoutStartSec=3600
