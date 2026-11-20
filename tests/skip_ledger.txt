@@ -91,6 +91,12 @@ tests/test_workflow_secret_scan_refscope.py::test_gitleaks_fails_only_on_finding
 # that can run it. Move it to scripts/fleet/ as a manual tool.
 tests/test_skfleet_pi_tool_allowlist.py::test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes
 
+# The qualify-env manifest pins the fleet hosts' system interpreter
+# (/usr/bin/python3.12, Ubuntu 24.04, by sha256). Runner images no longer ship
+# it (seen 2026-11-18 on #1395), so this refusal check runs only on a fleet
+# host or a workstation with that interpreter (it passes on noroc2027).
+tests/fleet/test_qualify_env.py::test_build_refuses_a_different_interpreter
+
 # --- MATRIX: correct, interpreter-dependent ------------------------------
 # tomllib is stdlib from 3.11; skips only on the py3.10 matrix leg.
 tests/test_version_single_source.py::test_pyproject_declares_the_version_dynamic
