@@ -52,11 +52,11 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import socket
+import ssl
 import subprocess
 import sys
-import re
-import ssl
 import tempfile
 import time
 import urllib.request
@@ -88,8 +88,10 @@ SYNCTHING_CONFIGS = (
     HOME / ".local/state/syncthing/config.xml",
     HOME / ".config/syncthing/config.xml",
 )
-SHOW_PROPS = "LoadState,ActiveState,InvocationID,CPUUsageNSec,ActiveEnterTimestampMonotonic,ControlGroup"
-# journald lines systemd writes about a unit. Matched inside journalctl, counted here, never copied.
+SHOW_PROPS = (
+    "LoadState,ActiveState,InvocationID,CPUUsageNSec,ActiveEnterTimestampMonotonic,ControlGroup"
+)
+# journald lines systemd writes about a unit: matched by journalctl, counted, never copied.
 KILL_PATTERN = r"code=(killed|dumped), status=(?!15/)"
 RESTART_PATTERN = r"Scheduled restart job"
 MB = 1024 * 1024
@@ -137,13 +139,15 @@ def _parse_units(spec: str) -> list[tuple[str, str]]:
 
 
 def _unit_key(scope: str, unit: str) -> str:
-    """Evidence key: the unit name without ``.service``; system units carry a ``system:`` prefix."""
+    """Evidence key: the unit name without ``.service``, ``system:`` prefix for system units."""
     name = unit[: -len(".service")] if unit.endswith(".service") else unit
     return f"system:{name}" if scope == "system" else name
 
 
 def _show(scope: str, unit: str) -> dict | None:
-    proc = _cmd(["systemctl", *(["--user"] if scope == "user" else []), "show", unit, "-p", SHOW_PROPS])
+    proc = _cmd(
+        ["systemctl", *(["--user"] if scope == "user" else []), "show", unit, "-p", SHOW_PROPS]
+    )
     if proc is None or proc.returncode != 0:
         return None
     return dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
@@ -157,7 +161,7 @@ def _int(value) -> int | None:
 
 
 def _cgroup_memory(cgroup: str) -> dict:
-    """rss_mb (sum of VmRSS over the cgroup tree), mem_current_mb and mem_peak_mb; None when unreadable."""
+    """rss_mb (VmRSS over the cgroup tree), mem_current_mb, mem_peak_mb; None if unreadable."""
     base = CGROUP_ROOT / cgroup.lstrip("/")
     out: dict = {"rss_mb": None, "mem_current_mb": None, "mem_peak_mb": None}
     for key, name in (("mem_current_mb", "memory.current"), ("mem_peak_mb", "memory.peak")):
@@ -186,7 +190,7 @@ def _cgroup_memory(cgroup: str) -> dict:
 
 
 def _journal_count(scope: str, unit: str, end: str, pattern: str) -> int | None:
-    """Lines journald holds for ``unit`` on day ``end`` (UTC) matching ``pattern``; None when unreadable.
+    """Journal lines for ``unit`` on day ``end`` (UTC) matching ``pattern``; None if unreadable.
 
     A unit with no journal entries at all is unreadable rather than quiet: without
     journal access every count would read as zero.
@@ -197,9 +201,22 @@ def _journal_count(scope: str, unit: str, end: str, pattern: str) -> int | None:
         return None
     day = dt.date.fromisoformat(end)
     proc = _cmd(
-        ["journalctl", *flag, "-u", unit, "-q", "-o", "cat", "--no-pager",
-         "--since", f"{day} 00:00:00 UTC", "--until", f"{day + dt.timedelta(days=1)} 00:00:00 UTC",
-         "-g", pattern]
+        [
+            "journalctl",
+            *flag,
+            "-u",
+            unit,
+            "-q",
+            "-o",
+            "cat",
+            "--no-pager",
+            "--since",
+            f"{day} 00:00:00 UTC",
+            "--until",
+            f"{day + dt.timedelta(days=1)} 00:00:00 UTC",
+            "-g",
+            pattern,
+        ]
     )
     if proc is None or proc.returncode not in (0, 1):  # 1: no match
         return None
@@ -209,7 +226,11 @@ def _journal_count(scope: str, unit: str, end: str, pattern: str) -> int | None:
 def _disk() -> dict:
     """Lowest free percentage and free GB over the declared mounts, one reading per filesystem."""
     spec = os.environ.get(RESOURCE_MOUNTS_ENV)
-    mounts = [Path(m).expanduser() for m in re.split(r"[\s,]+", spec.strip()) if m] if spec else [Path("/"), HOME]
+    mounts = (
+        [Path(m).expanduser() for m in re.split(r"[\s,]+", spec.strip()) if m]
+        if spec
+        else [Path("/"), HOME]
+    )
     seen, pct, gb = set(), [], []
     for mount in mounts:
         try:
@@ -272,9 +293,10 @@ def _resources(end: str) -> dict:
     units = _parse_units(os.environ.get(RESOURCE_UNITS_ENV, ""))
     if not units:
         return {"status": "missing", "reason": f"no unit allowlist ({RESOURCE_UNITS_ENV})"}
-    state_path = Path(
-        os.environ.get(STATE_DIR_ENV) or HOME / ".local/state/skrsi"
-    ).expanduser() / "resources-state.json"
+    state_path = (
+        Path(os.environ.get(STATE_DIR_ENV) or HOME / ".local/state/skrsi").expanduser()
+        / "resources-state.json"
+    )
     try:
         state = json.loads(state_path.read_text())
     except (OSError, ValueError):
@@ -291,24 +313,37 @@ def _resources(end: str) -> dict:
         if show.get("ActiveState") != "active":
             result_units[key] = {"status": "missing", "reason": "unit not active"}
             continue
-        cpu_ns, started = _int(show.get("CPUUsageNSec")), _int(show.get("ActiveEnterTimestampMonotonic"))
+        cpu_ns, started = (
+            _int(show.get("CPUUsageNSec")),
+            _int(show.get("ActiveEnterTimestampMonotonic")),
+        )
         inv = show.get("InvocationID", "")
         rec: dict = {"status": "ok", "cpu_core_pct": None, "cpu_basis": None, "cpu_window_s": None}
         if cpu_ns is not None:
             prev = state.get(f"{scope}:{unit}") or {}
-            if prev.get("invocation") == inv and inv and now > prev.get("mono_us", now) \
-                    and cpu_ns >= prev.get("cpu_ns", cpu_ns + 1):
+            if (
+                prev.get("invocation") == inv
+                and inv
+                and now > prev.get("mono_us", now)
+                and cpu_ns >= prev.get("cpu_ns", cpu_ns + 1)
+            ):
                 window_us, used_ns, basis = now - prev["mono_us"], cpu_ns - prev["cpu_ns"], "delta"
             elif started:
                 window_us, used_ns, basis = now - started, cpu_ns, "since_start"
             else:
                 window_us = 0
             if window_us > 0:
-                rec.update(cpu_core_pct=round(100 * used_ns / (window_us * 1000), 2),
-                           cpu_basis=basis, cpu_window_s=round(window_us / 1e6))
+                rec.update(
+                    cpu_core_pct=round(100 * used_ns / (window_us * 1000), 2),
+                    cpu_basis=basis,
+                    cpu_window_s=round(window_us / 1e6),
+                )
             new_state[f"{scope}:{unit}"] = {"invocation": inv, "cpu_ns": cpu_ns, "mono_us": now}
-        rec.update(_cgroup_memory(show.get("ControlGroup", "")) if show.get("ControlGroup") else
-                   {"rss_mb": None, "mem_current_mb": None, "mem_peak_mb": None})
+        rec.update(
+            _cgroup_memory(show.get("ControlGroup", ""))
+            if show.get("ControlGroup")
+            else {"rss_mb": None, "mem_current_mb": None, "mem_peak_mb": None}
+        )
         rec["kills"] = _journal_count(scope, unit, end, KILL_PATTERN)
         rec["restarts"] = _journal_count(scope, unit, end, RESTART_PATTERN)
         result_units[key] = rec
