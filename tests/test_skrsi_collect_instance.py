@@ -288,3 +288,11 @@ def test_resources_reader_lands_in_evidence(res, env):
     rec = json.loads((inst / "evidence" / "node-a" / f"{DAY}.json").read_text())
     assert rec["readers"]["resources"]["status"] == "ok"
     assert rec["readers"]["resources"]["result"]["units"]["web"]["status"] == "ok"
+
+
+def test_node_name_comes_from_env_before_hostname(env, monkeypatch):
+    mod = load_module()
+    inst = make_instance(env, ["cron"])
+    monkeypatch.setenv("SKRSI_NODE", "node-a")
+    assert mod.main(["--instance", str(inst), "--date", DAY]) == 0
+    assert (inst / "evidence" / "node-a" / f"{DAY}.json").exists()
