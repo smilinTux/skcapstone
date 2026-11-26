@@ -537,8 +537,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--node",
-        default=socket.gethostname().split(".")[0],
-        help="node short name (default: hostname)",
+        default=os.environ.get("SKRSI_NODE") or socket.gethostname().split(".")[0],
+        help="node short name (default: $SKRSI_NODE, else the hostname)",
     )
     p.add_argument("--date", default=yesterday, help="day to collect, UTC (default: yesterday)")
     p.add_argument(
