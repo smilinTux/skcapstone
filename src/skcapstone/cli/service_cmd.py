@@ -22,7 +22,7 @@ def register_service_commands(main: click.Group) -> None:
     def service_check(json_out: bool):
         """Check health of all services in the sovereign stack.
 
-        Pings SKVector (Qdrant), SKGraph (FalkorDB), Syncthing,
+        Pings SKGraph (FalkorDB), Syncthing,
         skcapstone daemon, and skchat daemon.  Reports status,
         latency, and any errors.
         """

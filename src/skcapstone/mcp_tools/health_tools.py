@@ -11,7 +11,7 @@ TOOLS: list[Tool] = [
         name="service_health",
         description=(
             "Check the health of all services in the sovereign stack. "
-            "Pings SKVector (Qdrant), SKGraph (FalkorDB), Syncthing, "
+            "Pings SKGraph (FalkorDB), Syncthing, "
             "skcapstone daemon, and skchat daemon. Returns status, "
             "latency, version, and error details for each service."
         ),
