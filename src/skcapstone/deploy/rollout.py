@@ -12,7 +12,10 @@ changes:
    :mod:`skcapstone.deploy.tools`);
 4. switch the deploy path (``~/.skenv``) to it with one atomic rename;
 5. restart only the units whose packages changed;
-6. smoke-test; on any failure switch back and restart the same units.
+6. smoke-test; on any failure switch back and restart the same units;
+7. after a successful rollout, prune old releases (:func:`prune_releases`):
+   keep the newest ``SK_DEPLOY_KEEP_RELEASES`` (3), the current and the
+   recorded previous release, and any release a running process still uses.
 
 State is host-local (``~/.local/state/sk-deploy``), never under the
 Syncthing-shared ``~/.skcapstone``: one node's deploy is not another's.
@@ -435,6 +438,142 @@ def switch(paths: Paths, target: Path) -> Optional[Path]:
     return previous
 
 
+# ------------------------------------------------------------------- retention
+
+#: Releases kept by the automatic prune after a successful apply (the newest N,
+#: counting the current one). ``SK_DEPLOY_KEEP_RELEASES`` overrides; 0 turns the
+#: automatic prune off (``deploy prune`` still works).
+KEEP_RELEASES = 3
+#: A release directory younger than this is never pruned: it may be a build in
+#: progress from a concurrent apply.
+PRUNE_MIN_AGE = 3600
+
+_STAMP = re.compile(r"^(?:legacy-)?(\d{8}-\d{6})")
+
+
+@dataclass
+class PruneResult:
+    """What a prune removed (or would remove) and why the rest stayed."""
+
+    removed: list[Path] = field(default_factory=list)
+    kept: dict[str, str] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+
+
+def keep_releases_from_env(environ: Optional[dict] = None) -> int:
+    """``SK_DEPLOY_KEEP_RELEASES`` as a count (default :data:`KEEP_RELEASES`)."""
+    raw = (os.environ if environ is None else environ).get("SK_DEPLOY_KEEP_RELEASES", "")
+    try:
+        return max(0, int(raw)) if raw.strip() else KEEP_RELEASES
+    except ValueError:
+        return KEEP_RELEASES
+
+
+def releases_in_use(releases: Path, proc: Path = Path("/proc")) -> set[str]:
+    """Names of release directories a running process still uses.
+
+    A process counts when its executable, working directory, command line or
+    any mapped file (a loaded ``.so`` from site-packages) lies inside the
+    release. Unreadable processes are skipped: they belong to other users,
+    and a release is only ever this user's.
+    """
+    pattern = re.compile(re.escape(str(releases).rstrip("/") + "/") + r"([^/\s\0]+)")
+    found: set[str] = set()
+
+    def note(text: str) -> None:
+        found.update(pattern.findall(text))
+
+    for pid in proc.glob("[0-9]*"):
+        for link in ("exe", "cwd"):
+            try:
+                note(os.readlink(pid / link) + "/")
+            except OSError:
+                pass
+        for name in ("cmdline", "maps"):
+            try:
+                note((pid / name).read_bytes().decode("utf-8", "replace"))
+            except OSError:
+                pass
+    return found
+
+
+def prune_releases(
+    paths: Paths,
+    keep: int = KEEP_RELEASES,
+    dry_run: bool = False,
+    proc: Path = Path("/proc"),
+    now: Optional[float] = None,
+) -> PruneResult:
+    """Delete old release directories under ``paths.releases``.
+
+    Kept, whatever their age: the newest *keep* releases (by the timestamp in
+    the name), the release ``~/.skenv`` points at, the current and previous
+    releases recorded in the deploy state (the rollback target), anything a
+    running process still uses, and anything younger than
+    :data:`PRUNE_MIN_AGE`. Releases share most files through uv's hardlinks,
+    so a prune frees less than ``du`` of each directory suggests.
+    """
+    res = PruneResult()
+    if not paths.releases.is_dir():
+        return res
+    now = time.time() if now is None else now
+    dirs = [d for d in paths.releases.iterdir() if d.is_dir() and not d.is_symlink()]
+
+    def stamp(d: Path) -> str:
+        m = _STAMP.match(d.name)
+        return m.group(1) if m else ""
+
+    dirs.sort(key=lambda d: (stamp(d), d.name), reverse=True)
+    protect: dict[str, str] = {}
+    for d in dirs[: max(keep, 0)]:
+        protect[d.name] = f"newest {keep}"
+    if paths.venv_link.is_symlink():
+        protect[paths.venv_link.resolve().name] = "current (~/.skenv)"
+    state = load_state(paths)
+    for key in ("current", "previous"):
+        rel = (state.get(key) or {}).get("release")
+        if rel and Path(rel).parent == paths.releases:
+            protect.setdefault(Path(rel).name, f"{key} in deploy state")
+    for name in releases_in_use(paths.releases, proc):
+        protect.setdefault(name, "in use by a running process")
+    for d in dirs:
+        if d.name in protect:
+            res.kept[d.name] = protect[d.name]
+            continue
+        try:
+            age = now - d.stat().st_mtime
+        except OSError:
+            continue
+        if age < PRUNE_MIN_AGE:
+            res.kept[d.name] = "younger than an hour"
+            continue
+        if not stamp(d):
+            res.kept[d.name] = "not a release name"
+            continue
+        if not dry_run:
+            try:
+                shutil.rmtree(d)
+            except OSError as exc:
+                res.errors.append(f"{d}: {exc}")
+                continue
+        res.removed.append(d)
+    return res
+
+
+def _auto_prune(paths: Paths, log: Callable[[str], None]) -> list[str]:
+    """Prune after a successful apply; never fails the deploy, only notes."""
+    keep = keep_releases_from_env()
+    if keep == 0:
+        return []
+    try:
+        res = prune_releases(paths, keep=keep)
+    except OSError as exc:
+        return [f"release prune failed: {exc}"]
+    if res.removed:
+        log(f"prune: removed {len(res.removed)} old release(s), kept {len(res.kept)}")
+    return [f"release prune: {e}" for e in res.errors]
+
+
 # ------------------------------------------------------------------ restart/smoke
 
 
@@ -710,7 +849,9 @@ def apply(
             ok=True,
             release=dest,
             previous=previous,
-            notes=tools.notes + _record(paths, tools, manifest_id, unit_dir, log),
+            notes=tools.notes
+            + _record(paths, tools, manifest_id, unit_dir, log)
+            + _auto_prune(paths, log),
         )
     log(f"restart: {', '.join(units) or 'nothing'}")
     started: dict[str, dict[str, str]] = {}
@@ -722,18 +863,23 @@ def apply(
             release=dest,
             previous=previous,
             restarted=units,
-            notes=tools.notes + _record(paths, tools, manifest_id, unit_dir, log),
+            notes=tools.notes
+            + _record(paths, tools, manifest_id, unit_dir, log)
+            + _auto_prune(paths, log),
         )
     log("smoke failed: switching back")
     undo_error = _undo(paths, tools, unit_dir, runner) if not tools.empty else None
     if previous is not None:
         switch(paths, previous)
         restart_units(units, runner)
-        state["current"], state["previous"] = {
-            "release": str(previous),
-            "rollback_of": str(dest),
-            "at": time.time(),
-        }, None
+        state["current"], state["previous"] = (
+            {
+                "release": str(previous),
+                "rollback_of": str(dest),
+                "at": time.time(),
+            },
+            None,
+        )
         save_state(paths, state)
     if undo_error:
         # recorded after the switch back, so a venv rollback sees it as pending
@@ -843,9 +989,10 @@ def rollback(paths: Paths, units: list[str], runner: Runner = subprocess.run) ->
     if not prev or not Path(prev).is_dir():
         raise DeployError("no previous release recorded on this node")
     current = switch(paths, Path(prev))
-    state["current"], state["previous"] = {"release": prev, "at": time.time()}, {
-        "release": str(current)
-    }
+    state["current"], state["previous"] = (
+        {"release": prev, "at": time.time()},
+        {"release": str(current)},
+    )
     save_state(paths, state)
     problems = restart_units(units, runner)
     return Result(
