@@ -15,11 +15,38 @@ from pathlib import Path
 from typing import Callable
 
 from ..fleet import actuation, store
+from . import adapter
+
+#: The conditions this adapter observes. ``loop.CONDITION_SCHEMAS`` is built from
+#: this module attribute: without it the schema is empty and the loop drops every
+#: cmdb observation. All three are health-type (they fire when False), so
+#: PROBLEM_WHEN_TRUE stays empty.
+CONDITIONS = [
+    "CmdbReconcileFresh",
+    "CmdbLastScanComplete",
+    "CmdbAuditClean",
+]
 
 PROBLEM_WHEN_TRUE = frozenset()
+
+#: Which conditions make each action eligible to be proposed. The shadow is the
+#: remedy for stale or incomplete reconcile evidence. Neither condition is
+#: remedied by a shadow when CmdbAuditClean is False (that is store corruption a
+#: human repairs). Apply is non-standard and irreversible: no condition makes it
+#: eligible for any autonomous lane, it runs only through ``cmdb_act`` and
+#: ``_apply_gate`` with a signed human vote. loop._operatorapp_allows enforces
+#: this table on top of the app spec and ratification: an action with no row, or
+#: an empty row, is eligible for no condition.
+ACTION_CONDITIONS: dict[str, tuple[str, ...]] = {
+    "run-cmdb-shadow": ("CmdbReconcileFresh", "CmdbLastScanComplete"),
+    "apply-cmdb-reconcile": (),
+}
 _MAX_ARTIFACT_AGE = timedelta(hours=4)
 _SHADOW_UNIT = "skcapstone-cmdb-reconcile-shadow.service"
 _APPLY_UNIT = "skcapstone-cmdb-reconcile-network.service"
+# The apply unit runs `cmdb reconcile --network`, so its evidence is network
+# scope only. Local timer artifacts are complete too, and must never count.
+_APPLY_SCOPE = "network"
 
 _ACTIONS = [
     {
@@ -45,7 +72,7 @@ def cmdb_explain() -> dict:
     """Return the CMDB operator contract."""
     return {
         "kinds": ["cmdb"],
-        "conditions": ["CmdbReconcileFresh", "CmdbLastScanComplete", "CmdbAuditClean"],
+        "conditions": list(CONDITIONS),
         "actions": list(_ACTIONS),
     }
 
@@ -96,8 +123,13 @@ def _apply_gate(
     *,
     itil_factory=None,
     manager_factory=None,
+    now_iso: str | None = None,
 ) -> str | None:
-    """Return a refusal reason unless the governed network-apply gate passes."""
+    """Return a refusal reason unless the governed network-apply gate passes.
+
+    A human approval is usable for ``DEFAULT_MAX_APPROVAL_AGE_SECONDS`` from its
+    signed grant's ``issued_at``, as in the dispatcher (card bada5c86).
+    """
     if not change_id.startswith("chg-"):
         return "a valid --change-id is required"
     if itil_factory is None:
@@ -110,26 +142,35 @@ def _apply_gate(
         return f"unknown ITIL change: {change_id}"
     if change.status.value not in {"approved", "scheduled"}:
         return f"ITIL change is {change.status.value}, not approved or scheduled"
-    approvals = [
-        vote
-        for vote in itil.get_cab_votes(change_id)
-        if vote.decision.value == "approved"
-        and (
-            vote.agent == "human"
-            or (
-                getattr(vote, "subject_role", "") in {"owner", "approver"}
-                and bool(getattr(vote, "subject_fingerprint", ""))
-                and bool(getattr(vote, "authorization_id", ""))
-            )
-        )
-    ]
+    # Card bada5c86: the same rule as the dispatcher. A bare `human` vote, or
+    # provenance fields without a verifying signed grant from a pinned approver,
+    # never counted as authenticated; nor does a vote by the change's own drafter,
+    # creator, managed-by owner or the operator seat.
+    from ..cab_approval import human_approval_times
+
+    approvals = human_approval_times(itil, change)
     if not approvals:
         return "independent authenticated human CAB approval is required"
+    from ..cab_approval import DEFAULT_MAX_APPROVAL_AGE_SECONDS
+    from .dispatch import approval_refusal
+
+    stale = approval_refusal(
+        approvals,
+        now_iso or datetime.now(timezone.utc).isoformat(),
+        DEFAULT_MAX_APPROVAL_AGE_SECONDS,
+    )
+    if stale is not None:
+        return stale[1]
 
     artifacts = _verified_artifacts(home)
-    complete = [item for item in artifacts if item.get("completeness", {}).get("complete") is True]
+    complete = [
+        item
+        for item in artifacts
+        if item.get("scope") == _APPLY_SCOPE
+        and item.get("completeness", {}).get("complete") is True
+    ]
     if len(complete) < 3:
-        return "three checksum-valid complete shadow artifacts are required"
+        return f"three checksum-valid complete {_APPLY_SCOPE}-scope shadow artifacts are required"
     latest = complete[:3]
     scopes = {item.get("scope_fingerprint") for item in latest}
     scans = {item.get("scan_id") for item in latest}
@@ -167,10 +208,14 @@ def observe(paths=None, now_iso: str | None = None, *, manager_factory=None) -> 
     an unreadable probe into a false positive.
     """
     home = Path.home() / ".skcapstone"
+    audit_probed_at = adapter.probe_time()
     artifact = _verified_latest_artifact(home)
     freshness = completeness = "Unknown"
+    artifact_time = None
     if artifact is not None:
         ended = _parse_time(artifact.get("ended_at"))
+        if ended is not None:
+            artifact_time = str(artifact.get("ended_at"))
         now = _parse_time(now_iso) if now_iso else datetime.now(timezone.utc)
         if ended is not None and now is not None:
             freshness = "True" if now - ended <= _MAX_ARTIFACT_AGE else "False"
@@ -189,11 +234,17 @@ def observe(paths=None, now_iso: str | None = None, *, manager_factory=None) -> 
     except Exception:
         audit = "Unknown"
 
+    def stamped(condition: dict, source_time: str | None) -> dict:
+        return {**condition, "source_observed_at": source_time} if source_time else condition
+
+    # The first two read the reconcile ARTIFACT, so their source time is when that
+    # run ended, however recently Atlas looked at it. The relationship audit runs
+    # live, so it reports the moment it ran.
     return {
         "conditions": [
-            {"type": "CmdbReconcileFresh", "status": freshness},
-            {"type": "CmdbLastScanComplete", "status": completeness},
-            {"type": "CmdbAuditClean", "status": audit},
+            stamped({"type": "CmdbReconcileFresh", "status": freshness}, artifact_time),
+            stamped({"type": "CmdbLastScanComplete", "status": completeness}, artifact_time),
+            stamped({"type": "CmdbAuditClean", "status": audit}, audit_probed_at),
         ]
     }
 
@@ -236,10 +287,21 @@ def cmdb_act(
     if store.is_frozen(paths):
         return {"performed": False, "reason": "frozen", "action": action}
     run = runner or actuation.default_runner
-    ok = run(["systemctl", "--user", "start", units[action]])
+    # --no-block: both units are oneshots, so a plain start waits for the whole
+    # reconcile (about 40 s) and the 30 s actuation timeout raised after the
+    # apply had already started (chg-a543c87b, 2026-11-11). Verification reads
+    # the unit result and the artifact, never this call.
+    ok = run(["systemctl", "--user", "start", "--no-block", units[action]])
     if hasattr(ok, "returncode"):
         ok = ok.returncode == 0
     return {"performed": bool(ok), "action": action, "unit": units[action]}
 
 
-__all__ = ["PROBLEM_WHEN_TRUE", "cmdb_act", "cmdb_explain", "observe"]
+__all__ = [
+    "ACTION_CONDITIONS",
+    "CONDITIONS",
+    "PROBLEM_WHEN_TRUE",
+    "cmdb_act",
+    "cmdb_explain",
+    "observe",
+]

@@ -4,8 +4,10 @@ The rules in a live .stignore are load-bearing incident history. Losing
 `**/comms/outbox` brings back the seed outbox flood; losing the SQLite
 `-shm`/`-wal` rules replicates a live database into corruption; losing
 `(?d)**/*.tmp` reinstates a scanner-abort bug whose fix is dated in the file
-itself. So the only safe merge direction is union: the template may ADD, and
-may never remove.
+itself. `_merge_stignore` (still used by the sync policy remediation) is
+union-only: the template may ADD, and may never remove. `_write_stignore` goes
+further: it installs the shim plus `.stignore-shared` layout and never rewrites a
+legacy file unless `migrate` is passed, and then keeps every rule.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from skcapstone.skills import syncthing_setup as ss
+from skcapstone.stignore_layout import packaged_shared_text, packaged_shim_text
 
 TEMPLATE = """\
 // bundled template
@@ -48,7 +51,6 @@ def home(tmp_path, monkeypatch):
     root = tmp_path / ".skcapstone"
     root.mkdir()
     monkeypatch.setattr(ss, "AGENT_HOME", root)
-    monkeypatch.setattr(ss, "STIGNORE_CONTENTS", TEMPLATE)
     return root
 
 
@@ -90,12 +92,14 @@ def test_pattern_lines_ignores_comments_and_blanks() -> None:
 # ----------------------------------------------------------- file effects ---
 
 
-def test_missing_file_gets_the_template(home) -> None:
+def test_missing_file_gets_shared_file_then_shim(home) -> None:
     path = ss._write_stignore()
-    assert path.read_text() == TEMPLATE
+    assert path == home / ".stignore"
+    assert path.read_text() == packaged_shim_text()
+    assert (home / ".stignore-shared").read_text() == packaged_shared_text()
 
 
-def test_existing_file_is_never_reverted(home) -> None:
+def test_existing_legacy_file_is_never_rewritten(home) -> None:
     """The regression this card exists for: one `sync setup` used to wipe
     every rule that had accrued past the bundled template."""
     path = home / ".stignore"
@@ -103,17 +107,15 @@ def test_existing_file_is_never_reverted(home) -> None:
 
     ss._write_stignore()
 
-    after = path.read_text()
-    assert "**/comms/outbox" in after
-    assert "(?d)**/*.tmp" in after
-    assert "**/memory/index.db-shm" in after
-    assert after != TEMPLATE
+    assert path.read_text() == LIVE
 
 
-def test_a_backup_is_written_before_any_change(home) -> None:
+def test_a_backup_is_written_once_for_a_legacy_file(home) -> None:
+    """Re-running must be free: ensure_skeleton runs on every daemon start."""
     path = home / ".stignore"
     path.write_text(LIVE, encoding="utf-8")
 
+    ss._write_stignore()
     ss._write_stignore()
 
     backups = list(home.glob(".stignore.bak-*"))
@@ -121,42 +123,34 @@ def test_a_backup_is_written_before_any_change(home) -> None:
     assert backups[0].read_text() == LIVE
 
 
-def test_no_backup_and_no_write_when_nothing_changes(home) -> None:
-    """Re-running must be free, or it churns a file inside a synced folder."""
+def test_migrate_keeps_every_legacy_rule(home) -> None:
     path = home / ".stignore"
-    path.write_text(LIVE + "\n**/memory/index.db\n", encoding="utf-8")
-    before = path.read_text()
+    path.write_text(LIVE + "\n// this host only\n**/scratch-only\n", encoding="utf-8")
 
-    ss._write_stignore()
-    ss._write_stignore()
+    ss._write_stignore(migrate=True)
 
-    assert path.read_text() == before
-    assert list(home.glob(".stignore.bak-*")) == []
-
-
-def test_private_key_rules_survive_a_template_that_dropped_them(home) -> None:
-    """Even a template regression cannot strip protection from a live node,
-    because the template can only add."""
-    path = home / ".stignore"
-    path.write_text(LIVE, encoding="utf-8")
-    ss.STIGNORE_CONTENTS = "// oops, no private key rules\nvenv\n"
-
-    ss._write_stignore()
-
-    after = ss._pattern_lines(path.read_text())
-    assert "*.key" in after
-    assert "*.pem" in after
-    assert "**/private.*" in after
+    after = path.read_text()
+    assert "#include .stignore-shared" in after
+    # Every legacy pattern is either in the shared file or kept node-local.
+    shared = set(ss._pattern_lines((home / ".stignore-shared").read_text()))
+    for pattern in ss._pattern_lines(LIVE):
+        assert pattern in shared or pattern in ss._pattern_lines(after), pattern
+    assert "**/scratch-only" in after  # not in the shared file, so kept local
+    assert "// this host only" in after
 
 
 def test_unreadable_existing_file_is_left_alone(home, monkeypatch) -> None:
     path = home / ".stignore"
     path.write_text(LIVE, encoding="utf-8")
+    real = type(path).read_text
 
-    def boom(*a, **k):
-        raise OSError("permission denied")
+    def boom(self, *a, **k):
+        if self.name == ".stignore":
+            raise OSError("permission denied")
+        return real(self, *a, **k)
 
     monkeypatch.setattr(type(path), "read_text", boom)
     ss._write_stignore()
     monkeypatch.undo()
     assert path.read_text() == LIVE
+    assert not (home / ".stignore-shared").exists()

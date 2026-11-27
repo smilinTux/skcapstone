@@ -29,6 +29,7 @@ from skcapstone.trustee_actuation import (
     ActuationRefusedError,
 )
 from skcapstone.trustee_ops import TrusteeOps
+from tests.cab_grants import cast_signed_vote
 
 # ---------------------------------------------------------------------------
 # Actuation gate helpers (card e51a3e7e / SKW-AUTONOMY-E4)
@@ -92,7 +93,7 @@ def _approved_change(home: Path, title: str = "rotate for test") -> str:
 
     mgr = ITILManager(home)
     change = mgr.propose_change(title=title, managed_by="atlas")
-    mgr.submit_cab_vote(change.id, agent="human", decision="approved")
+    cast_signed_vote(mgr, change.id, subject="chef", role="owner")
     return change.id
 
 

@@ -7,11 +7,13 @@
   "spec": {
     "binaries": {
       "allowed": [
-        "wt"
+        "wt",
+        "gitleaks"
       ],
       "mustNot": [],
       "required": [
-        "wt"
+        "wt",
+        "gitleaks"
       ]
     },
     "capauthIdentityClass": "operator",
@@ -90,7 +92,6 @@
         "sknoded.service",
         "skoperator.timer",
         "skos-web.service",
-        "sksecurity-audit.timer",
         "skvoice.service",
         "syncthing.service"
       ],

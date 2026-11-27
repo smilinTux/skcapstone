@@ -189,6 +189,10 @@ def init(name: str, email: str | None, home: str):
     console.print("  [bold blue]5/6[/] Sync (Sovereign Singularity)...", end=" ")
     sync_config = SyncConfig(sync_folder=home_path / "sync")
     sync_state = initialize_sync(home_path, sync_config)
+    # Ignore rules before Syncthing ever sees the folder: .stignore-shared, then the shim.
+    from .. import _install_default_stignore
+
+    _install_default_stignore(home_path)
     console.print(_status_icon(sync_state.status))
 
     console.print("  [bold yellow]6/6[/] Soul (Soul Layer)...", end=" ")

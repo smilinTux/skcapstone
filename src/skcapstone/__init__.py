@@ -313,37 +313,34 @@ def ensure_skeleton(agent_name: str | None = None) -> None:
     # an existing user file). This ships the weekly housekeeping safety-net job.
     _install_default_jobs_dropins(root)
 
-    # Install the bundled .stignore template so Syncthing excludes derived/
-    # runtime state (idempotent, never overwrites an existing user file).
+    # Install the Syncthing ignore layout (.stignore-shared, then the shim) so the
+    # sovereign folder excludes secrets and per-host runtime state (idempotent).
     _install_default_stignore(root)
 
 
 def _install_default_stignore(root: Path) -> None:
-    """Install the bundled ``defaults/.stignore`` into ``<root>/.stignore``.
+    """Install the Syncthing ignore layout under ``root``: shared file, then shim.
 
-    Idempotent: an existing ``.stignore`` at the destination is left untouched so
-    the operator's own Syncthing ignore rules are never clobbered. A missing
-    bundled template is silently skipped. Best-effort (skeleton creation must not
-    be blocked by a copy error).
+    Writes the packaged ``.stignore-shared`` if absent, then the 3-line ``.stignore``
+    shim that includes it (sk-standards SYNCTHING_IGNORE_STANDARD). Idempotent and
+    never destructive: an existing shim, a worker allowlist or a legacy ``.stignore``
+    is left untouched (a legacy one is backed up and the difference logged; convert it
+    with ``skcapstone sync stignore --migrate``). Best-effort: skeleton creation must
+    not be blocked by a copy error.
 
     Args:
         root: Shared skcapstone root (``~/.skcapstone``).
     """
-    src = Path(__file__).parent / "defaults" / ".stignore"
-    if not src.is_file():
-        return
+    import logging
 
-    dest = root / ".stignore"
-    if dest.exists():
-        return  # never overwrite an existing user file
-
-    import shutil
+    from .stignore_layout import install
 
     try:
-        root.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src, dest)
-    except OSError:
-        pass
+        result = install(root)
+    except OSError:  # defaults missing from a broken install
+        return
+    for line in result.messages:
+        logging.getLogger(__name__).info("stignore: %s", line)
 
 
 def _install_default_jobs_dropins(root: Path) -> None:

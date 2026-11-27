@@ -367,6 +367,10 @@ To sync your agent across devices (e.g., Windows desktop + Linux server):
 1. Install [Syncthing](https://syncthing.net/downloads/) on both machines
 2. Share the `%USERPROFILE%\.skcapstone` folder between devices
 3. Agent state (memories, identity, trust, seeds) syncs automatically
+4. Private keys and per-host runtime state never sync: the ignore rules live in the synced
+   `.stignore-shared` and `.stignore` is a 3-line shim that includes it. `skcapstone init`
+   installs both, and `skcapstone doctor` checks them. See
+   [docs/SOVEREIGN_SINGULARITY.md](docs/SOVEREIGN_SINGULARITY.md#ignore-rules-one-shared-file-a-shim-per-node).
 
 ### OpenClaw Integration
 

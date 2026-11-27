@@ -269,7 +269,7 @@ that are not on `.41`: Telegram bot tokens, TURN credentials, nostr relay
 keys, TAK certificates.
 
 ```
-skvault unlock --word rubikscube    # you will need this; confirm it works BEFORE you need it
+skvault unlock --word <your-unlock-word>    # you will need this; confirm it works BEFORE you need it
 ```
 
 **If skvault will not unlock:** you can still complete the control-plane

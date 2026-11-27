@@ -16,6 +16,7 @@ from skcapstone.fleet.deployment_manifest import (
     PER_HOST_BIN_RELATIVE_DIR,
     PRODUCTION_CANONICAL_SCRIPTS,
     production_compatibility_shim,
+    production_script_bytes,
 )
 from skcapstone.fleet.paths import paths_for_home, self_node_name
 
@@ -114,9 +115,18 @@ def install_artifact(repo_root: Path, home: Path, name: str) -> None:
     if relative is None:
         raise ValueError("undeclared rollout artifact")
     production = (paths_for_home(home).root / "production.json").is_file()
+    canonical = production and name in PRODUCTION_CANONICAL_SCRIPTS
+    if canonical:
+        # pip writes the native copy's shebang from the interpreter it ran
+        # under: ~/.skenv/bin/python on a 3.12 venv, .../python3 on 3.14. The
+        # drift gate pins .../python, so every 3.14 host halted on
+        # "changed:dispatcher" with an identical body (ziowk01, 2026-11-12).
+        # Write the exact bytes the gate expects instead of trusting pip's.
+        source = (repo_root / relative).read_bytes()
+        _write(home / ".skenv/bin" / name, production_script_bytes(source, home), 0o755)
     data = (
         production_compatibility_shim(name, home)
-        if production and name in PRODUCTION_CANONICAL_SCRIPTS
+        if canonical
         else (repo_root / relative).read_bytes()
     )
     _write(home / PER_HOST_BIN_RELATIVE_DIR / name, data, 0o755)

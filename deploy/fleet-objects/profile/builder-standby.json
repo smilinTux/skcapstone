@@ -7,11 +7,13 @@
   "spec": {
     "binaries": {
       "allowed": [
-        "wt"
+        "wt",
+        "gitleaks"
       ],
       "mustNot": [],
       "required": [
-        "wt"
+        "wt",
+        "gitleaks"
       ]
     },
     "capauthIdentityClass": "agent",

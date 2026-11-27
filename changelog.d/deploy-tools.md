@@ -1,0 +1,2 @@
+- `skcapstone deploy` releases the scripts units run: a manifest `tools:` entry exports a ref on main to `~/.local/share/sk-tools/<name>/<sha>` and points every unit that used the checkout at it through one managed drop-in (`deploy apply`, or `deploy tools` without a venv rebuild).
+- Drift and doctor add `deploy:exec-missing` (a live unit's program, script or working directory is gone) and `deploy:tools`, and only count units that can actually run; dormant units are listed but never alert.

@@ -115,7 +115,7 @@ Tailscale; the recorded inventory is
 | `skchat-backup.timer` | no | enabled | ABSENT | install timer + backup destination | **STRICT** |
 | `skchat-health-probe.timer` | no | enabled | ABSENT | install timer | safe |
 | `skingest-maintain.timer` | no | enabled | ABSENT | install timer, needs `skingest` package | **STRICT** |
-| `sksecurity-audit.timer` | no | enabled | ABSENT | install timer | safe, duplicates reports |
+| `sksecurity-audit.timer` | no | RETIRED 2026-11-11 | n/a | none | Retired. The unit pointed at a deleted script (sksecurity `docs/EVALUATION-2026-11.md`) and is no longer required by any profile. |
 | `skcomms-access.service` | no | enabled | enabled | none | safe |
 | `skchat-app-web.service` | no | enabled | enabled | none | safe |
 | `skchat-daemon.service` | no | enabled | enabled | none | safe |
@@ -241,7 +241,7 @@ These can be up on both boxes through the whole promotion, and several of them
 | `capauth-authz.service` | A stateless PDP bound to `127.0.0.1:8420`. Every host that gates anything needs its own. Two is correct, not a conflict. |
 | `skcomm-heartbeat.timer` | Publishes with `--node-id %H`, host-unique by design. This is the fix for the 2026-07-23 outbox flood; running it on both is the intended shape. |
 | `skchat-piper-tts.service`, `skchat-coturn.service` | Media helpers. Clients pick one. A second is spare capacity. |
-| `skchat-health-probe.timer`, `sksecurity-audit.timer` | Read-only probes. Two produce duplicate reports, which is noise, not damage. |
+| `skchat-health-probe.timer` | Read-only probe. Two produce duplicate reports, which is noise, not damage. (`sksecurity-audit.timer` used to sit here; retired 2026-11-11, see above.) |
 | `skcapstone.service` | The agent daemon. Already the normal shape across the fleet; it is not the spec writer. |
 | `skcomms-access.service`, `skchat-app-web.service`, `skchat-daemon.service` | Already enabled on both boxes today and have been for months. Proven parallel-safe by operation. |
 

@@ -97,7 +97,9 @@ class TestEnsureSharedFolder:
 
         stignore = agent_home / ".stignore"
         assert stignore.exists()
-        contents = stignore.read_text()
+        # .stignore is a shim; the rules are in the shared file it includes.
+        assert "#include .stignore-shared" in stignore.read_text()
+        contents = (agent_home / ".stignore-shared").read_text()
         assert "*.key" in contents
         assert "*.pem" in contents
         assert "__pycache__" in contents

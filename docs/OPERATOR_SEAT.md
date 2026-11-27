@@ -195,6 +195,8 @@ skoperator unfreeze                # human-only
 ```
 
 `run` is report-only unless `--execute` is passed AND an apply function is wired.
+`run --max-evidence-age <seconds>` (default 600) is the oldest observation an
+action may rest on; see `docs/ATLAS_EXECUTION_SAFETY.md`.
 `freeze`/`unfreeze` and every plane-file write are human-only: the autonomous
 seat carries `agent_seat=True` and is refused.
 
@@ -245,8 +247,12 @@ The rollout keeps two bounded oneshots and no independent apply timer:
 The legacy `skcapstone-cmdb-reconcile.service` is local-only and must never be
 used as the target of `apply-cmdb-reconcile`. The network unit fails closed
 unless `%h/.config/skcapstone/cmdb-network-apply` exists. That owner-reviewed,
-mode-`0700` launcher contains exact targets and `skvault://` references (not
-secret values), and invokes `cmdb reconcile --network --apply --record-run`.
+mode-`0700` launcher (source: `src/skcapstone/data/cmdb-network-apply.sh`) runs
+`skcapstone-cmdb-network apply`, which reads exact targets and `skvault://`
+references (not secret values) from `~/.config/skcapstone/cmdb-network-targets`
+and invokes `cmdb reconcile --network --apply --record-run`. The shadow unit and
+the cutover timer (`skcapstone-cmdb-reconcile-network.timer`, `01/3:47`) ship in
+`src/skcapstone/data/systemd/`; see SOP.md.
 
 Do not replace a live timer merely because the adapter exists. First restore
 all authoritative targets, collect the three shadow artifacts, ratify only the

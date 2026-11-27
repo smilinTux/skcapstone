@@ -293,3 +293,88 @@ def test_wt_gc_units_ship_and_are_required_where_agents_work():
         units = json.loads((root / f"{role}.json").read_text())["spec"]["units"]
         assert ("skfleet-wt-gc.timer" in units["required"]) is required
         assert "skfleet-wt-gc.timer" in units["allowed"]
+
+
+# --- gitleaks (second catalog entry, differently named assets) -----------
+
+
+def test_gitleaks_pin_is_full_and_maps_asset_arch():
+    entry = binaries.CATALOG["gitleaks"]
+    assert entry.version == "8.30.1" and entry.members == ("gitleaks",)
+    assert set(entry.sha256) == {"x86_64", "aarch64"}
+    assert all(len(h) == 64 for h in entry.sha256.values())
+    assert f"v{entry.version}/" in entry.url and f"_{entry.version}_" in entry.url
+    status, detail = binaries.install(
+        "gitleaks", dry_run=True, arch="x86_64", directory=Path("/nonexistent")
+    )
+    assert status == "would-write" and "linux_x64.tar.gz" in detail
+    _, detail = binaries.install(
+        "gitleaks", dry_run=True, arch="aarch64", directory=Path("/nonexistent")
+    )
+    assert "linux_arm64.tar.gz" in detail
+
+
+def test_gitleaks_installs_from_gz_archive(tmp_path, monkeypatch):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, data in {"gitleaks": b"#!/bin/sh\necho 8.30.1\n", "README.md": b"x"}.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    blob = buf.getvalue()
+    entry = binaries.CATALOG["gitleaks"]
+    monkeypatch.setitem(
+        binaries.CATALOG,
+        "gitleaks",
+        binaries.Binary(
+            name="gitleaks",
+            version=entry.version,
+            url=entry.url,
+            sha256={"x86_64": hashlib.sha256(blob).hexdigest()},
+            members=entry.members,
+            asset_arch=entry.asset_arch,
+        ),
+    )
+    bindir = tmp_path / "bin"
+    status, detail = binaries.install(
+        "gitleaks",
+        fetch=lambda url, dest: dest.write_bytes(blob),
+        arch="x86_64",
+        directory=bindir,
+        home=tmp_path / "home",
+    )
+    assert (status, detail) == ("ok", "")
+    assert (bindir / "gitleaks").stat().st_mode & 0o111
+    assert not (bindir / "README.md").exists()
+
+
+def test_probe_reads_bare_gitleaks_version(tmp_path):
+    (tmp_path / "gitleaks").write_text("x")
+    run = lambda cmd, **kw: SimpleNamespace(returncode=0, stdout="8.30.1\n")  # noqa: E731
+    assert binaries.probe(["gitleaks"], runner=run, directory=tmp_path) == {"gitleaks": "8.30.1"}
+
+
+def test_gitleaks_required_on_control_and_builder_only():
+    import json
+
+    root = Path(__file__).resolve().parents[2] / "deploy/fleet-objects/profile"
+    for role, required in (
+        ("control", True),
+        ("builder-standby", True),
+        ("worker-gpu", False),
+        ("observer", False),
+    ):
+        spec = json.loads((root / f"{role}.json").read_text())["spec"]
+        assert ("gitleaks" in spec["binaries"]["required"]) is required
+        assert ("gitleaks" in spec["binaries"]["allowed"]) is required
+
+
+def test_sksecurity_audit_timer_retired_but_package_kept():
+    import json
+
+    root = Path(__file__).resolve().parents[2] / "deploy/fleet-objects/profile"
+    for role in ("control", "builder-standby", "worker-gpu", "observer"):
+        spec = json.loads((root / f"{role}.json").read_text())["spec"]
+        assert "sksecurity-audit.timer" not in json.dumps(spec["units"])
+    control = json.loads((root / "control.json").read_text())["spec"]
+    assert "sksecurity" in control["packages"]["allowed"]

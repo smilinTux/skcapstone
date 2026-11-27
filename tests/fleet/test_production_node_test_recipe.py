@@ -310,3 +310,27 @@ def test_qualification_selects_exact_native_dependency_manifests(tmp_path, monke
     (workspace / "package-lock.json").write_text('{"changed":true}')
     with pytest.raises(plan.TestEvidenceError, match="no qualified Node"):
         node.qualified_environment(workspace)
+
+
+def _nested(classname):
+    case = f'<testcase name="{{}}" time="0.1" classname="{classname}" file="/x/a.test.mjs"/>'
+    return (
+        '<?xml version="1.0" encoding="utf-8"?><testsuites>'
+        '<testsuite name="outer" tests="1" failures="0" errors="0" skipped="0" disabled="0">'
+        '<testsuite name="inner" tests="2" failures="0" errors="0" skipped="0" disabled="0">'
+        + case.format("one")
+        + case.format("two")
+        + "</testsuite></testsuite><!-- tests 2 --></testsuites>"
+    ).encode()
+
+
+def test_node24_suite_path_classname_counts():
+    """Node 24's reporter names nested cases by suite path, not ``test``."""
+    assert recipe.junit_count(_nested("outer.inner"), 2) == 2
+    assert recipe.junit_count(_nested("test"), 2) == 2
+
+
+@pytest.mark.parametrize("bad", ["inner", "outer", "outer.other", "outer.inner.x", ""])
+def test_classname_other_than_test_or_exact_suite_path_refuses(bad):
+    with pytest.raises(plan.TestEvidenceError):
+        recipe.junit_count(_nested(bad), 2)

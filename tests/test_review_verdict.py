@@ -392,3 +392,50 @@ def test_pass_with_successful_checks_completes_without_any_receipt(tmp_path):
         [("verdict", "PASS", "2026-08-28T03:00:00"), *_SUCCESSFUL_CI],
     )
     validate_review_completion("cccccccc", "[X][REVIEW] review", home)
+
+
+def test_completion_opens_each_evidence_file_at_most_once(tmp_path, monkeypatch):
+    """One completion is one pass over the evidence store, not one per check."""
+    import builtins
+    from collections import Counter
+
+    from skcapstone import review_verdict
+
+    card_id = "abc12345"
+    home = _home(
+        tmp_path,
+        card_id,
+        "[SKW-X-01][S][REVIEW] Independently review the thing",
+        links=(("verdict", "PASS", "2026-08-28T03:00:00"), *_SUCCESSFUL_CI),
+        meta={
+            "repository": "https://github.com/example/other",
+            "link_head_revision": "a" * 40,
+        },
+    )
+    ev = home / "coordination" / "card_events"
+    for name in ("node-a.jsonl", "node-b.jsonl", "node-c.jsonl"):
+        (ev / name).write_text(
+            json.dumps({"card_id": "other999", "action": "link", "ts": "t"}) + "\n"
+        )
+
+    opened = Counter()
+    real_open = builtins.open
+
+    def counting_open(file, *args, **kwargs):
+        if "card_events" in str(file):
+            opened[str(file)] += 1
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(review_verdict, "open", counting_open, raising=False)
+
+    # Exercise both PASS branches: hosted-checks (raises, no evidence) and CI links.
+    with pytest.raises(ValueError):
+        validate_review_completion(card_id, "[SKW-X-01][S][REVIEW] x", home)
+    assert opened and max(opened.values()) == 1
+
+    opened.clear()
+    core = home / "cards" / card_id / "core.json"
+    core.write_text(json.dumps({"title": "t", "meta": {}}))
+    validate_review_completion(card_id, "[SKW-X-01][S][REVIEW] x", home)
+    assert len(opened) == 4
+    assert max(opened.values()) == 1

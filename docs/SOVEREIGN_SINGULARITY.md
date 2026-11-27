@@ -170,7 +170,8 @@ Syncthing shares the **entire agent home** — every pillar syncs in real-time.
 
 ```
 ~/.skcapstone/                    ← Syncthing share root
-├── .stignore                     # Protects private keys from syncing
+├── .stignore                     # 3-line shim, never synced: includes .stignore-shared
+├── .stignore-shared              # Synced ignore rules (keys, secrets, per-host state)
 ├── manifest.json                 # Agent manifest
 ├── identity/                     # Pillar: Identity (CapAuth)
 │   ├── identity.json
@@ -248,8 +249,37 @@ The `skcapstone-sync` shared folder shares the entire agent home:
 </folder>
 ```
 
-A `.stignore` file at `~/.skcapstone/.stignore` prevents private keys
-from syncing to other nodes (`*.key`, `*.pem`).
+### Ignore rules: one shared file, a shim per node
+
+Syncthing never syncs `.stignore`, so a full ruleset kept in each node's copy drifts
+(one node lacked the `/secrets` rule another had gained). The rules therefore live in
+**`~/.skcapstone/.stignore-shared`**, which IS synced, and every node's `.stignore` is a
+three-line shim that includes it:
+
+```
+// Node-local ignore rules. Shared rules live in .stignore-shared (synced).
+// Add a rule here only if it must apply to THIS node alone.
+#include .stignore-shared
+```
+
+- **Add a rule once:** edit `.stignore-shared`; it applies on every node. Put a rule in
+  `.stignore` only if it must apply to that node alone.
+- **Install:** `skcapstone init`/`preflight`/`sync setup` write `.stignore-shared` first,
+  then the shim. Order matters: if `.stignore` includes a file that does not exist,
+  Syncthing refuses to load the ignore patterns and the folder errors.
+- **Never destructive:** an existing shim is left alone, a GPU worker's allowlist
+  `.stignore` is left alone (it holds no sovereign state and does not use the shared
+  file), and a legacy full-ruleset `.stignore` is backed up and reported, not
+  overwritten. `skcapstone sync stignore --migrate` rewrites a legacy file as a shim and
+  keeps its node-local rules.
+- **Verify:** `skcapstone doctor` (category `sync`) reports a `.stignore` that is not a
+  shim, a missing or drifted `.stignore-shared`, any critical rule (`/secrets`, `*.key`,
+  `**/private.*`, the skwhisper derived outputs) absent from the effective rules (read from
+  Syncthing's `/rest/db/ignores` when the daemon answers, else from the files), and any
+  `*.sync-conflict-*` files with their paths.
+
+The standard is
+[SYNCTHING_IGNORE_STANDARD](https://github.com/smilinTux/sk-standards/blob/main/standards/SYNCTHING_IGNORE_STANDARD.md).
 
 **Upgrade note:** If you previously had Syncthing pointed at `~/.skcapstone/sync/`,
 running `skcapstone init` or `full_setup()` will automatically upgrade the share

@@ -147,7 +147,7 @@ record_halt() {
       || log "gtd capture of the halt escalation failed"
     if [ "$count" -eq "$HALT_ESCALATE" ]; then
       notify "ESCALATE auto-rollout stuck at $host" "$text"
-      command -v sk-alert >/dev/null 2>&1 && sk-alert send "$text" >/dev/null 2>&1
+      command -v "$SK_ALERT" >/dev/null 2>&1 && "$SK_ALERT" send "$text" >/dev/null 2>&1
     fi
   fi
 }

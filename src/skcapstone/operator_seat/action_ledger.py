@@ -43,7 +43,13 @@ class ActionState(str, Enum):
 _TRANSITIONS: dict[ActionState, frozenset[ActionState]] = {
     ActionState.OBSERVED: frozenset({ActionState.DIAGNOSED}),
     ActionState.DIAGNOSED: frozenset({ActionState.PROPOSED}),
-    ActionState.PROPOSED: frozenset({ActionState.AUTHORIZED}),
+    # PROPOSED -> ESCALATED is the VOID edge: an intent that was written but will
+    # not be actuated in the pass that wrote it (a gate closed, a freeze landed, the
+    # deadline fired, the evidence aged out) is closed rather than left PROPOSED,
+    # because the dispatcher enumerates PROPOSED intents and a leftover one could be
+    # acted on later, unattended. ESCALATED already exists and is already terminal,
+    # so no reader sees a new state; only the writer table gains an edge.
+    ActionState.PROPOSED: frozenset({ActionState.AUTHORIZED, ActionState.ESCALATED}),
     ActionState.AUTHORIZED: frozenset({ActionState.EXECUTING}),
     ActionState.EXECUTING: frozenset({ActionState.VERIFIED, ActionState.FAILED}),
     ActionState.FAILED: frozenset({ActionState.ROLLED_BACK, ActionState.ESCALATED}),

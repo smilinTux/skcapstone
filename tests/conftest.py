@@ -81,6 +81,19 @@ def _no_real_skmail(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_sk_alert(monkeypatch):
+    """Never send a test's alert to the real Telegram path.
+
+    Fleet converge tests exercise the enforce-mode refusal, which calls
+    ``fleet.alerts.send_alert``. Run on noroc2027, that fired real
+    "fleet: service skgateway on node-41 REFUSED actuation" alerts
+    (2026-11-13). Every sk-alert lookup honours $SK_ALERT_BIN first, so point
+    it at /bin/true. A test that exercises resolution sets or deletes it.
+    """
+    monkeypatch.setenv("SK_ALERT_BIN", "/bin/true")
+
+
+@pytest.fixture(autouse=True)
 def _no_external_network(monkeypatch, request):
     """Fail at the socket boundary if a unit test misses an endpoint stub.
 
@@ -542,3 +555,19 @@ def pytest_sessionfinish(session, exitstatus):
     lines.append("=" * 72)
     print("\n".join(lines))
     session.exitstatus = 1
+
+
+@pytest.fixture(autouse=True)
+def _pinned_test_approver(monkeypatch, tmp_path_factory):
+    """Pin a throwaway approver key for "chef" (card bada5c86).
+
+    No test reads the operator's real pin file. The key is generated once per
+    process; each test gets its own pin file.
+    """
+    from tests import cab_grants as cab_grants_testing
+
+    path = cab_grants_testing.write_pin(tmp_path_factory.mktemp("cab-pin") / "cab-approvers.json")
+    for module, attr in cab_grants_testing.pin_targets():
+        monkeypatch.setattr(module, attr, path)
+    nonces = path.parent / "used-authorizations"
+    monkeypatch.setattr("skcapstone.cli.itil._cab_nonce_store", lambda: nonces)

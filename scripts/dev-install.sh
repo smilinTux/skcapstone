@@ -2,7 +2,8 @@
 # dev-install.sh — Sovereign Agent Suite Dev Installer
 #
 # Wrapper around install.sh with --dev flag.
-# Installs all SK* packages plus pytest, ruff, black.
+# Installs all SK* packages (editable from local checkouts) plus pytest, ruff,
+# black into ~/.skenv-dev, never ~/.skenv (the deploy venv).
 #
 # Usage:
 #   bash scripts/dev-install.sh

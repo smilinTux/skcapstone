@@ -1,0 +1,1 @@
+The CMDB operator act starts its oneshot with `systemctl start --no-block`. A blocking start waited for the whole reconcile and the 30 s actuation timeout raised after the governed apply had already started (chg-a543c87b).

@@ -2,9 +2,9 @@
 
 Available as `skoperator`. Commands:
   run       one operator pass (report-only by default; reasons via the hybrid brain)
-  pending   list parked decisions awaiting a human
-  decide    approve or reject a parked decision (human only), write-through to a CAB vote
-  honor-pending   dispatch every PROPOSED ledger intent whose linked ITIL change now approves
+  pending   list parked decisions (every ATLAS escalation is report-only)
+  decide    acknowledge a parked decision with --reject (human only); --approve always refuses
+  honor-pending   dispatch PROPOSED auto-lane intents whose standard or auto-normal change approves
   status    freeze state (frozen / active / unprovisioned)
   freeze / unfreeze   toggle the kill switch (human only)
   provision   write the freeze store in its off position for the first time (human only)
@@ -33,13 +33,26 @@ from . import (
     decisions,
     discovery,
     dispatch,
+    evidence,
     fleet_adapter,
     kedb_seeds,
     loop,
+    node_local,
     notify,
     proposer,
     registration,
 )
+
+
+def _execution_state(paths) -> "loop.safety.ExecutionState":
+    """Cooldown and circuit state under the fleet root, with the single-flight lock in the
+    node-local state directory (an flock only orders processes on one kernel, so it does not
+    belong in a tree Syncthing replicates). ``run`` and ``honor-pending`` share it."""
+    return loop.safety.ExecutionState(
+        paths.root / "atlas" / "state",
+        lock_dir=node_local.state_dir() / "atlas",
+        verify_lock_dir=True,
+    )
 
 
 def _now_iso() -> str:
@@ -120,6 +133,16 @@ def operator() -> None:
     default=False,
     help="Skip the startup bootstrap (register app adapters + seed the KEDB) this tick.",
 )
+@click.option(
+    "--max-evidence-age",
+    "max_evidence_age",
+    type=click.FloatRange(min=0, min_open=True, max=evidence.MAX_ALLOWED_AGE_SECONDS),
+    default=evidence.DEFAULT_MAX_AGE_SECONDS,
+    show_default=True,
+    help="Oldest evidence (seconds) an action may rest on, at most "
+    f"{evidence.MAX_ALLOWED_AGE_SECONDS:g}. Stale or missing evidence is refused, never "
+    "acted on.",
+)
 def run_cmd(
     execute: bool,
     honor_flag: bool,
@@ -127,6 +150,7 @@ def run_cmd(
     publish_dir: str | None,
     no_publish: bool,
     no_bootstrap: bool,
+    max_evidence_age: float,
 ) -> None:
     """One operator pass: observe, reason, report. Report-only by default."""
     paths = default_paths()
@@ -225,18 +249,26 @@ def run_cmd(
         # so it can name an app ('skgateway') where the real objects are
         # 'upstreams' and 'connection-pool'. Unresolvable targets escalate.
         target_known=lambda p: fleet_adapter.fleet_target_known(paths, p),
-        execution_state=loop.safety.ExecutionState(paths.root / "atlas" / "state"),
+        execution_state=_execution_state(paths),
         # Physical execution is allowed only for a proposal bound to its owning
         # app + condition, human-ratified there, and verified by re-observation.
         require_verified_actions=honor,
         require_signed_catalog=honor,
         lifecycle_ledger=ledger,
         itil=itil_manager,
+        max_evidence_age_s=max_evidence_age,
+        # Production honor mode: every physical action goes through the ITIL lane
+        # (ledger, change, lock, re-observation). The inline lane stays for the
+        # annotation-only deployment (--execute without --honor), which actuates nothing.
+        allow_inline_actuation=not honor,
     )
     if honor:
         click.echo("honor: ON (CR-9.1 step-1 physical actuation: fleet + skchat)")
     if res.get("outcomes"):
-        click.echo(f"({len(res['outcomes'])} proposal(s); parked escalations await approval)")
+        click.echo(
+            f"({len(res['outcomes'])} proposal(s); escalations are report-only, "
+            "acknowledge with: skoperator decide <id> --reject)"
+        )
 
     # Publish the static brief artifact per tick (the atlas host serves it).
     if not no_publish:
@@ -256,14 +288,18 @@ def run_cmd(
 
 @operator.command("pending")
 def pending_cmd() -> None:
-    """List decisions parked for a human."""
+    """List parked decisions. Every ATLAS escalation is report-only: acknowledge with --reject."""
     rows = decisions.list_pending(_decisions_dir(default_paths()))
     if not rows:
         click.echo("no pending decisions")
         return
     for d in rows:
-        opts = "; ".join(f"[{i}] {o.get('action')}" for i, o in enumerate(d.get("options", [])))
-        click.echo(f"{d['id']}  {opts}")
+        options = d.get("options", [])
+        opts = "; ".join(f"[{i}] {o.get('action')}" for i, o in enumerate(options))
+        node = next((o.get("observed_on") for o in options if o.get("observed_on")), None)
+        marks = "  [report-only]" if any(o.get("report_only") for o in options) else ""
+        marks += f"  (observed on {node})" if node else ""
+        click.echo(f"{d['id']}  {opts}{marks}")
 
 
 @operator.command("decide")
@@ -271,49 +307,76 @@ def pending_cmd() -> None:
 @click.option("--approve/--reject", required=True)
 @click.option("--choice", type=int, default=None, help="Option index when several are offered.")
 def decide_cmd(decision_id: str, approve: bool, choice: int | None) -> None:
-    """Approve or reject a parked decision (human only).
+    """Acknowledge a parked decision with --reject (human only).
 
-    Resolution is write-through (AUTONOMY_ARCHITECTURE.md section 3.1): the
-    decisions store is a projection, so approving here submits a
-    provenance-bound CAB vote on the option's linked ITIL change, and it is
-    THAT vote, folded by ITIL, that authorizes -- never the free-text literal
-    ``by="human"`` this command used to write (PROVENANCE_AND_MUTATION_STANDARD
-    bans exactly that). A decision parked with no linked change authorizes
-    nothing: this command refuses and names the reason instead of printing
-    success.
+    Every ATLAS escalation is report-only (card f8dd9441): ``--approve`` is refused before
+    any write and before any grant is asked for, because no approval can make ATLAS act.
+    Ratification (``skoperator apps ratify <app> <action>``) is the path. A rejection is
+    attributed to the resolved CapAuth identity.
     """
     from .. import SHARED_ROOT
     from ..itil import ITILManager
 
+    decisions_dir = _decisions_dir(default_paths())
+    if approve:
+        try:
+            dispatch.resolve_decision(
+                decisions_dir,
+                None,
+                decision_id,
+                approve=True,
+                choice=choice,
+                subject="",
+                resolved_iso=_now_iso(),
+            )
+        except dispatch.UnauthorizedDecisionError as exc:
+            raise click.ClickException(str(exc))
     subject = store.resolved_writer_identity()
     if subject in ("", "unattributed"):
         raise click.ClickException(
-            "cannot resolve an authenticated CapAuth identity for this approval; "
+            "cannot resolve an authenticated CapAuth identity for this rejection; "
             "failing closed rather than recording an unattributed decision"
         )
     try:
         out = dispatch.resolve_decision(
-            _decisions_dir(default_paths()),
+            decisions_dir,
             ITILManager(SHARED_ROOT),
             decision_id,
-            approve=approve,
+            approve=False,
             choice=choice,
             subject=subject,
             resolved_iso=_now_iso(),
         )
-    except dispatch.UnauthorizedDecisionError as exc:
+    except (ValueError, dispatch.UnauthorizedDecisionError) as exc:
         raise click.ClickException(str(exc))
     click.echo(f"{decision_id} -> {out['status']}")
+
+
+#: ``honor-pending`` exits with this when an intent it saw can never actuate (report-only).
+EXIT_NEVER_ACTUATES = 3
+
+
+def honor_pending_summary(outcomes: list) -> tuple[str, int]:
+    """The closing line of ``honor-pending`` and its exit code: 3 when any intent can never
+    actuate (report-only), else 0. What did run is counted either way."""
+    verified = sum(1 for o in outcomes if o.outcome == "verified")
+    report_only = sum(1 for o in outcomes if o.outcome.startswith(dispatch.REPORT_ONLY_REFUSAL))
+    line = (
+        f"honor-pending: {len(outcomes)} intent(s): {verified} verified, "
+        f"{report_only} report-only (can never actuate)"
+    )
+    return line, EXIT_NEVER_ACTUATES if report_only else 0
 
 
 @operator.command("honor-pending")
 def honor_pending_cmd() -> None:
     """Dispatch every PROPOSED ledger intent whose linked ITIL change now folds
-    approved: the slow half of the dispatcher's "one code path, two speeds"
-    (AUTONOMY_ARCHITECTURE.md section 3.2). Run this after `skoperator decide
-    --approve` so a human's CAB vote actually causes the actuation it
-    authorized -- before this command existed, nothing downstream ever
-    re-read a resolved decision, and every escalated proposal was a dead end.
+    approved, through the same dispatcher the loop's auto lane uses.
+
+    Only standard and auto-normal approvals dispatch (card f8dd9441): an intent an older
+    loop escalated, or one whose change carries a human CAB vote, is refused as
+    report-only. A closing summary counts what was verified and what can never actuate;
+    the exit code is 3 when anything was report-only, else 0.
 
     Refuses outright (same as any actuation surface) unless the estate is
     actuation-ready and not frozen. An intent whose change has not yet folded
@@ -342,25 +405,42 @@ def honor_pending_cmd() -> None:
     rollback_fn = act_dispatch.build_rollback_fn(paths)
     extra_observers = discovery.discover_observers()
     adapters = {**extra_observers, **loop.ADAPTERS}
-    outcomes = dispatch.run_dispatch_pass(
-        paths,
-        ledger,
-        itil_manager,
-        adapters=adapters,
-        problem_types=loop.PROBLEM_WHEN_TRUE,
-        apply_fn=apply_fn,
-        rollback_fn=rollback_fn,
-        execution_state=loop.safety.ExecutionState(paths.root / "atlas" / "state"),
-        decisions_dir=_decisions_dir(paths),
-        now_iso=now,
-        actor="dispatcher",
-        emit=click.echo,
-    )
+    try:
+        outcomes = dispatch.run_dispatch_pass(
+            paths,
+            ledger,
+            itil_manager,
+            adapters=adapters,
+            problem_types=loop.PROBLEM_WHEN_TRUE,
+            apply_fn=apply_fn,
+            rollback_fn=rollback_fn,
+            execution_state=_execution_state(paths),
+            decisions_dir=_decisions_dir(paths),
+            now_iso=now,
+            actor="dispatcher",
+            emit=click.echo,
+            # The planner's verdicts at proposal time are not permissions that last: the
+            # target must still resolve and the action must still be ratified for the app
+            # (against the signed catalog) at dispatch.
+            target_known=lambda p: fleet_adapter.fleet_target_known(paths, p),
+            action_allowed=lambda p: loop._operatorapp_allows(paths, p, require_signature=True),
+        )
+    except RuntimeError as exc:
+        if "another Atlas operator pass is active" not in str(exc):
+            raise
+        raise click.ClickException(
+            "honor-pending: another Atlas operator pass (or honor-pending) is already running; "
+            "nothing was dispatched"
+        ) from exc
     if not outcomes:
         click.echo("honor-pending: nothing to dispatch")
         return
     for o in outcomes:
         click.echo(f"{o.intent_id}: {o.outcome}")
+    line, code = honor_pending_summary(outcomes)
+    click.echo(line)
+    if code:
+        raise SystemExit(code)
 
 
 @operator.command("status")

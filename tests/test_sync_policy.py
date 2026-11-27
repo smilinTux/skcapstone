@@ -190,7 +190,7 @@ def test_absent_folder_root_reports_not_held(tmp_path) -> None:
 def test_template_ruleset_is_clean_on_a_real_tree(tmp_path) -> None:
     """The bundled template at a folder root covers every probe."""
     template = (
-        Path(__import__("skcapstone").__file__).parent / "defaults" / ".stignore"
+        Path(__import__("skcapstone").__file__).parent / "defaults" / ".stignore-shared"
     ).read_text(encoding="utf-8")
     root = _folder(tmp_path / "f", template)
     identity = root / "agents" / "lumina" / "capauth" / "identity"

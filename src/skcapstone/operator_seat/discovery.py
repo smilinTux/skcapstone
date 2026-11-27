@@ -320,7 +320,20 @@ def make_subprocess_observe(
             return {"conditions": _unknown_conditions(declared, now)}
         payload = run(cli, "observe", timeout=timeout)
         if isinstance(payload, dict) and not adapter.validate_observe(payload):
-            return {"conditions": list(payload.get("conditions", []))}
+            # A discovered CLI's own claim about when its data was true is text from
+            # outside the process: dropped in BOTH spellings (payload-level and
+            # per-condition). Evidence time comes only from an in-process adapter,
+            # so a discovered observer can report but never license an actuation.
+            return {
+                "conditions": [
+                    (
+                        {k: v for k, v in c.items() if k != "source_observed_at"}
+                        if isinstance(c, dict)
+                        else c
+                    )
+                    for c in payload.get("conditions", [])
+                ]
+            }
         return {"conditions": _unknown_conditions(declared, now)}
 
     return observe

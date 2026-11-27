@@ -55,6 +55,8 @@ def test_auto_normal_missing_tag_needs_human(tmp_path: Path):
 def test_auto_normal_rejection_still_blocks(tmp_path: Path):
     mgr = ITILManager(tmp_path)
     chg = _op_change(mgr)
-    # Even an already-auto-approved eligible change: a human rejection vote blocks.
-    mgr.submit_cab_vote(chg.id, agent="human", decision="rejected")
+    # Even an already-auto-approved eligible change: a named rejection blocks. Card
+    # bada5c86: the voter is a real authenticated identity, since a placeholder such as
+    # "human" names no one and no longer counts (or is refused) on the fixed skcoord.
+    mgr.submit_cab_vote(chg.id, agent="chef", decision="rejected", subject="chef")
     assert mgr.list_changes()[0].status.value == "rejected"

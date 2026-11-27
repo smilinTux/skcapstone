@@ -1,0 +1,11 @@
+[Unit]
+Description=ATLAS-managed write-free CMDB network shadow reconcile
+Documentation=file:%h/clawd/skcapstone-repos/skcoord/docs/cmdb-reconcile-rollout.md
+ConditionPathExists=%h/.config/skcapstone/cmdb-network-targets
+
+[Service]
+Type=oneshot
+# Write-free: `cmdb reconcile --network --record-run` without --apply, with
+# the targets and skvault references from the targets file.
+ExecStart=%h/.skenv/bin/skcapstone-cmdb-network shadow
+Nice=10

@@ -44,6 +44,14 @@ tests/operator_seat/test_manifest_adapter.py::test_operatorapp_from_shipped_mani
 tests/test_integration_backbone.py::TestStandaloneMode::*[skvoice]
 tests/test_integration_backbone.py::TestIntegratedMode::*[skvoice]
 
+# `watchdog` is in no extra; it reached runners only transitively through a
+# sibling package, and stopped (2026-11-14). The module is marked integration
+# but its importorskip fires at collection, before -m deselection, so it skips
+# instead of being deselected. Fix by adding watchdog to the dev extra or
+# moving the import inside the tests.
+tests/integration/test_consciousness_e2e.py
+tests/test_config_reload.py::TestRunConfigWatcher::test_config_watcher_calls_reload_on_modified_event
+
 # setuptools-scm is a PEP 517 build-system requirement only; it is never in the
 # runtime env of an editable install. One `pip install setuptools-scm` in
 # pytest.yml closes this.
@@ -82,6 +90,12 @@ tests/test_workflow_secret_scan_refscope.py::test_gitleaks_fails_only_on_finding
 # measurement script, not a test, and it is currently FAILING on the only box
 # that can run it. Move it to scripts/fleet/ as a manual tool.
 tests/test_skfleet_pi_tool_allowlist.py::test_pi_denies_a_direct_mcp_tool_and_measures_schema_bytes
+
+# The qualify-env manifest pins the fleet hosts' system interpreter
+# (/usr/bin/python3.12, Ubuntu 24.04, by sha256). Runner images no longer ship
+# it (seen 2026-11-18 on #1395), so this refusal check runs only on a fleet
+# host or a workstation with that interpreter (it passes on noroc2027).
+tests/fleet/test_qualify_env.py::test_build_refuses_a_different_interpreter
 
 # --- MATRIX: correct, interpreter-dependent ------------------------------
 # tomllib is stdlib from 3.11; skips only on the py3.10 matrix leg.

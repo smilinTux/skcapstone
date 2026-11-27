@@ -68,7 +68,6 @@
     "sknoded.service": "enabled",
     "skoperator.timer": "enabled",
     "skos-web.service": "enabled",
-    "sksecurity-audit.timer": "enabled",
     "skvoice.service": "enabled",
     "snap.firmware-updater.firmware-notifier.timer": "enabled",
     "snap.snapd-desktop-integration.snapd-desktop-integration.service": "enabled",

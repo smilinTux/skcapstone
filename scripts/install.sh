@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-SKENV="$HOME/.skenv"
+SKENV="${SKENV:-$HOME/.skenv}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 DEV_MODE=false
@@ -30,6 +30,14 @@ for arg in "$@"; do
         --non-interactive) NON_INTERACTIVE=true ;;
     esac
 done
+
+# Editable installs are DEV ONLY and never go into the deploy venv. ~/.skenv is
+# what every unit, timer and MCP server runs, so an editable install there makes
+# production whatever branch a shared checkout is on. --dev targets ~/.skenv-dev;
+# production nodes are rolled out with `skcapstone deploy apply` (released main).
+if [[ "$DEV_MODE" == "true" ]] && [[ "$SKENV" == "$HOME/.skenv" ]]; then
+    SKENV="$HOME/.skenv-dev"
+fi
 
 echo "=== Sovereign Agent Suite Installer ==="
 echo ""
@@ -73,37 +81,49 @@ else
 fi
 
 PIP="$SKENV/bin/pip"
-$PIP install --upgrade pip -q 2>/dev/null
+# Security floors for transitive dependencies (constraints are inert for packages
+# an install does not use). See constraints/security-floors.txt. A conflict between
+# these floors and a dependency cap aborts the install (scripts/lib/guarded-pip.sh)
+# instead of silently installing less; SK_SKIP_SECURITY_FLOORS=1 opts out.
+# shellcheck source=lib/guarded-pip.sh
+source "$SCRIPT_DIR/lib/guarded-pip.sh"
+SK_SECURITY_FLOORS="$REPO_ROOT/constraints/security-floors.txt"
+if [[ "${SK_SKIP_SECURITY_FLOORS:-0}" == "1" ]]; then
+    echo "WARNING: SK_SKIP_SECURITY_FLOORS=1, installing without the security floors." >&2
+elif [[ -f "$SK_SECURITY_FLOORS" ]]; then
+    export PIP_CONSTRAINT="$SK_SECURITY_FLOORS"
+fi
+guarded_pip_install --upgrade pip -q || echo "  (pip self-upgrade skipped)" >&2
 
 # ---------------------------------------------------------------------------
 # Step 3: Install SK* packages
 # ---------------------------------------------------------------------------
 echo "[3/6] Installing SK* packages..."
 
-# Helper: install editable if local dir exists, else from PyPI
+# Helper: --dev installs editable from a local checkout; otherwise the PyPI release
 install_pkg() {
     local name="$1"
     local extras="${2:-}"
     local paths="${3:-}"
 
     for path in $paths; do
-        if [[ -d "$path" ]]; then
+        if [[ "$DEV_MODE" == "true" ]] && [[ -d "$path" ]]; then
             if [[ -n "$extras" ]]; then
-                $PIP install -e "${path}[${extras}]" -q 2>/dev/null && echo "  $name (editable: $path)" && return 0
+                guarded_pip_install -e "${path}[${extras}]" -q && echo "  $name (editable: $path)" && return 0
                 # Retry without extras if they fail
-                $PIP install -e "$path" -q 2>/dev/null && echo "  $name (editable, no extras: $path)" && return 0
+                guarded_pip_install -e "$path" -q && echo "  $name (editable, no extras: $path)" && return 0
             else
-                $PIP install -e "$path" -q 2>/dev/null && echo "  $name (editable: $path)" && return 0
+                guarded_pip_install -e "$path" -q && echo "  $name (editable: $path)" && return 0
             fi
         fi
     done
 
     # Fall back to PyPI
     if [[ -n "$extras" ]]; then
-        $PIP install "${name}[${extras}]" -q 2>/dev/null && echo "  $name (PyPI)" && return 0
-        $PIP install "$name" -q 2>/dev/null && echo "  $name (PyPI, no extras)" && return 0
+        guarded_pip_install "${name}[${extras}]" -q && echo "  $name (PyPI)" && return 0
+        guarded_pip_install "$name" -q && echo "  $name (PyPI, no extras)" && return 0
     else
-        $PIP install "$name" -q 2>/dev/null && echo "  $name (PyPI)" && return 0
+        guarded_pip_install "$name" -q && echo "  $name (PyPI)" && return 0
     fi
 
     echo "  $name (FAILED — skipping)" && return 1
@@ -126,12 +146,21 @@ install_pkg "sksecurity" ""                         "$PARENT/sksecurity $PILLAR/
 install_pkg "skseed"     ""                         "$PILLAR/skseed $PARENT/skseed"
 install_pkg "skwhisper"  ""                         "$PARENT/skwhisper-dev $PILLAR/skwhisper $PARENT/skwhisper"
 
+# Show what actually landed. A constrained PyPI install can resolve to an OLDER
+# release of a package whose latest one still caps a floored dependency (the
+# resolver backtracks instead of failing); that is not an error pip reports, so
+# make it visible.
+echo "  installed versions:"
+"$PIP" list --format=freeze 2>/dev/null \
+    | grep -iE '^(capauth|cloud9|skmemory|skcomms|skcapstone|skchat[-_a-z]*|skseal|skskills|sksecurity|skseed|skwhisper)==' \
+    | sed 's/^/    /' || true
+
 # ---------------------------------------------------------------------------
 # Step 4: Dev tools (optional)
 # ---------------------------------------------------------------------------
 if [[ "$DEV_MODE" == "true" ]]; then
     echo "[4/6] Installing dev tools..."
-    $PIP install pytest pytest-cov ruff black -q 2>/dev/null
+    guarded_pip_install pytest pytest-cov ruff black -q
     echo "  pytest, pytest-cov, ruff, black"
 else
     echo "[4/6] Skipping dev tools (use --dev to include)"
@@ -358,6 +387,34 @@ elif [[ "$(uname)" == "Linux" ]] && command -v systemctl &>/dev/null; then
             cp "$_SYNCTHING_DROPIN" "$_UNIT_DIR/syncthing.service.d/nice.conf"
             echo "  [OK] syncthing.service.d/nice.conf (desktop-courteous sync)"
             (( _installed++ ))
+        fi
+
+        # bfq on spinning disks (machine-wide, needs sudo). The syncthing
+        # drop-in above and skmemory-sync@ use IOSchedulingClass=idle, which the
+        # kernel ignores unless the disk runs bfq. Without it a background sync
+        # on an HDD saturates the disk (noroc2027, 2026-11-12). SSD/NVMe skipped.
+        _BFQ_RULE="$REPO_ROOT/systemd/udev/60-ioscheduler-bfq.rules"
+        _BFQ_DEST="/etc/udev/rules.d/60-ioscheduler-bfq.rules"
+        _rotational_disks=""
+        for _q in /sys/block/*/queue/rotational; do
+            _dev="$(basename "$(dirname "$(dirname "$_q")")")"
+            case "$_dev" in loop*|ram*|zram*|sr*|dm-*|md*) continue ;; esac
+            [[ "$(cat "$_q" 2>/dev/null)" == "1" ]] && _rotational_disks="$_rotational_disks $_dev"
+        done
+        if [[ -f "$_BFQ_RULE" && -n "$_rotational_disks" ]]; then
+            if cmp -s "$_BFQ_RULE" "$_BFQ_DEST"; then
+                echo "  [OK] bfq IO scheduler rule already installed ($_rotational_disks )"
+            elif command -v sudo >/dev/null 2>&1 \
+                && sudo install -m 0644 "$_BFQ_RULE" "$_BFQ_DEST" \
+                && echo bfq | sudo tee /etc/modules-load.d/bfq.conf >/dev/null; then
+                sudo modprobe bfq 2>/dev/null || true
+                sudo udevadm control --reload 2>/dev/null || true
+                sudo udevadm trigger --subsystem-match=block --action=change 2>/dev/null || true
+                echo "  [OK] bfq IO scheduler on spinning disks ($_rotational_disks ) so idle IO priority works"
+            else
+                echo "  [WARN] could not install $_BFQ_DEST (needs sudo); idle IO priority is ignored on:$_rotational_disks"
+                echo "         run: sudo install -m 0644 $_BFQ_RULE $_BFQ_DEST && sudo udevadm trigger --subsystem-match=block --action=change"
+            fi
         fi
 
         echo ""

@@ -157,7 +157,7 @@ def test_changed_inventory_does_rewrite_node_json(paths, monkeypatch) -> None:
 def test_control_node_sized_node_json_stays_under_64kb(paths, monkeypatch) -> None:
     """The size guard, measured on the serialized file, not on an estimate."""
     inventory = _real_inventory()
-    assert len(inventory["units"]["user"]) >= 80
+    assert len(inventory["units"]["user"]) >= 75
     assert len(inventory["packages"]) >= 25
     _stub_collect(monkeypatch, [inventory])
     sknoded.run_once(paths, CONTROL_NODE)

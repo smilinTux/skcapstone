@@ -18,11 +18,30 @@ from skcapstone.fleet.staged_rollout import _DEPLOY_STEPS, _ROLLBACK_STEPS
 
 ROOT = Path(__file__).resolve().parents[1]
 CONSTRAINTS = ROOT / "deploy" / "fleet-constraints.txt"
-# skskills is intentionally unpinned: production runs a git build the CI index lacks.
-SK_RUNTIME = ("skcoord", "skmemory", "cloud9", "skwhisper")
+REQUIREMENTS = ROOT / "deploy" / "fleet-requirements.in"
+# Every SK runtime package the fleet installs from a release (2026-11-14 adds the
+# rest of the set; skchat-sovereign, sksecurity, skbrain and skvault are held
+# back, see the comment in deploy/fleet-constraints.txt).
+SK_RUNTIME = (
+    "skcoord",
+    "skmemory",
+    "cloud9",
+    "skwhisper",
+    "capauth",
+    "skseed",
+    "skdashboard",
+    "skharness",
+    "skskills",
+    "skcomms",
+)
 
 
 def _pins():
+    """The SK pins: the required entries of the lock (deploy/fleet-requirements.in)."""
+    return dp.load_constraints(REQUIREMENTS)
+
+
+def _lock():
     return dp.load_constraints(CONSTRAINTS)
 
 
@@ -52,7 +71,27 @@ def _project_requirements():
 def test_constraints_are_exact_pins_for_every_sk_runtime_dependency():
     pins = _pins()
     for name in SK_RUNTIME:
-        assert canonicalize_name(name) in pins, f"{name} missing from fleet-constraints.txt"
+        assert canonicalize_name(name) in pins, f"{name} missing from fleet-requirements.in"
+
+
+def test_lock_carries_every_required_pin_at_the_same_version():
+    """The lock is generated from the requirements file; a hand edit of one
+    without rerunning scripts/fleet-lock.sh must not pass."""
+    lock = _lock()
+    for name, want in _pins().items():
+        assert lock.get(name) == want, (
+            f"{name}=={want} in fleet-requirements.in but the lock has {lock.get(name)}; "
+            "run scripts/fleet-lock.sh"
+        )
+
+
+def test_lock_is_fully_resolved():
+    """Every transitive dependency of the SK set is in the lock, not just the SK pins."""
+    lock = _lock()
+    assert len(lock) > len(_pins()) * 5
+    for name in ("click", "typer", "rich", "fastapi", "huggingface-hub", "cryptography"):
+        assert name in lock, f"{name} missing from the lock"
+    assert "skcapstone" not in lock, "skcapstone is installed from the checkout, never locked"
 
 
 def test_pyproject_floor_never_exceeds_production_pin():
@@ -146,10 +185,54 @@ def test_main_exit_codes(tmp_path, monkeypatch, capsys):
     assert dp.main(["--constraints", str(tmp_path / "absent.txt")]) == 2
 
 
+def test_parse_evaluates_markers_and_rejects_double_pins():
+    text = (
+        'numpy==2.5.2 ; python_version < "3.14"\n'
+        'numpy==2.5.4 ; python_version >= "3.14"\n'
+        "colorama==0.4.6 ; sys_platform == 'win32'\n"
+    )
+    pins = dp.parse_constraints(text, {"python_version": "3.12", "sys_platform": "linux"})
+    assert pins == {"numpy": Version("2.5.2")}
+    pins = dp.parse_constraints(text, {"python_version": "3.14", "sys_platform": "linux"})
+    assert pins == {"numpy": Version("2.5.4")}
+    with pytest.raises(ValueError, match="pinned twice"):
+        dp.parse_constraints("a==1\na==2\n")
+
+
+def test_optional_lock_entries_may_be_absent_but_never_differ(monkeypatch):
+    pins = {"skcoord": Version("0.1.97"), "twine": Version("7.0.0"), "torch": Version("2.13")}
+    installed = {"skcoord": Version("0.1.97"), "twine": Version("6.2.0")}
+    monkeypatch.setattr(dp, "installed_version", lambda n: installed.get(n))
+    drift = dp.find_drift(pins, required={"skcoord"})
+    assert drift == ["twine: installed 6.2.0, constraints pin 7.0.0"]  # torch absent is fine
+    installed.pop("skcoord")
+    assert any("skcoord: installed MISSING" in d for d in dp.find_drift(pins, {"skcoord"}))
+    # Without a requirements file (pre-lock revision) every entry is required.
+    assert any("torch" in d for d in dp.find_drift(pins, None))
+
+
+def test_write_installed_lists_only_what_the_host_has(tmp_path, monkeypatch):
+    lock = tmp_path / "fleet-constraints.txt"
+    lock.write_text("skcapstone==1\ntwine==7.0.0\ntorch==2.13.0\n")
+    (tmp_path / "fleet-requirements.in").write_text("# none\n")
+    have = {"twine": Version("6.2.0"), "skcapstone": Version("1")}
+    monkeypatch.setattr(dp, "installed_version", lambda n: have.get(n))
+    out = tmp_path / "cache" / "installed.txt"
+    assert dp.main(["--constraints", str(lock), "--write-installed", str(out)]) == 0
+    assert out.read_text() == "twine==7.0.0\n"
+
+
 def test_rollout_installs_with_constraints_then_verifies_parity():
     for steps in (_DEPLOY_STEPS, _ROLLBACK_STEPS):
         names = [n for n, _ in steps]
         assert names.index("pip_install") + 1 == names.index("verify_dependency_parity")
+        # pip check right after parity: a conflicting set halts on the canary.
+        assert names.index("verify_dependency_parity") + 1 == names.index("verify_pip_check")
+        assert dict(steps)["verify_pip_check"] == "~/.skenv/bin/python -m pip check"
+        install = dict(steps)["pip_install"]
+        assert "-r deploy/fleet-requirements.in" in install
+        assert "--write-installed ~/.cache/skcapstone-rollout/installed-lock.txt" in install
+        assert "-r ~/.cache/skcapstone-rollout/installed-lock.txt" in install
         table = dict(steps)
         assert "-c deploy/fleet-constraints.txt" in table["pip_install"]
         assert "dependency_parity.py" in table["verify_dependency_parity"]
@@ -219,4 +302,4 @@ class TestSkwhisperTracked:
 
         root = Path(__file__).resolve().parents[1]
         text = (root / "deploy" / "fleet-constraints.txt").read_text(encoding="utf-8")
-        assert "skmemory==0.11.162" in text
+        assert "skmemory==0.11.172" in text

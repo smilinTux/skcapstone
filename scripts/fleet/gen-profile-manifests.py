@@ -262,7 +262,7 @@ def build_control() -> dict:
             "packages": _units_block(load_packages("node-noroc2027"), ["skcapstone"], []),
             "stateTier": "full-replica",
             "capauthIdentityClass": "operator",
-            "binaries": {"required": ["wt"], "allowed": ["wt"], "mustNot": []},
+            "binaries": {"required": ["wt", "gitleaks"], "allowed": ["wt", "gitleaks"], "mustNot": []},
             "syncFolders": ["skcapstone-sync", "skfleet-control"],
         },
     )
@@ -291,7 +291,7 @@ def build_builder_standby() -> dict:
             "packages": _units_block(load_packages("node-41"), ["skcapstone"], []),
             "stateTier": "full-replica",
             "capauthIdentityClass": "agent",
-            "binaries": {"required": ["wt"], "allowed": ["wt"], "mustNot": []},
+            "binaries": {"required": ["wt", "gitleaks"], "allowed": ["wt", "gitleaks"], "mustNot": []},
             "syncFolders": ["skcapstone-sync", "skfleet-control"],
         },
     )

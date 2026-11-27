@@ -16,7 +16,7 @@ import pytest
 from skcapstone.sync_policy import Coverage, evaluate, load_ruleset
 
 REAL_TEMPLATE = (
-    Path(__import__("skcapstone").__file__).parent / "defaults" / ".stignore"
+    Path(__import__("skcapstone").__file__).parent / "defaults" / ".stignore-shared"
 ).read_text(encoding="utf-8")
 
 

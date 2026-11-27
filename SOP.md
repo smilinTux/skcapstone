@@ -402,13 +402,23 @@ workflow; it does not receive a generic privileged shell. The write-free shadow
 unit and the apply unit are deliberately distinct. The packaged apply unit is
 `src/skcapstone/data/systemd/skcapstone-cmdb-reconcile-network.service`; its
 `ConditionPathExists` gate requires an owner-reviewed launcher at
-`~/.config/skcapstone/cmdb-network-apply`. The launcher is mode `0700`, contains
-only exact fleet targets and `skvault://` references, and ends in:
+`~/.config/skcapstone/cmdb-network-apply`. Everything ships in source:
 
-```bash
-exec "$HOME/.skenv/bin/skcapstone" cmdb apply --network \
-  --credential HOST=skvault://REFERENCE  # repeated for every exact target
-```
+- `src/skcapstone/data/cmdb-network-apply.sh`: the launcher. Install it, after
+  review, as `~/.config/skcapstone/cmdb-network-apply` with mode `0700`. It only
+  runs `skcapstone-cmdb-network apply`.
+- `scripts/skcapstone-cmdb-network {apply|shadow}`: the runner, installed into
+  `~/.skenv/bin`. It reads `~/.config/skcapstone/cmdb-network-targets` (one
+  `HOST=skvault://REFERENCE` per line, owner-only, no group or world write),
+  refuses anything else, and runs
+  `cmdb reconcile --network [--apply] --record-run --credential ...` through
+  `sk-cron-run` under a non-blocking lock.
+- `skcapstone-cmdb-reconcile-shadow.service`: the write-free shadow
+  (`skcapstone-cmdb-network shadow`), gated on the targets file.
+- `skcapstone-cmdb-reconcile-network.timer`: the scheduled network apply at
+  `01/3:47`, 90 minutes from the legacy local timer's `00/3:17` on both sides.
+  It is installed and enabled only as a gate 4 cutover step, never by a
+  package install or pull.
 
 Never put credential values in the launcher, unit, change record, or artifact.
 Before start, `skcapstone cmdb operator act apply-cmdb-reconcile --change-id ID`

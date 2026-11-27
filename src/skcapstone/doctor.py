@@ -163,9 +163,11 @@ def run_diagnostics(
     report.checks.extend(_check_memory(home))
     report.checks.extend(_check_memory_drift(home, all_agents=all_agents, budget=drift_budget))
     report.checks.extend(_check_memory_sync_timer(home))
+    report.checks.extend(_check_io_priority())
     report.checks.extend(_check_transport())
     report.checks.extend(_check_sync(home))
     report.checks.extend(_check_sync_conflicts(home))
+    report.checks.extend(_check_stignore(home))
     report.checks.extend(_check_multi_writer_layouts(home))
     report.checks.extend(_check_scheduler(home))
     report.checks.extend(_check_systemd_runtime(home))
@@ -175,6 +177,7 @@ def run_diagnostics(
     report.checks.extend(_check_codex())
     report.checks.extend(_check_harness_env(home))
     report.checks.extend(_check_versions())
+    report.checks.extend(_check_deploy(deep=deep))
 
     return report
 
@@ -813,6 +816,11 @@ def _check_multi_writer_layouts(home: Path) -> list[Check]:
     ]
 
 
+#: How many conflict paths ``sync:conflicts`` prints. The count is always exact; the
+#: list is capped so a flood (hundreds of copies) does not bury the rest of the report.
+_CONFLICT_PATHS_SHOWN = 10
+
+
 def _check_sync_conflicts(home: Path) -> list[Check]:
     """Detect Syncthing sync-conflict files under the shared root.
 
@@ -850,12 +858,15 @@ def _check_sync_conflicts(home: Path) -> list[Check]:
             )
         ]
     areas = sorted({p.relative_to(home).parts[0] for p in conflicts})
+    shown = sorted(str(p.relative_to(home)) for p in conflicts)[:_CONFLICT_PATHS_SHOWN]
+    more = len(conflicts) - len(shown)
+    paths = "; ".join(shown) + (f"; (+{more} more)" if more > 0 else "")
     return [
         Check(
             name="sync:conflicts",
             description="Syncthing sync-conflict files present",
             passed=False,
-            detail=f"{len(conflicts)} conflict file(s) in: {', '.join(areas)}",
+            detail=f"{len(conflicts)} conflict file(s) in: {', '.join(areas)}. Paths: {paths}",
             fix=(
                 "List with: find ~/.skcapstone -name '*.sync-conflict-*' ; keep "
                 "the authoritative copy and remove stale duplicates "
@@ -864,6 +875,129 @@ def _check_sync_conflicts(home: Path) -> list[Check]:
             category="sync",
         )
     ]
+
+
+def _check_stignore(home: Path) -> list[Check]:
+    """Check the Syncthing ignore layout against SYNCTHING_IGNORE_STANDARD. Report only.
+
+    ``.stignore`` is never synced, so per-node copies drift (one node lacked the
+    ``/secrets`` rule another had). The standard puts the rules in a synced
+    ``.stignore-shared`` and makes ``.stignore`` a shim that includes it. The effective
+    rules come from the Syncthing daemon (``/rest/db/ignores``) when it answers, else
+    from the files. A GPU worker's allowlist ``.stignore`` is a recognised variant, not
+    a violation. Nothing here changes a file; the fix text names the command.
+
+    Args:
+        home: Shared root directory (~/.skcapstone).
+
+    Returns:
+        Four checks: shim, shared file, shared-file drift, critical rules.
+    """
+    from .stignore_layout import diagnose
+
+    if not home.is_dir():
+        return []
+    diag = diagnose(home)
+    found = {f.code: f for f in diag.findings}
+    worker = diag.kind == "worker"
+    fix_install = "skcapstone sync stignore"
+    checks: list[Check] = []
+
+    if "not_shim" in found:
+        checks.append(
+            Check(
+                name="sync:stignore-shim",
+                description=".stignore is the shim that includes .stignore-shared",
+                passed=False,
+                detail=found["not_shim"].detail,
+                fix="skcapstone sync stignore --migrate",
+                category="sync",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                name="sync:stignore-shim",
+                description=".stignore is the shim that includes .stignore-shared",
+                passed=True,
+                detail="worker allowlist (no include by design)" if worker else "shim",
+                category="sync",
+            )
+        )
+
+    if "shared_missing" in found:
+        checks.append(
+            Check(
+                name="sync:stignore-shared",
+                description=".stignore-shared present",
+                passed=False,
+                detail=found["shared_missing"].detail,
+                fix=fix_install,
+                category="sync",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                name="sync:stignore-shared",
+                description=".stignore-shared present",
+                passed=True,
+                detail="not used on a worker allowlist" if worker else "present",
+                category="sync",
+            )
+        )
+
+    drift = found.get("shared_drift")
+    checks.append(
+        Check(
+            name="sync:stignore-shared-drift",
+            description=".stignore-shared matches the packaged canonical version",
+            passed=drift is None,
+            detail=drift.detail if drift else "identical" if not worker else "n/a on a worker",
+            fix=(
+                "Report only. If the packaged version is behind, update "
+                "src/skcapstone/defaults/.stignore-shared; if this node is behind, edit "
+                ".stignore-shared once (it syncs to every node)."
+                if drift
+                else ""
+            ),
+            category="sync",
+        )
+    )
+
+    crit = [f for f in diag.findings if f.code in ("critical_missing", "daemon_ignore_error")]
+    if diag.kind == "absent":
+        checks.append(
+            Check(
+                name="sync:stignore-critical-rules",
+                description="Critical ignore rules in the effective ruleset",
+                passed=False,
+                detail="no .stignore, so nothing is ignored",
+                fix=fix_install,
+                category="sync",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                name="sync:stignore-critical-rules",
+                description="Critical ignore rules in the effective ruleset",
+                passed=not crit,
+                detail=(
+                    "; ".join(f.detail for f in crit)
+                    if crit
+                    else f"all present (read from {diag.source})"
+                ),
+                fix=(
+                    "Add the rule to .stignore-shared once (it syncs to every node); on a "
+                    "worker, add it to .stignore above the allowlist."
+                    if crit
+                    else ""
+                ),
+                category="sync",
+            )
+        )
+    return checks
 
 
 def _check_scheduler(home: Path) -> list[Check]:
@@ -2676,6 +2810,93 @@ def _check_memory_sync_timer(home: Path) -> list[Check]:
     return checks
 
 
+_IDLE_CAPABLE_SCHEDULERS = ("bfq", "cfq")
+_NON_DISK_PREFIXES = ("loop", "ram", "zram", "sr", "dm-", "md")
+
+
+def _check_io_priority(
+    sys_block: Path = Path("/sys/block"),
+    unit_dir: Optional[Path] = None,
+) -> list[Check]:
+    """Background sync must actually run at idle IO priority.
+
+    Syncthing (``syncthing.service.d/nice.conf``) and ``skmemory-sync@`` set
+    ``IOSchedulingClass=idle``. The kernel ignores that unless the disk uses
+    bfq, so on a spinning disk with ``none`` or ``mq-deadline`` both jobs
+    compete at full priority. noroc2027 (QEMU HDD, scheduler ``none``, and no
+    syncthing drop-in) sat at ~90% IO pressure and load 35 on 4 cores,
+    2026-11-12. SSD/NVMe are not checked: idle priority matters far less there.
+
+    Returns:
+        One ``io:scheduler:<disk>`` check per spinning disk, plus
+        ``io:syncthing_dropin`` when syncthing is installed. Empty off Linux.
+    """
+    checks: list[Check] = []
+    if platform.system() != "Linux":
+        return checks
+
+    try:
+        disks = sorted(p for p in sys_block.iterdir() if not p.name.startswith(_NON_DISK_PREFIXES))
+    except OSError:
+        disks = []
+    for disk in disks:
+        try:
+            rotational = (disk / "queue" / "rotational").read_text().strip()
+            sched_raw = (disk / "queue" / "scheduler").read_text().strip()
+        except OSError:
+            continue
+        if rotational != "1":
+            continue
+        # USB sticks often report rotational=1; sync data does not live there.
+        try:
+            if "/usb" in str(disk.resolve()):
+                continue
+        except OSError:
+            pass
+        m = re.search(r"\[([^\]]+)\]", sched_raw)
+        active = m.group(1) if m else sched_raw
+        ok = active in _IDLE_CAPABLE_SCHEDULERS
+        checks.append(
+            Check(
+                name=f"io:scheduler:{disk.name}",
+                description=f"IO scheduler honours idle priority ({disk.name}, spinning)",
+                passed=ok,
+                detail=f"scheduler={active}",
+                fix=(
+                    ""
+                    if ok
+                    else "re-run scripts/install.sh "
+                    "(installs systemd/udev/60-ioscheduler-bfq.rules), "
+                    f"or now: echo bfq | sudo tee /sys/block/{disk.name}/queue/scheduler"
+                ),
+                category="systemd",
+            )
+        )
+
+    if shutil.which("syncthing"):
+        udir = unit_dir if unit_dir is not None else Path.home() / ".config" / "systemd" / "user"
+        dropin = udir / "syncthing.service.d" / "nice.conf"
+        present = dropin.is_file()
+        checks.append(
+            Check(
+                name="io:syncthing_dropin",
+                description="Syncthing runs at idle CPU/IO priority",
+                passed=present,
+                detail=str(dropin) if present else "missing",
+                fix=(
+                    ""
+                    if present
+                    else "re-run scripts/install.sh, or copy "
+                    "systemd/syncthing.service.d/nice.conf to "
+                    f"{dropin.parent}/ then: systemctl --user daemon-reload && "
+                    "systemctl --user restart syncthing"
+                ),
+                category="systemd",
+            )
+        )
+    return checks
+
+
 def _check_transport() -> list[Check]:
     """Check SKComms transport availability."""
     checks = []
@@ -3959,3 +4180,124 @@ def _get_tool_version(tool: str) -> Optional[str]:
     except (subprocess.TimeoutExpired, OSError):
         pass
     return None
+
+
+# ---------------------------------------------------------------------------
+# Deploy checks (category "deploy").
+#
+# Production must be a released build of main. Three ways it silently stops
+# being one, each its own check because each has its own fix:
+#   deploy:editable      a dist in the deploy venv is an editable install, so
+#                        production is whatever branch that tree is on
+#   deploy:exec-in-tree  a unit, Claude Code or Hermes MCP command runs a file
+#                        inside a git working tree that agents branch in
+#   deploy:manifest      an installed SK version differs from the manifest
+# The manifest is read from the local clone without fetching unless --deep,
+# so a session-start doctor stays fast and works offline.
+# ---------------------------------------------------------------------------
+
+
+def _check_deploy(deep: bool = False) -> list[Check]:
+    """Report deploy drift as doctor checks. See :mod:`skcapstone.deploy`."""
+    from .deploy import ManifestUnavailableError, resolve_manifest
+    from .deploy.drift import compute
+    from .deploy.rollout import Paths
+
+    paths = Paths.default()
+    venv_python = paths.venv_link / "bin" / "python"
+    if not venv_python.exists():
+        venv_python = Path(sys.executable)
+    try:
+        manifest, _mid = resolve_manifest(paths.state_dir, fetch=deep)
+    except (ManifestUnavailableError, OSError, ValueError):
+        manifest = None
+    try:
+        report = compute(Path.home(), venv_python, manifest, state_dir=paths.state_dir)
+    except Exception as exc:  # noqa: BLE001 - a broken probe is unknown, not a pass
+        return [
+            Check(
+                name="deploy:drift",
+                description="Production runs released main",
+                passed=False,
+                unknown=True,
+                detail=f"UNKNOWN: drift probe failed: {exc}",
+                category="deploy",
+            )
+        ]
+
+    def _one(name: str, desc: str, items: list[str], fix: str) -> Check:
+        shown = "; ".join(items[:6]) + (f"; and {len(items) - 6} more" if len(items) > 6 else "")
+        return Check(
+            name=name,
+            description=desc,
+            passed=not items,
+            detail=f"{len(items)}: {shown}" if items else "none",
+            fix=fix if items else "",
+            category="deploy",
+        )
+
+    checks = [
+        _one(
+            "deploy:editable",
+            f"No editable installs in {paths.venv_link}",
+            report.editable,
+            "skcapstone deploy apply  # rebuilds the venv from released versions; "
+            "do dev work in ~/.skenv-dev or a per-worktree venv",
+        ),
+        _one(
+            "deploy:exec-in-tree",
+            "No unit or MCP command runs a file inside a git working tree",
+            report.exec_in_tree,
+            "Run the packaged entry point from ~/.skenv/bin, or add the files as a manifest "
+            "tool (skcapstone deploy tools); list a deliberate exception under "
+            "allow_exec_in_tree in the manifest",
+        ),
+        _one(
+            "deploy:exec-missing",
+            "Every live unit's program, script and working directory exists",
+            report.missing,
+            "restore the file from main as a manifest tool, or disable the unit if it is dead",
+        ),
+    ]
+    if manifest is None:
+        checks.append(
+            Check(
+                name="deploy:manifest",
+                description="Installed SK versions match the release manifest",
+                passed=False,
+                unknown=True,
+                detail=(
+                    "UNKNOWN: no release manifest on this node "
+                    "(SK_DEPLOY_MANIFEST_URL or SK_DEPLOY_MANIFEST_REPO"
+                    " in ~/.config/sk-deploy/env)"
+                ),
+                category="deploy",
+            )
+        )
+    else:
+        checks.append(
+            _one(
+                "deploy:manifest",
+                "Installed SK versions match the release manifest",
+                report.behind,
+                "skcapstone deploy plan && skcapstone deploy apply",
+            )
+        )
+        checks.append(
+            _one(
+                "deploy:tools",
+                "Tool exports match the release manifest",
+                report.tools,
+                "skcapstone deploy tools",
+            )
+        )
+    if manifest is not None or report.files:
+        checks.append(
+            _one(
+                "deploy:files",
+                "Managed files match what the last deploy wrote",
+                report.files,
+                "skcapstone deploy tools  # rewrites them; edit the config repo, not the file",
+            )
+        )
+    return checks

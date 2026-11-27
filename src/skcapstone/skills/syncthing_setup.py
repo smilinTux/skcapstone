@@ -7,6 +7,7 @@ trust, security, coordination, and sync seeds all propagate across every
 node in the mesh automatically.
 """
 
+import logging
 import os
 import platform
 import shutil
@@ -15,79 +16,15 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 AGENT_HOME = Path.home() / ".skcapstone"
 SYNC_DIR = AGENT_HOME / "sync"
 SHARED_FOLDER_ID = "skcapstone-sync"
 
-# Reason: the .stignore both protects private keys AND keeps derived/runtime
-# state (leftover chroma dir, DB indexes, logs, sessions, pidfiles, comms/archive) from
-# pinning the Syncthing scanner. It is the SAME bundled template that
-# skcapstone.ensure_skeleton installs - loaded here so the two never drift.
-_STIGNORE_TEMPLATE = Path(__file__).resolve().parent.parent / "defaults" / ".stignore"
-
-# Fallback used only if the packaged template is somehow unavailable.
-_FALLBACK_STIGNORE = """\
-// SKCapstone Sovereign Singularity - Syncthing ignore rules
-// Private key material must never leave this node
-*.key
-*.pem
-**/private.*
-*.rev
-**/revocation*
-**/passphrase*
-*.pass
-.gnupg/secring.gpg
-.gnupg/private-keys-v1.d
-**/*.kbx
-security/tokens
-**/telegram.session
-
-// Derived / runtime state (never source of truth)
-// Leftover Chroma dir: no longer written, ignored until fleet cleanup lands
-**/memory/chroma
-**/chroma.bak*
-**/memory/index.db
-**/*.db-wal
-**/*.db-shm
-**/*.sync-conflict-*
-.stversions
-**/.stversions
-**/*.pid
-daemon.pid
-**/daemon.log
-logs
-sessions
-conversations
-backups
-deployments
-pubsub
-file-transfer
-**/skwhisper/state.json
-**/memory/archive
-**/comms/archive
-**/skcomms/acks
-
-// Python cache
-__pycache__
-*.pyc
-*.pyo
-
-// OS metadata
-.DS_Store
-Thumbs.db
-desktop.ini
-"""
-
-
-def _load_stignore_template() -> str:
-    """Read the bundled .stignore template, falling back to an inline copy."""
-    try:
-        return _STIGNORE_TEMPLATE.read_text(encoding="utf-8")
-    except OSError:
-        return _FALLBACK_STIGNORE
-
-
-STIGNORE_CONTENTS = _load_stignore_template()
+# The ignore rules ship as package data and are installed by
+# skcapstone.stignore_layout.install (shared file first, then a 3-line shim), the
+# same call skcapstone.ensure_skeleton makes, so the two entry points cannot drift.
 
 # Reason: Syncthing stores its config in different locations per platform
 if platform.system() == "Windows":
@@ -288,62 +225,39 @@ def _merge_stignore(existing: str, template: str) -> str:
     )
 
 
-def _write_stignore() -> Path:
-    """Install or extend the .stignore in the agent home directory.
+def _write_stignore(migrate: bool = False) -> Path:
+    """Install the shim plus shared ignore layout in the agent home directory.
 
-    Syncthing reads this to know which files must never propagate to other
-    nodes: private key material first, then derived and runtime state that
-    would either corrupt on replication or pin the scanner.
+    Syncthing reads ``.stignore`` to know which files must never propagate to other
+    nodes. The rules live in the synced ``.stignore-shared`` and every node's
+    ``.stignore`` is a shim that includes it (sk-standards SYNCTHING_IGNORE_STANDARD),
+    so a rule added once applies everywhere.
 
-    NON-DESTRUCTIVE. This used to be an unconditional write_text(), which
-    meant one `skcapstone sync setup` silently reverted a node to whatever
-    the bundled template happened to contain. The live rules had drifted
-    ~40 lines ahead of the template, and every one of those lines is an
-    incident someone already paid for: `**/comms/outbox` (the seed outbox
-    flood), the SQLite `-shm`/`-wal` and `agents/*/index.db` rules,
-    `**/memory/chroma`, `**/memory/archive`, and `(?d)**/*.tmp`, whose own
-    comment records the scanner-abort fix it came from.
+    NON-DESTRUCTIVE. This used to be an unconditional write_text(), which meant one
+    `skcapstone sync setup` silently reverted a node to whatever the bundled template
+    held, and the live rules had drifted ~40 lines ahead of it. Each of those lines
+    is an incident someone already paid for. Behaviour now (see
+    :func:`skcapstone.stignore_layout.install`):
 
-    Behaviour now:
-      * no file        -> write the template
-      * file exists    -> back it up, then union in any template patterns
-                          it lacks, preserving every existing line
-      * already covers -> no write at all, so re-running is free
+      * no .stignore    -> write .stignore-shared if absent, then the shim
+      * already a shim  -> write .stignore-shared if absent, touch nothing else
+      * worker allowlist -> left alone
+      * legacy file     -> backed up and reported, never overwritten; with
+                           ``migrate`` rewritten as a shim that keeps its
+                           node-local rules
+
+    Args:
+        migrate: Convert a legacy .stignore into a shim, keeping node-local rules.
 
     Returns:
         Path: The .stignore file path.
     """
-    stignore_path = AGENT_HOME / ".stignore"
-    if not stignore_path.exists():
-        stignore_path.parent.mkdir(parents=True, exist_ok=True)
-        stignore_path.write_text(STIGNORE_CONTENTS, encoding="utf-8")
-        return stignore_path
+    from ..stignore_layout import install
 
-    try:
-        existing = stignore_path.read_text(encoding="utf-8")
-    except OSError:
-        # Unreadable but present: leave it alone. Overwriting rules we
-        # cannot read is exactly the failure this function now prevents.
-        return stignore_path
-
-    merged = _merge_stignore(existing, STIGNORE_CONTENTS)
-    if merged == existing:
-        return stignore_path
-
-    backup = stignore_path.with_name(f".stignore.bak-{_backup_stamp()}")
-    try:
-        backup.write_text(existing, encoding="utf-8")
-    except OSError:
-        return stignore_path  # cannot back up, so do not modify
-    stignore_path.write_text(merged, encoding="utf-8")
-    return stignore_path
-
-
-def _backup_stamp() -> str:
-    """UTC timestamp for backup filenames."""
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    result = install(AGENT_HOME, migrate=migrate)
+    for line in result.messages:
+        logger.info("stignore: %s", line)
+    return AGENT_HOME / ".stignore"
 
 
 def configure_syncthing_folder() -> bool:

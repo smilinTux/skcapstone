@@ -156,6 +156,12 @@ def _step_identity(home_path: Path, name: str, email: str | None) -> tuple[str, 
         for d in skeleton_dirs:
             d.mkdir(parents=True, exist_ok=True)
 
+        # Syncthing ignore layout: .stignore-shared first, then the shim (never
+        # destructive), so the folder never syncs keys or per-host state.
+        from . import _install_default_stignore
+
+        _install_default_stignore(home_path)
+
         manifest = build_agent_manifest(
             name,
             __version__,

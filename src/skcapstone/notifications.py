@@ -107,6 +107,9 @@ def _resolve_sk_alert() -> Optional[str]:
     """
     import shutil as _shutil
 
+    override = os.environ.get("SK_ALERT_BIN", "").strip()
+    if override:
+        return override
     found = _shutil.which("sk-alert")
     if found:
         return found

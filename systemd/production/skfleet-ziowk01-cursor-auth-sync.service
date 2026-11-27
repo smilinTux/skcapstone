@@ -3,4 +3,10 @@ Description=Push the Cursor CLI credential to the ZIOWK01 worker credential slot
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/sync-cursor-auth-ziowk01.sh
+UMask=0077
+Environment=CURSOR_AUTH_DEST_HOST=ZIOWK01
+Environment=CURSOR_AUTH_DEST=.config/cursor/auth.json
+Environment=CURSOR_AUTH_ROLLBACK_DIR=.config/cursor/rollback
+# Exit 2 = the source login expired; the fix is `cursor-agent login` on this
+# host, not a restart. scripts/fleet/sync-cursor-auth.sh in skcapstone.
+ExecStart=%h/.local/bin/sync-cursor-auth.sh

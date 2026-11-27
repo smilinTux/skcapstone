@@ -41,6 +41,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..stignore_layout import read_effective_text
+
 #: Rules whose absence means secret material can be announced to peers.
 #: Missing any of these is an `error`: it is not "this node is mid-install",
 #: it is "this node has nothing stopping it from replicating a private key".
@@ -242,9 +244,10 @@ def check_folder(ruleset: SyncFolderRuleset, root: Path | None = None) -> Stigno
     if not root.is_dir():
         return None
 
-    path = root / ".stignore"
     try:
-        text = path.read_text(encoding="utf-8")
+        # Expanded, so a node whose .stignore is the shim plus .stignore-shared is
+        # judged on the rules Syncthing would actually load, not the 3 shim lines.
+        text, _missing = read_effective_text(root)
     except OSError:
         return StignoreReport(folder_id=ruleset.folder_id, root=str(root), present=False)
     report = check_text(ruleset, text)

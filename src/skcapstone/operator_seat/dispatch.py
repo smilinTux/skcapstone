@@ -8,15 +8,18 @@ authenticates the approver -- CAB votes are provenance-bound, no-self-approval
 is enforced inside the fold, and the AI structurally cannot satisfy a
 human-approval requirement); the action ledger is EVIDENCE and this module's
 QUEUE (an intent in PROPOSED state, bound to an ITIL change, is exactly what
-this dispatcher iterates); the decisions store stays the human inbox, a
-PROJECTION, whose resolution becomes write-through (``resolve_decision``
-below): approving submits a provenance-bound CAB vote on the linked change,
-and it is THAT vote, folded by ITIL, that authorizes. A decisions record with
-no linked change authorizes nothing.
+this dispatcher iterates); the decisions store is a report-only inbox.
 
-Per pass (``run_dispatch_pass``, called from ``loop._run_once`` for the fast/
-auto lane and standalone by ``skoperator honor-pending`` for the slow/human
-lane -- one code path, two speeds):
+ATLAS has exactly two gates (card f8dd9441, Chef: fewest gates): the freeze, and
+one-time signed ratification (standard catalog actions) plus auto-normal. A loop
+intent dispatches only on a standard or auto-normal approval; one whose approval
+would come from a human CAB vote, or that the loop recorded as escalated, is
+refused as report-only. No ATLAS decision can be approved (``resolve_decision``).
+The signed human vote still gates the CMDB apply and the trustee guard, which
+share ``approval_refusal`` and ``cab_approval`` but not this dispatcher.
+
+Per pass (``run_dispatch_pass``, called from ``loop._run_once`` for the auto
+lane and standalone by ``skoperator honor-pending``):
 
 1. Refuse unless the fleet is actuation-ready and not frozen
    (``store.check_actuation_gate``), freeze first.
@@ -44,20 +47,236 @@ convention.
 
 from __future__ import annotations
 
+import fcntl
+import math
+import os
+import re
 import time
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Callable
+from datetime import datetime, timezone
+from typing import Any, Callable, Iterator
+from urllib.parse import quote
 
+from .. import cab_approval
 from ..fleet import store
 from ..fleet.paths import FleetPaths
-from . import action_ledger, decisions, policy, safety
+from . import action_ledger, actuator, decisions, evidence, node_local, policy, safety
+
+#: Prefix of the tag the loop puts on every change it drafts, naming the ONE intent
+#: (app, action, target) that change authorizes.
+BINDING_TAG_PREFIX = "op-bind:"
+
+
+#: How long an intent may sit in AUTHORIZED/EXECUTING before it is treated as stranded by a
+#: crash. A pass has a five minute runtime budget, so twice that is not a live dispatch.
+DEFAULT_EXECUTING_TIMEOUT_SECONDS = 600.0
+
+#: The outcome prefix of an intent the dispatcher will never actuate (card f8dd9441).
+REPORT_ONLY_REFUSAL = "refused: report-only"
+
+
+def report_only_reason(
+    app: Any, action: Any, change_class: str | None = None, *, unresolved_target: bool = False
+) -> str:
+    """Why an ATLAS escalation is report-only, and what (if anything) would automate it.
+
+    The hint follows the proposal's class: a major or emergency change (irreversible, or
+    high risk) can never be automated, so ratifying cannot help and a human handles it by
+    hand; a reversible non-standard change becomes auto-normal once ratified; with no class
+    known the generic hint is given. When the target did not resolve, ratifying cannot fix
+    that, so no ratify hint is given.
+    """
+    head = (
+        f"ATLAS escalations are report-only: no approval can make ATLAS run {action!r} for {app!r}"
+    )
+    ratify = f"`skoperator apps ratify {app} {action}`"
+    if unresolved_target:
+        return (
+            f"{head}. Its target did not resolve, so ratifying cannot help: a human must "
+            "handle it by hand"
+        )
+    if change_class in ("major", "emergency"):
+        return (
+            f"{head}. It is a {change_class} change (irreversible or high risk), so ratifying "
+            "cannot help: a human must handle it by hand"
+        )
+    if change_class == "normal":
+        return (
+            f"{head}. It is reversible but not standard: ratifying it once ({ratify}) lets "
+            "ATLAS run it as auto-normal; otherwise a human handles it"
+        )
+    return (
+        f"{head}. To let ATLAS act on it, ratify it once as a standard action ({ratify}); "
+        "otherwise a human handles it"
+    )
+
+
+_CHANGE_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def change_binding_tag(app: str, action: str, target: str) -> str:
+    """The tag that binds a drafted ITIL change to the (app, action, target) it is for.
+
+    Each part is percent-escaped, so no part can inject the ``|`` separator and two
+    different triples can never produce the same tag; a raw ``|`` in a part is rejected
+    outright (``ValueError``) rather than relied on to be escaped.
+    """
+    parts = (app, action, target)
+    if any("|" in part for part in parts):
+        raise ValueError("an app, action or target containing '|' cannot be bound")
+    return BINDING_TAG_PREFIX + "|".join(quote(part, safe="") for part in parts)
+
 
 _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def _parse_iso(now_iso: str) -> datetime:
     return datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+
+
+def _event_dt(clock: Callable[[], datetime] | None) -> datetime:
+    """The time to stamp a lifecycle event with: the clock AT WRITE TIME, never the pass start.
+
+    Stamping events from the pass-start ``now_iso`` made the second intent of a long pass look
+    as old as the pass the moment it was written, which the stranded sweep then read as a crash.
+    A naive clock falls back to the real one rather than crashing the write.
+    """
+    moment = (clock or (lambda: datetime.now(timezone.utc)))()
+    if moment.tzinfo is None:
+        return datetime.now(timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def _clock_iso(clock: Callable[[], datetime] | None) -> str:
+    """The REAL clock now (or the injected one), as an aware ISO 8601 string."""
+    moment = (clock or (lambda: datetime.now(timezone.utc)))()
+    if moment.tzinfo is None:
+        # Never read a naive clock as local time: leave it naive so evidence.refusal
+        # refuses it ("the clock is not a timezone-aware timestamp").
+        return moment.isoformat()
+    return moment.astimezone(timezone.utc).isoformat()
+
+
+def is_freeze_refusal(exc: BaseException) -> bool:
+    """Whether a failure IS the kill switch refusing, not a fault of the action.
+
+    Every actuation surface refuses with ``fleet is frozen: ...`` (or the actuator
+    gate's bare ``frozen`` reason). A genuine failure that merely COINCIDES with a
+    freeze is not matched, so it still counts against the retry budget.
+    """
+    text = str(exc).strip().lower()
+    return "fleet is frozen" in text or text == f"actuation failed: {store.REASON_FROZEN}"
+
+
+def void_proposed(
+    ledger: action_ledger.ActionLedger,
+    intent_id: str,
+    *,
+    occurred_at: datetime,
+    actor: str,
+    reason: str,
+) -> bool:
+    """Close a PROPOSED intent that will not be actuated, so nothing acts on it later.
+
+    The dispatcher enumerates PROPOSED, ITIL-bound intents; an intent written but not
+    actuated in the pass that wrote it would otherwise sit there until a later pass
+    (or ``skoperator honor-pending``) acted on it, unattended and on old evidence.
+    The void is the existing terminal ESCALATED state reached over the PROPOSED edge,
+    with ``voided`` on its detail. Returns whether anything was closed.
+    """
+    if ledger.current_state(intent_id) is not action_ledger.ActionState.PROPOSED:
+        return False
+    ledger.append(
+        intent_id,
+        action_ledger.ActionState.ESCALATED,
+        occurred_at=occurred_at,
+        actor=actor,
+        detail={"voided": True, "reason": reason, "decision_parked": False},
+    )
+    return True
+
+
+def _proposed_detail(ledger: action_ledger.ActionLedger, intent_id: str) -> dict:
+    for event in ledger.events(intent_id):
+        if event.state is action_ledger.ActionState.PROPOSED:
+            return dict(event.detail)
+    return {}
+
+
+def stored_evidence(ledger: action_ledger.ActionLedger, intent_id: str) -> dict | None:
+    """The structured evidence stamp the loop recorded on the intent's PROPOSED event."""
+    stamp = _proposed_detail(ledger, intent_id).get("evidence")
+    return stamp if isinstance(stamp, dict) else None
+
+
+def stored_lane(ledger: action_ledger.ActionLedger, intent_id: str) -> str | None:
+    """The lane the loop recorded on the PROPOSED event: ``auto`` or ``escalate``.
+
+    None for an intent that predates the field or was written by hand: it cannot be
+    told apart from a pending human decision, so it is never acted on as auto and
+    never voided.
+    """
+    lane = _proposed_detail(ledger, intent_id).get("disposition")
+    return lane if lane in ("auto", "escalate") else None
+
+
+# Card bada5c86: which votes and changes may authorize an actuation lives in
+# ``skcapstone.cab_approval``, shared with the CMDB apply gate and the trustee guard.
+# It verifies the stored signed grant against the pinned approver keys and derives
+# auto approval positively, whatever skcoord release is installed.
+qualifying_human_approval = cab_approval.qualifying_human_approval
+human_approval_times = cab_approval.human_approval_times
+
+
+def _valid_approval_age(value: Any) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value) and 0 < value <= cab_approval.MAX_ALLOWED_APPROVAL_AGE_SECONDS
+    except OverflowError:
+        return False
+
+
+def approval_refusal(times: list[str], clock_iso: str, max_age_s: Any) -> tuple[str, str] | None:
+    """Why a human approval may not be used, as ``(kind, reason)``, or None when usable.
+
+    ``kind`` is ``"invalid"`` (bad configuration, clock or unreadable time: refuse, close
+    nothing), ``"future"`` (dated more than the skew after the clock) or ``"expired"`` (older
+    than the limit). The caller CLOSES the intent and retires its change for both ``"future"``
+    and ``"expired"``: refusing a future-dated vote alone would let it buy time. The newest
+    qualifying vote counts.
+    """
+    if not _valid_approval_age(max_age_s):
+        return "invalid", f"max approval age invalid: {max_age_s!r}"
+    now = evidence.parse_aware(clock_iso)
+    if now is None:
+        return "invalid", "human approval unverifiable: the clock is not timezone-aware"
+    decided = [d for d in (evidence.parse_aware(t) for t in times) if d is not None]
+    if not decided:
+        return "invalid", "human approval time unreadable"
+    newest = max(decided)
+    age = (now - newest).total_seconds()
+    if age < -evidence.MAX_FUTURE_SKEW_SECONDS:
+        return "future", f"human approval is dated in the future: {-age:.0f}s ahead"
+    if age > max_age_s:
+        return "expired", f"human approval expired: decided {age:.0f}s ago, max {max_age_s:g}s"
+    return None
+
+
+def change_bound_to(change: Any, intent: action_ledger.ActionIntent) -> bool:
+    """Whether the change was drafted for exactly this intent's (app, action, target).
+
+    An approval authorizes ONE thing. A change with no binding tag (a legacy or
+    hand-made one, or one a proposal pointed at), or one bound to something else, or
+    with more than one binding tag, authorizes nothing here.
+    """
+    try:
+        expected = change_binding_tag(intent.application, intent.action, intent.target_id)
+    except ValueError:
+        return False
+    tags = [t for t in (change.tags or []) if str(t).startswith(BINDING_TAG_PREFIX)]
+    return tags == [expected]
 
 
 class UnauthorizedDecisionError(ValueError):
@@ -107,19 +326,176 @@ def condition_firing(condition: dict, problem_types: set[str]) -> bool:
     )
 
 
+#: The longest settle window any actuation may ask the postcondition to wait for.
+#: The pass has a five minute runtime budget; this keeps one action well inside it.
+MAX_POSTCONDITION_SETTLE_S = 120
+#: The shortest poll interval honoured (a smaller one is raised to this).
+MIN_POSTCONDITION_POLL_S = 1
+
+
+def _bound_matches(conditions: list, proposal: dict) -> list[dict]:
+    return [
+        item
+        for item in conditions
+        if isinstance(item, dict)
+        and item.get("type") == proposal.get("condition")
+        and (proposal.get("object") is None or item.get("object") == proposal.get("object"))
+    ]
+
+
+def _actuation_timing(result: Any) -> tuple[datetime, int, float] | None:
+    """``(acted_at, attempts, poll_s)`` when the actuation said when it acted, else None.
+
+    The honor envelope nests it under ``actuation``; a direct actuator result carries it
+    at the top. The settle window is bounded by ``MAX_POSTCONDITION_SETTLE_S`` and a bad
+    value means no wait at all (one read), never an unbounded one.
+    """
+    if not isinstance(result, dict):
+        return None
+    body = result.get("actuation") if isinstance(result.get("actuation"), dict) else result
+    acted_at = evidence.parse_aware(body.get("acted_at"))
+    if acted_at is None:
+        return None
+    settle, poll = body.get("settle_s"), body.get("poll_s")
+    numeric = all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+        for v in (settle, poll)
+    )
+    if not numeric or settle <= 0:
+        return acted_at, 1, 0.0
+    poll = max(float(poll), float(MIN_POSTCONDITION_POLL_S))
+    settle = min(float(settle), float(MAX_POSTCONDITION_SETTLE_S))
+    return acted_at, 1 + int(settle // poll), poll
+
+
+def _written_after(raw: Any, acted_at: datetime) -> bool:
+    """True only when a source time is STRICTLY after the action.
+
+    A stamp with sub-second precision is compared exactly. A whole-second stamp (the
+    fleet store's ``updatedAt``) may have been truncated from any instant inside its
+    second, so it only counts when its second is later than the action's second. A
+    missing or unparseable stamp is never fresh.
+    """
+    stamp = evidence.parse_aware(raw)
+    if stamp is None:
+        return False
+    if "." in str(raw).split("T", 1)[-1]:
+        return stamp > acted_at
+    return stamp > acted_at.replace(microsecond=0)
+
+
+def _fresh_verdict(
+    observer: Callable[..., dict],
+    proposal: dict,
+    paths: FleetPaths,
+    now_iso: str,
+    problem_types: set[str],
+    acted_at: datetime,
+) -> tuple[bool, str]:
+    """One read of the owning app, judged ONLY on evidence written at or after the action."""
+    try:
+        payload = observer(paths, now_iso) or {}
+    except Exception as exc:  # noqa: BLE001 - an unreadable probe is never "verified"
+        return False, f"re-observation failed after action: {type(exc).__name__}"
+    matches = _bound_matches(payload.get("conditions", []), proposal)
+    if not matches:
+        return False, "bound condition missing after action"
+    for item in matches:
+        if not _written_after(
+            item.get("source_observed_at", payload.get("source_observed_at")), acted_at
+        ):
+            return False, "no evidence newer than the action yet"
+    if any(condition_firing(item, problem_types) for item in matches):
+        return False, "bound condition still firing after action"
+    return True, "postcondition verified on evidence newer than the action"
+
+
 def verify_postcondition(
     observers: dict[str, Callable[..., dict]],
     proposal: dict,
     paths: FleetPaths,
     now_iso: str,
     problem_types: set[str],
+    *,
+    result: Any = None,
+    sleep: Callable[[float], Any] | None = None,
+    deadline: float | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> tuple[bool, str]:
-    """Re-observe the owning app and require the bound condition to clear."""
+    """Re-observe the owning app and require the bound condition to clear.
+
+    When the actuation reports when it acted (``acted_at``, with a ``settle_s`` /
+    ``poll_s`` window; the fleet restart does, card 21b01d01) the postcondition is
+    judged only on evidence whose source time is strictly after that instant
+    (``_written_after``), re-read every ``poll_s`` seconds for at most ``settle_s`` (capped
+    at ``MAX_POSTCONDITION_SETTLE_S``, and never past the pass ``deadline``, a monotonic
+    instant: polling stops early rather than overrun the pass budget).
+    A store-mediated adapter only reports a restart once its node re-observes, so an
+    immediate read would see the pre-action status and fail every real restart; and the
+    pre-action status, however healthy, never verifies the action. ``sleep`` is
+    injectable for tests.
+
+    An actuation that does not say when it acted (live-probe adapters such as skchat)
+    keeps the single immediate read.
+    """
     app = proposal.get("app")
     observer = observers.get(app)
     if observer is None:
         return False, "owning observer unavailable"
-    conditions = observer(paths, now_iso).get("conditions", [])
+    timing = _actuation_timing(result)
+    if timing is None:
+        conditions = observer(paths, now_iso).get("conditions", [])
+        matches = _bound_matches(conditions, proposal)
+        if not matches:
+            return False, "bound condition missing after action"
+        if any(condition_firing(item, problem_types) for item in matches):
+            return False, "bound condition still firing after action"
+        return True, "postcondition verified"
+    acted_at, attempts, poll = timing
+    sleep = time.sleep if sleep is None else sleep
+    reason = "postcondition not evaluated"
+    waited = 0.0
+    for attempt in range(attempts):
+        if attempt:
+            if deadline is not None and monotonic() + poll >= deadline:
+                return False, f"{reason} (settle cut short by the pass deadline after {waited:g}s)"
+            sleep(poll)
+            waited += poll
+        ok, reason = _fresh_verdict(observer, proposal, paths, now_iso, problem_types, acted_at)
+        if ok:
+            return True, reason
+    return False, f"{reason} (after {waited:g}s settle)"
+
+
+def reobserve(
+    observers: dict[str, Callable[..., dict]],
+    proposal: dict,
+    paths: FleetPaths,
+    now_iso: str,
+    problem_types: set[str],
+    *,
+    clock_iso: str,
+    max_evidence_age_s: float,
+) -> tuple[str, str]:
+    """Re-observe the owning app BEFORE acting. Returns ``(verdict, reason)`` where the
+    verdict is ``"firing"`` (act), ``"cleared"`` (a definite not-firing reading) or
+    ``"indeterminate"`` (do not act, and do not conclude it cleared).
+
+    Only a DEFINITE ``True``/``False`` status counts. ``Unknown`` is not "still
+    firing" (``condition_firing`` treats it as firing so that a dead probe raises an
+    alarm; that is right for alerting and wrong for permission to act). No observer,
+    an observer that raises, no matching condition, an ``Unknown`` one, or a reading
+    with no fresh source time of its own (the re-observation must itself be fresh on
+    the real clock) are all indeterminate.
+    """
+    observer = observers.get(proposal.get("app"))
+    if observer is None:
+        return "indeterminate", "owning observer unavailable"
+    try:
+        payload = observer(paths, now_iso)
+        conditions = payload.get("conditions", [])
+    except Exception as exc:  # noqa: BLE001 - an unreadable probe is never "still firing"
+        return "indeterminate", f"re-observation failed: {type(exc).__name__}"
     matches = [
         item
         for item in conditions
@@ -127,20 +503,34 @@ def verify_postcondition(
         and (proposal.get("object") is None or item.get("object") == proposal.get("object"))
     ]
     if not matches:
-        return False, "bound condition missing after action"
+        return "indeterminate", "bound condition not observed before action"
+    if any(item.get("status") not in ("True", "False") for item in matches):
+        return "indeterminate", "bound condition status Unknown at re-observation"
+    for item in matches:
+        stamp = item.get("source_observed_at", payload.get("source_observed_at"))
+        if evidence.parse_aware(stamp) is None:
+            return "indeterminate", "re-observation carries no usable source time"
+        stale = evidence.refusal(
+            {"evidence": {"source": "re-observation", "observed_at": stamp}},
+            clock_iso,
+            max_evidence_age_s,
+        )
+        if stale is not None:
+            return "indeterminate", f"re-observation not usable: {stale}"
     if any(condition_firing(item, problem_types) for item in matches):
-        return False, "bound condition still firing after action"
-    return True, "postcondition verified"
+        return "firing", "condition still firing"
+    return "cleared", "bound condition no longer firing (re-observed before action)"
 
 
 # ---------------------------------------------------------------------------
-# Decisions write-through: approving a decision submits a provenance-bound
-# CAB vote on the linked ITIL change; it is that vote, folded by ITIL, that
-# authorizes. by="human" dies here -- every caller supplies its own
-# authenticated ``subject`` (capauth.resolve_agent_identity's canonical
-# subject; see ``fleet/store.py::resolved_writer_identity``), never a
-# caller-typed literal.
+# Decisions: acknowledge-only. A rejection acknowledges a report-only record; an
+# approval is refused before any write. The resolver is the caller's authenticated
+# ``subject`` (``fleet/store.py::resolved_writer_identity``), never a typed literal.
 # ---------------------------------------------------------------------------
+
+
+class ReportOnlyDecisionError(UnauthorizedDecisionError):
+    """Approving an ATLAS decision: every ATLAS escalation is report-only (card f8dd9441)."""
 
 
 def resolve_decision(
@@ -152,81 +542,32 @@ def resolve_decision(
     choice: int | None,
     subject: str,
     resolved_iso: str,
-    subject_role: str = "approver",
 ) -> dict:
-    """Resolve a parked decision, write-through to a CAB vote when approving.
+    """Resolve a parked ATLAS decision: reject (acknowledge) only.
 
-    Rejection needs no ITIL involvement (there is nothing to authorize) and
-    resolves the projection directly. Approval REQUIRES the chosen option to
-    carry an ``itil_change_id`` (or ``change_id``): that is the only thing
-    this dispatcher, or any future one, will ever look at to decide whether
-    the corresponding ledger intent may be dispatched. A decision parked
-    without one cannot be write-through approved -- raises
-    ``UnauthorizedDecisionError`` BEFORE any write, so a caller that fails to
-    catch it never silently prints success either.
-
-    Args:
-        decisions_dir: The pending-decision store directory.
-        itil: An ``ITILManager``-shaped object (``submit_cab_vote``).
-        decision_id: The decision to resolve.
-        approve: True to approve, False to reject.
-        choice: Option index for a multi-option decision.
-        subject: The caller's authenticated identity (never a magic string
-            like ``"human"``): recorded as the CAB vote's authenticated
-            voter and as the decision record's ``resolved_by``.
-        resolved_iso: ISO timestamp of resolution.
-        subject_role: The CAB subject role bound to the vote. Must be one
-            ITIL's fold treats as a qualifying human role ("owner" or
-            "approver"); the default matches what a human resolving a
-            decision through this seat is doing.
-
-    Returns:
-        The updated decision record.
+    Approving raises ``ReportOnlyDecisionError`` before any write: ATLAS has no
+    human-approval lane, so an approval would authorize nothing. Ratification
+    (``skoperator apps ratify <app> <action>``) is the path. ``itil`` is unused and kept
+    for the callers' signature.
 
     Raises:
-        UnauthorizedDecisionError: approving a decision whose chosen option
-            has no linked ITIL change.
-        ValueError: unknown decision, already resolved, or an out-of-range
-            choice (same failures ``decisions.resolve`` itself raises).
+        ReportOnlyDecisionError: ``approve`` is True.
+        ValueError: unknown or already-resolved decision (from ``decisions.resolve``).
     """
-    if not approve:
-        return decisions.resolve(
-            decisions_dir,
-            decision_id,
-            approve=False,
-            choice=choice,
-            by=subject,
-            resolved_iso=resolved_iso,
+    if approve:
+        pending = {r["id"]: r for r in decisions.list_pending(decisions_dir)}
+        option = ((pending.get(decision_id) or {}).get("options") or [{}])[0]
+        reason = option.get("report_only_reason") or report_only_reason(
+            option.get("app"), option.get("action"), option.get("change_class")
         )
-
-    pending = {record["id"]: record for record in decisions.list_pending(decisions_dir)}
-    record = pending.get(decision_id)
-    if record is None:
-        raise ValueError(f"unknown or already-resolved decision: {decision_id}")
-    options = record.get("options") or []
-    index = choice if (choice is not None and len(options) > 1) else 0
-    if not options or not 0 <= index < len(options):
-        raise ValueError(f"choice out of range for {len(options)} option(s)")
-    change_id = options[index].get("itil_change_id") or options[index].get("change_id")
-    if not change_id:
-        raise UnauthorizedDecisionError(
-            f"decision {decision_id!r} has no ITIL change linked to option {index}; "
-            "approving it here would authorize nothing (no store on this estate "
-            "can turn a bare decisions-store approval into an actuation) -- "
-            "the proposal must be re-parked with a bound change before it can "
-            "be approved"
+        raise ReportOnlyDecisionError(
+            f"decision {decision_id!r} can never be approved: {reason}; reject it to "
+            "acknowledge it"
         )
-    itil.submit_cab_vote(
-        change_id,
-        agent=subject,
-        decision="approved",
-        subject=subject,
-        subject_role=subject_role,
-    )
     return decisions.resolve(
         decisions_dir,
         decision_id,
-        approve=True,
+        approve=False,
         choice=choice,
         by=subject,
         resolved_iso=resolved_iso,
@@ -260,6 +601,7 @@ def _reconstruct_proposal(intent: action_ledger.ActionIntent) -> dict:
         "action": intent.action,
         "change_id": intent.itil_change_id,
         "itil_change_id": intent.itil_change_id,
+        "catalog_generation": intent.catalog_generation,
     }
     if intent.rollback:
         prop["rollback"] = dict(intent.rollback)
@@ -337,6 +679,398 @@ class DispatchOutcome:
         return {"intent_id": self.intent_id, "outcome": self.outcome, "detail": self.detail}
 
 
+class _LockBusyError(RuntimeError):
+    """The per-change lock is held by a live dispatch (or sweep) on this node."""
+
+
+@contextmanager
+def _change_lock(change_id: str, *, blocking: bool = False) -> Iterator[None]:
+    """An exclusive per-change-id flock in the NODE-LOCAL state directory.
+
+    Held by a dispatch from the moment it commits to a change until it has closed the change
+    out, so a sweep (or a second dispatch) that cannot take it knows the change is live and
+    leaves it alone. It deliberately lives outside the synced fleet tree (an flock orders
+    processes on one kernel only; cross-node safety is the single-actuator-node rule in
+    ``node_local``), in a directory verified private (0700, ours, not a symlink). Raises
+    ``_LockBusyError`` when held and ``blocking`` is False, and ``node_local.UnsafeDirectoryError``
+    when the directory is not private.
+    """
+    if not _CHANGE_ID_RE.fullmatch(change_id):
+        raise ValueError(f"invalid change id for locking: {change_id!r}")
+    directory = node_local.private_chain(node_local.state_dir(), "atlas", "change-locks")
+    fd = os.open(directory / f"{change_id}.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError as exc:
+            raise _LockBusyError(change_id) from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _spend_change(itil: Any, change_id: str, intent_id: str, actor: str) -> str | None:
+    """Take the approval for ONE dispatch: a compare-and-swap, or the reason it was lost.
+
+    The caller holds the per-change lock. Re-read the change (it must still be ``approved``),
+    move it to ``implementing`` with a note naming this intent, and require that the FIRST
+    unconflicted ``approved->implementing`` timeline entry is ours. The re-read matters because
+    the lock only orders writers on this node; the timeline check matters because a conflicted
+    second ``implementing`` event still folds ``implementing``, so the status alone cannot tell
+    the winner from the loser. Returns None when this dispatch owns the approval.
+    """
+    mine = f"dispatch of {intent_id}"
+    try:
+        current = _read_change(itil, change_id)
+        if current is None or current.status.value != "approved":
+            status = current.status.value if current is not None else "missing"
+            return f"the change is no longer approved (status={status}); already taken"
+        taken = itil.update_change(change_id, actor, new_status="implementing", note=mine)
+    except Exception as exc:  # noqa: BLE001 - an approval that cannot be spent is not usable
+        return f"could not take the approval: {exc}"
+    entries = [
+        e
+        for e in (getattr(taken, "timeline", None) or [])
+        if isinstance(e, dict)
+        and e.get("action") in ("status:approved->implementing", "status:scheduled->implementing")
+        and not e.get("conflicted")
+    ]
+    if not entries or entries[0].get("note") != mine:
+        return "the approval was taken by another dispatch"
+    return None
+
+
+def _retire_change(itil: Any, change_id: str, actor: str, note: str) -> None:
+    """Move an approval that will not be used to a terminal state (rejected, then closed),
+    so a later recurrence needs a new proposal (and a new auto approval). Best effort."""
+    for status in ("rejected", "closed"):
+        try:
+            itil.update_change(change_id, actor, new_status=status, note=note[:200])
+        except Exception:  # noqa: BLE001 - the intent is already closed; this is bookkeeping
+            return
+
+
+def _close_intent(
+    ledger: action_ledger.ActionLedger,
+    itil: Any,
+    change: Any,
+    intent_id: str,
+    *,
+    occurred_at: datetime,
+    actor: str,
+    reason: str,
+) -> None:
+    """Close a PROPOSED intent that can never be actuated and retire its change."""
+    void_proposed(ledger, intent_id, occurred_at=occurred_at, actor=actor, reason=reason)
+    _retire_change(itil, change.id, actor, reason)
+
+
+def escalate_stranded(
+    ledger: action_ledger.ActionLedger,
+    itil: Any,
+    *,
+    now_iso: str,
+    clock: Callable[[], datetime] | None = None,
+    actor: str = "dispatcher",
+    decisions_dir: str | None = None,
+    emit: Callable[[str], Any] = lambda _m: None,
+    executing_timeout_s: float = DEFAULT_EXECUTING_TIMEOUT_SECONDS,
+) -> list[DispatchOutcome]:
+    """Escalate intents a crash stranded in AUTHORIZED or EXECUTING. NEVER re-runs them.
+
+    The actuator may or may not have run, so the only safe move is a human: the intent goes
+    FAILED then ESCALATED, its change is closed out (``failed`` if it was already taken,
+    retired if it was still only approved), a decision is parked for a human and an alert is
+    emitted. Two guards keep it from touching a LIVE dispatch: lifecycle events are stamped
+    from the clock at write time, so an intent is only "old" if it has really sat that long;
+    and a live dispatch holds its per-change lock from commit to close-out, so a change whose
+    lock cannot be taken (non-blocking) is skipped. An intent with no change id (the inline
+    lane) has no lock to test and relies on the age alone.
+    """
+    moment = (clock or (lambda: datetime.now(timezone.utc)))()
+    if moment.tzinfo is None:
+        raise ValueError("clock must be timezone-aware")
+    out: list[DispatchOutcome] = []
+    for state in (action_ledger.ActionState.EXECUTING, action_ledger.ActionState.AUTHORIZED):
+        for intent_id in ledger.list_intents(state=state):
+            events = ledger.events(intent_id)
+            if not events or (moment - events[-1].occurred_at).total_seconds() < (
+                executing_timeout_s
+            ):
+                continue
+            intent = ledger.read_intent(intent_id)
+            with ExitStack() as stack:
+                if intent.itil_change_id:
+                    try:
+                        stack.enter_context(_change_lock(intent.itil_change_id))
+                    except _LockBusyError:
+                        continue  # a live dispatch owns it
+                    except (node_local.UnsafeDirectoryError, ValueError) as exc:
+                        emit(f"dispatch: cannot test the lock for {intent_id}: {exc}")
+                        continue
+                    if ledger.current_state(intent_id) is not state:
+                        continue  # it moved on while we were deciding
+                reason = (
+                    f"stranded in {state.value} (a dispatcher crashed or was killed mid-run); "
+                    "the actuator may or may not have run, so it is not re-run"
+                )
+                at = _event_dt(clock)
+                if state is action_ledger.ActionState.AUTHORIZED:
+                    ledger.append(
+                        intent_id, action_ledger.ActionState.EXECUTING, occurred_at=at, actor=actor
+                    )
+                ledger.append(
+                    intent_id,
+                    action_ledger.ActionState.FAILED,
+                    occurred_at=at,
+                    actor=actor,
+                    detail={"reason": reason, "stranded": True},
+                )
+                ledger.append(
+                    intent_id,
+                    action_ledger.ActionState.ESCALATED,
+                    occurred_at=at,
+                    actor=actor,
+                    detail={"decision_parked": decisions_dir is not None, "stranded": True},
+                )
+                if intent.itil_change_id:
+                    current = _read_change(itil, intent.itil_change_id)
+                    if current is not None and current.status.value == "implementing":
+                        _close_out_change(itil, current.id, actor, "failed", reason, emit)
+                    elif current is not None and current.status.value in ("approved", "scheduled"):
+                        _retire_change(itil, current.id, actor, reason)
+                if decisions_dir is not None:
+                    decisions.park(
+                        decisions_dir,
+                        [
+                            {
+                                **_reconstruct_proposal(intent),
+                                "rationale": reason,
+                                "report_only": True,
+                            }
+                        ],
+                        decision_id=f"stranded-{intent_id[3:15]}",
+                        created_iso=now_iso,
+                    )
+                emit(f"dispatch: ALERT {intent_id} {reason}")
+                out.append(DispatchOutcome(intent_id, f"escalated: {reason}"))
+    return out
+
+
+def close_episode(
+    ledger: action_ledger.ActionLedger,
+    itil: Any,
+    intent_id: str,
+    *,
+    clock: Callable[[], datetime] | None = None,
+    actor: str = "dispatcher",
+    reason: str,
+) -> bool:
+    """Close an open intent whose EPISODE is over and retire its change.
+
+    Used by the loop when it observes the bound condition definitely clear, so a vote (or an
+    approval) from one episode can never ride the next. Skips an intent whose change is locked
+    by a live dispatch. Returns whether anything was closed.
+    """
+    intent = ledger.read_intent(intent_id)
+    with ExitStack() as stack:
+        if intent.itil_change_id:
+            try:
+                stack.enter_context(_change_lock(intent.itil_change_id))
+            except (_LockBusyError, node_local.UnsafeDirectoryError, ValueError):
+                return False
+        if not void_proposed(
+            ledger, intent_id, occurred_at=_event_dt(clock), actor=actor, reason=reason
+        ):
+            return False
+        if intent.itil_change_id:
+            _retire_change(itil, intent.itil_change_id, actor, reason)
+        return True
+
+
+def void_stale_auto_intents(
+    ledger: action_ledger.ActionLedger,
+    itil: Any,
+    *,
+    clock: Callable[[], datetime] | None = None,
+    actor: str = "dispatcher",
+    emit: Callable[[str], Any] = lambda _m: None,
+    max_age_s: float = DEFAULT_EXECUTING_TIMEOUT_SECONDS,
+) -> list[str]:
+    """Void auto-lane PROPOSED intents older than one pass: leftovers of a killed loop.
+
+    The loop writes an auto-lane intent and dispatches it within the same pass, or voids it
+    (``loop``). If the process was killed in between, the intent is left PROPOSED with no one
+    waiting on it, and a later pass could act on it unattended. An auto-lane intent older than
+    a pass (twice the runtime budget) is closed, and its change retired, before anything else
+    runs. Escalate-lane intents are left to the loop, which closes them once their condition
+    clears.
+    """
+    moment = (clock or (lambda: datetime.now(timezone.utc)))()
+    if moment.tzinfo is None:
+        raise ValueError("clock must be timezone-aware")
+    closed: list[str] = []
+    for intent_id in ledger.list_intents(state=action_ledger.ActionState.PROPOSED):
+        events = ledger.events(intent_id)
+        if not events or (moment - events[-1].occurred_at).total_seconds() < max_age_s:
+            continue
+        if stored_lane(ledger, intent_id) != "auto":
+            continue
+        intent = ledger.read_intent(intent_id)
+        reason = "auto-lane intent older than one pass (left by a killed loop); voided unattended"
+        with ExitStack() as stack:
+            if intent.itil_change_id:
+                try:
+                    stack.enter_context(_change_lock(intent.itil_change_id))
+                except _LockBusyError:
+                    continue
+                except (node_local.UnsafeDirectoryError, ValueError):
+                    continue
+            if void_proposed(
+                ledger, intent_id, occurred_at=_event_dt(clock), actor=actor, reason=reason
+            ):
+                if intent.itil_change_id:
+                    _retire_change(itil, intent.itil_change_id, actor, reason)
+                emit(f"dispatch: voided stale auto-lane intent {intent_id}")
+                closed.append(intent_id)
+    return closed
+
+
+def _close_out_change(
+    itil: Any, change_id: str, actor: str, status: str, note: str, emit: Callable[[str], Any]
+) -> None:
+    """Move a spent change on (deployed or failed). Best effort: the change already left
+    ``approved`` when it was taken, so it cannot be reused even if this write fails."""
+    try:
+        itil.update_change(change_id, actor, new_status=status, note=note)
+    except Exception as exc:  # noqa: BLE001 - the spent change is not reusable regardless
+        emit(f"dispatch: could not mark change {change_id} {status}: {exc}")
+
+
+def _preaction_refusal(
+    paths: FleetPaths,
+    ledger: action_ledger.ActionLedger,
+    itil: Any,
+    intent: action_ledger.ActionIntent,
+    change: Any,
+    prop: dict,
+    *,
+    stale_reason: str | None,
+    adapters: dict[str, Callable[..., dict]],
+    problem_types: set[str],
+    now_iso: str,
+    event_at: datetime,
+    actor: str,
+    clock: Callable[[], datetime] | None,
+    max_evidence_age_s: float,
+    target_known: Callable[[dict], bool] | None,
+    action_allowed: Callable[[dict], bool] | None,
+    execution_state: safety.ExecutionState | None,
+) -> DispatchOutcome | None:
+    """Everything that must hold before AUTHORIZED, or the refusal to return.
+
+    Nothing is written to the ledger for a refusal except the void of an auto-lane
+    intent that can never become actionable (stale stored evidence, a definitely
+    cleared condition). In particular a refusal never appends AUTHORIZED: nothing was
+    authorized. The order matters: what the change IS (bound to this intent, who
+    approved it, which lane the loop recorded) is settled before any other judgement,
+    so a stale catalog can never close an intent that has no human approval behind it.
+    """
+    intent_id = intent.intent_id
+    if not change_bound_to(change, intent):
+        return DispatchOutcome(
+            intent_id,
+            "refused: the ITIL change is not bound to this intent (an approval authorizes "
+            "one app, action and target)",
+        )
+    lane = stored_lane(ledger, intent_id)
+    # Card f8dd9441: ATLAS never actuates on a human CAB vote. An intent the loop recorded
+    # as escalated, or whose change carries a human approval, is report-only: refused before
+    # anything is spent, and left PROPOSED (the loop closes it once its condition clears).
+    if lane == "escalate" or human_approval_times(itil, change):
+        return DispatchOutcome(
+            intent_id,
+            f"{REPORT_ONLY_REFUSAL}: " f"{report_only_reason(intent.application, intent.action)}",
+        )
+    # Card bada5c86: auto approval is derived positively (standard, or the auto-normal
+    # shape), never as "no human vote" on top of the fold's approved status.
+    try:
+        votes = cab_approval.current_votes(itil, change.id)
+    except Exception:  # noqa: BLE001 - unreadable votes are no approval
+        votes = None
+    if votes is None or not cab_approval.auto_approved(change, votes):
+        return DispatchOutcome(
+            intent_id,
+            "pending: no qualifying approval (not a standard or auto-normal change); "
+            "left PROPOSED",
+        )
+    if lane != "auto":
+        return DispatchOutcome(
+            intent_id,
+            "refused: no recorded auto lane (an intent written by hand or by an older loop "
+            "is never actuated as auto)",
+        )
+    if stale_reason is not None:
+        return DispatchOutcome(intent_id, f"refused: {stale_reason}")
+    if target_known is not None and not target_known(prop):
+        return DispatchOutcome(intent_id, "refused: target not resolvable at dispatch")
+    if action_allowed is not None and not action_allowed(prop):
+        return DispatchOutcome(intent_id, "refused: action not allowed for this app at dispatch")
+    clock_iso = _clock_iso(clock)
+    stale = evidence.refusal(
+        {"evidence": stored_evidence(ledger, intent_id)}, clock_iso, max_evidence_age_s
+    )
+    if stale is not None:
+        _close_intent(
+            ledger,
+            itil,
+            change,
+            intent_id,
+            occurred_at=_event_dt(clock),
+            actor=actor,
+            reason=stale,
+        )
+        return DispatchOutcome(intent_id, f"refused: {stale}")
+    if execution_state is not None:
+        # Cooldown and an open circuit are SUPPRESSION: nothing is attempted, so it is
+        # not a failure, not recorded against the breaker, and never rolled back. The
+        # intent simply stays PROPOSED (the loop voids it if it is an auto-lane one).
+        eligible, reason = execution_state.eligibility(
+            safety.action_fingerprint(prop), time.time()
+        )
+        if not eligible:
+            return DispatchOutcome(intent_id, f"refused: execution suppressed: {reason}")
+    verdict, why = reobserve(
+        adapters,
+        prop,
+        paths,
+        now_iso,
+        problem_types,
+        clock_iso=clock_iso,
+        max_evidence_age_s=max_evidence_age_s,
+    )
+    if verdict == "firing":
+        return None
+    if verdict == "cleared":
+        # The episode this intent was for is over. Close the intent and retire the change:
+        # a recurrence is a new episode and needs a new proposal.
+        reason = f"condition cleared before dispatch ({why})"
+        _close_intent(
+            ledger,
+            itil,
+            change,
+            intent_id,
+            occurred_at=_event_dt(clock),
+            actor=actor,
+            reason=reason,
+        )
+        return DispatchOutcome(intent_id, f"refused: {reason}")
+    return DispatchOutcome(intent_id, f"refused: {why}")
+
+
 def dispatch_intent(
     paths: FleetPaths,
     ledger: action_ledger.ActionLedger,
@@ -352,25 +1086,51 @@ def dispatch_intent(
     now_iso: str,
     actor: str = "dispatcher",
     emit: Callable[[str], Any] = lambda _m: None,
+    clock: Callable[[], datetime] | None = None,
+    max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
+    target_known: Callable[[dict], bool] | None = None,
+    action_allowed: Callable[[dict], bool] | None = None,
+    postcondition_sleep: Callable[[float], Any] | None = None,
+    deadline: float | None = None,
 ) -> DispatchOutcome:
     """Dispatch one PROPOSED intent: refuse, verify, authorize, actuate, verify.
+
+    Before anything is authorized the dispatcher checks, for ANY intent however it
+    was left, that acting is still justified:
+
+    * it re-observes the owning app and requires the bound condition to be DEFINITELY
+      firing now (``reobserve``; Unknown is not firing, and the reading must itself
+      be fresh);
+    * it re-checks the target (``target_known``) and the ratified action binding
+      (``action_allowed``) when the caller supplies them, because the planner's
+      verdict at proposal time is not a permission that lasts;
+    * the change must be bound to THIS intent (``change_bound_to``: app, action and
+      target), and is used up by the run it authorizes. Taking it is a compare-and-swap
+      (``_spend_change``) under an exclusive per-change lock on this host: the change is
+      re-read, moved to ``implementing`` with a note naming this intent, and this dispatch
+      must be the FIRST unconflicted ``approved->implementing`` entry on its timeline, or
+      nothing is attempted. It then goes ``deployed`` or ``failed``;
+    * only a standard or auto-normal approval (``cab_approval.auto_approved``) on an
+      intent the loop recorded in the AUTO lane dispatches. An intent recorded as
+      ESCALATED, or whose change carries a human CAB vote, is refused as report-only
+      (``REPORT_ONLY_REFUSAL``, card f8dd9441) before anything is spent, and left PROPOSED;
+      one with no recorded lane is refused and left alone;
+    * the intent must carry fresh evidence stored on its PROPOSED event, against the REAL
+      clock. Stored evidence only ages, so an intent that fails this, or whose condition
+      definitely cleared, is closed rather than retried forever;
+    * cooldown and an open circuit are suppression, not failure: a refusal before
+      AUTHORIZED with nothing recorded and nothing rolled back.
 
     Safe to call on an intent that turns out not to be ready: returns a
     ``"pending: ..."`` outcome and appends nothing when the intent is not
     currently PROPOSED, carries no ``itil_change_id``, or its change has not
     yet folded to approved -- an unapproved change is simply left alone for a
-    later pass, exactly the "never actuates" the negative test requires,
-    without manufacturing a false escalation for the ordinary case of "still
-    waiting on a human".
+    later pass, exactly the "never actuates" the negative test requires.
 
-    A STALE ``catalog_generation`` or a HARDENED classification is different:
-    the fold really did approve this change, so AUTHORIZED/EXECUTING are
-    appended (the ledger's lifecycle state machine only reaches ESCALATED via
-    FAILED, and the design deliberately adds no new transition -- section
-    3.4), but the pre-flight recheck refuses BEFORE ``apply_fn`` is ever
-    called, so no rollback is attempted for an actuation that never
-    happened, and the pass lands on FAILED -> ESCALATED with the reason on
-    both events' detail.
+    A STALE ``catalog_generation`` or a HARDENED classification refuses too, AFTER the
+    change, approval and lane checks, and leaves the intent PROPOSED with no AUTHORIZED
+    written: nothing was authorized. A proposal under the new catalog is
+    a new intent (``catalog_generation`` is part of the identity).
     """
     intent = ledger.read_intent(intent_id)
     current = ledger.current_state(intent_id)
@@ -383,6 +1143,10 @@ def dispatch_intent(
     if not gate.allowed:
         emit(f"dispatch: refused for {intent_id}, {gate.reason}")
         return DispatchOutcome(intent_id, f"refused: {gate.reason}")
+    not_actuator = node_local.actuator_refusal()
+    if not_actuator is not None:
+        emit(f"dispatch: refused for {intent_id}, {not_actuator}")
+        return DispatchOutcome(intent_id, f"refused: {not_actuator}")
 
     change = _read_change(itil, intent.itil_change_id)
     if change is None:
@@ -390,158 +1154,229 @@ def dispatch_intent(
     if change.status.value != "approved":
         return DispatchOutcome(intent_id, f"pending: ITIL change status={change.status.value}")
 
-    event_at = _parse_iso(now_iso)
-    recheck = _reclassify(paths, intent)
-    stale = recheck["generation_known"] and not recheck["generation_matches"]
-    hardened = (
-        change.change_type.value == "standard"
-        and recheck["classification"]["change_class"] != "standard"
-    )
-    stale_reason: str | None = None
-    if stale:
-        stale_reason = (
-            "stale catalog_generation: proposed against "
-            f"{intent.catalog_generation!r}, current is {recheck.get('current_generation')!r}"
-        )
-    elif hardened:
-        stale_reason = (
-            "classification hardened since proposal: "
-            f"{intent.action!r} is no longer a ratified standard action"
-        )
-
-    prop = _reconstruct_proposal(intent)
-    classification = recheck["classification"]
-
-    # AUTHORIZED/EXECUTING are appended for BOTH outcomes below: the ledger's
-    # lifecycle state machine (action_ledger.py's _TRANSITIONS, deliberately
-    # untouched -- section 3.4, "the design is a consumer, three refusals,
-    # and a demotion") only reaches ESCALATED via FAILED, and FAILED is only
-    # reachable from EXECUTING. AUTHORIZED genuinely did happen here: the
-    # fold's own vote really did approve this change; what a stale/hardened
-    # recheck refuses is the ACTUATION step, which the try block below never
-    # lets run for that case (raises before ever calling apply_fn).
-    ledger.append(
-        intent_id,
-        action_ledger.ActionState.AUTHORIZED,
-        occurred_at=event_at,
-        actor=actor,
-        detail={
-            "itil_change_id": change.id,
-            "approval_provenance": _approval_provenance(change),
-            "reclassification": classification,
-            **({"stale_reason": stale_reason} if stale_reason else {}),
-        },
-    )
-    ledger.append(
-        intent_id, action_ledger.ActionState.EXECUTING, occurred_at=event_at, actor=actor
-    )
-
-    fingerprint = safety.action_fingerprint(prop)
-    result: Any = None
+    # Commit to this change: take its per-change lock (non-blocking) and hold it through
+    # close-out. A live dispatch is therefore visible to the stranded sweep and to a second
+    # dispatch, which both back off instead of racing it.
+    stack = ExitStack()
     try:
-        if stale_reason is not None:
-            # Refuse before ever calling apply_fn -- never attempted, so the
-            # except block below must not attempt a rollback for it either
-            # (see the `isinstance(exc, _PreflightRefusalError)` guard).
-            raise _PreflightRefusalError(stale_reason)
-        if execution_state is not None:
-            eligible, reason = execution_state.eligibility(fingerprint, time.time())
-            if not eligible:
-                raise RuntimeError(f"execution suppressed: {reason}")
-        result = apply_fn(prop, classification)
-        performed = result.get("performed") if isinstance(result, dict) else None
-        if isinstance(result, dict) and "actuation" in result:
-            performed = (result.get("actuation") or {}).get("performed")
-        if performed is not True:
-            reason = (
-                result.get("reason", "actuator omitted performed=True proof")
-                if isinstance(result, dict)
-                else "invalid actuator response"
+        stack.enter_context(_change_lock(change.id))
+    except _LockBusyError:
+        return DispatchOutcome(
+            intent_id, "pending: the change is being dispatched by another process"
+        )
+    except node_local.UnsafeDirectoryError as exc:
+        return DispatchOutcome(intent_id, f"refused: {exc}")
+    except OSError as exc:
+        emit(f"dispatch: error taking the change lock for {intent_id}: {exc}")
+        return DispatchOutcome(intent_id, f"error: could not take the change lock: {exc}")
+    with stack:
+        event_at = _parse_iso(now_iso)
+        prop = _reconstruct_proposal(intent)
+        recheck = _reclassify(paths, intent)
+        stale = recheck["generation_known"] and not recheck["generation_matches"]
+        hardened = (
+            change.change_type.value == "standard"
+            and recheck["classification"]["change_class"] != "standard"
+        )
+        stale_reason: str | None = None
+        if stale:
+            stale_reason = (
+                "stale catalog_generation: proposed against "
+                f"{intent.catalog_generation!r}, current is {recheck.get('current_generation')!r}"
             )
-            raise RuntimeError(str(reason))
-        verified, reason = verify_postcondition(adapters, prop, paths, now_iso, problem_types)
-        if not verified:
-            raise RuntimeError(reason)
-        if execution_state is not None:
-            execution_state.record(fingerprint, time.time(), success=True)
-        auto_change_id = result.get("change_id") if isinstance(result, dict) else None
-        ledger.append(
-            intent_id,
-            action_ledger.ActionState.VERIFIED,
-            occurred_at=_parse_iso(now_iso),
+        elif hardened:
+            stale_reason = (
+                "classification hardened since proposal: "
+                f"{intent.action!r} is no longer a ratified standard action"
+            )
+
+        refusal = _preaction_refusal(
+            paths,
+            ledger,
+            itil,
+            intent,
+            change,
+            prop,
+            stale_reason=stale_reason,
+            adapters=adapters,
+            problem_types=problem_types,
+            now_iso=now_iso,
+            event_at=event_at,
             actor=actor,
-            detail={"itil_change_id": auto_change_id} if auto_change_id else {},
+            clock=clock,
+            max_evidence_age_s=max_evidence_age_s,
+            target_known=target_known,
+            action_allowed=action_allowed,
+            execution_state=execution_state,
         )
-        emit(f"dispatch: verified {intent_id}")
-        return DispatchOutcome(intent_id, "verified", {"result": result})
-    except Exception as exc:  # noqa: BLE001 - contain and record, never crash the pass
-        # A preflight refusal (stale/hardened) never called apply_fn: it must
-        # never count against the execution-state circuit breaker (nothing
-        # was actually attempted) and must never trigger a rollback (there is
-        # nothing to roll back -- rollback_fn reverses a real actuation).
-        preflight = isinstance(exc, _PreflightRefusalError)
-        if execution_state is not None and not preflight:
-            try:
-                execution_state.record(fingerprint, time.time(), success=False, reason=str(exc))
-            except Exception as state_exc:  # noqa: BLE001 - see loop.py's identical rationale
-                exc = RuntimeError(f"{exc}; state persistence failed: {state_exc}")
-        rollback_result: Any = None
-        rollback_error: Exception | None = None
-        if not preflight and rollback_fn is not None and prop.get("rollback"):
-            try:
-                rollback_result = rollback_fn(prop, classification, result)
-                rollback_performed = (
-                    rollback_result.get("performed") if isinstance(rollback_result, dict) else None
-                )
-                if rollback_performed is not True:
-                    raise RuntimeError("rollback omitted performed=True proof")
-            except Exception as rb_exc:  # noqa: BLE001 - contain rollback failure
-                rollback_error = rb_exc
-        auto_change_id = getattr(exc, "change_id", None)
-        if auto_change_id is None and isinstance(result, dict):
-            auto_change_id = result.get("change_id")
-        fail_detail = {"reason": str(exc)}
-        if auto_change_id:
-            fail_detail["itil_change_id"] = auto_change_id
-        if preflight:
-            fail_detail["preflight_refusal"] = True
-        ledger.append(
-            intent_id,
-            action_ledger.ActionState.FAILED,
-            occurred_at=_parse_iso(now_iso),
-            actor=actor,
-            detail=fail_detail,
-        )
-        if rollback_result is not None and rollback_error is None:
+        if refusal is not None:
+            emit(f"dispatch: {refusal.outcome} ({intent_id})")
+            return refusal
+
+        classification = recheck["classification"]
+
+        # Every refusal has been taken by now: what follows is a real authorization. A ledger
+        # error here (an invalid transition, an unreadable stream) is this intent's problem, not
+        # the pass's: record it and let the caller carry on with the rest.
+        try:
             ledger.append(
                 intent_id,
-                action_ledger.ActionState.ROLLED_BACK,
-                occurred_at=_parse_iso(now_iso),
-                actor=actor,
-                detail={"result": rollback_result},
-            )
-            outcome = f"failed then rolled back: {exc}"
-        else:
-            ledger.append(
-                intent_id,
-                action_ledger.ActionState.ESCALATED,
-                occurred_at=_parse_iso(now_iso),
+                action_ledger.ActionState.AUTHORIZED,
+                occurred_at=_event_dt(clock),
                 actor=actor,
                 detail={
-                    "decision_parked": decisions_dir is not None,
-                    "rollback_error": str(rollback_error) if rollback_error else None,
+                    "itil_change_id": change.id,
+                    "approval_provenance": _approval_provenance(change),
+                    "reclassification": classification,
                 },
             )
-            if decisions_dir is not None:
-                decisions.park(
-                    decisions_dir,
-                    [{**prop, "rationale": str(exc)}],
-                    decision_id=f"failed-{intent_id[3:15]}",
-                    created_iso=now_iso,
+            ledger.append(
+                intent_id,
+                action_ledger.ActionState.EXECUTING,
+                occurred_at=_event_dt(clock),
+                actor=actor,
+            )
+        except Exception as exc:  # noqa: BLE001 - contained per intent
+            emit(f"dispatch: error recording the authorization of {intent_id}: {exc}")
+            return DispatchOutcome(intent_id, f"error: could not record the authorization: {exc}")
+
+        fingerprint = safety.action_fingerprint(prop)
+        result: Any = None
+        change_taken = False
+        try:
+            # Use the approval up BEFORE the actuator runs, as a compare-and-swap. If this
+            # dispatch does not own it, nothing is attempted.
+            lost = _spend_change(itil, change.id, intent_id, actor)
+            if lost is not None:
+                raise _PreflightRefusalError(lost)
+            change_taken = True
+            result = apply_fn(prop, classification)
+            performed = result.get("performed") if isinstance(result, dict) else None
+            if isinstance(result, dict) and "actuation" in result:
+                performed = (result.get("actuation") or {}).get("performed")
+            if performed is not True:
+                reason = (
+                    result.get("reason", "actuator omitted performed=True proof")
+                    if isinstance(result, dict)
+                    else "invalid actuator response"
                 )
-            outcome = f"escalated: {exc}" if preflight else f"failed: {exc}"
-        emit(f"dispatch: {outcome} ({intent_id})")
-        return DispatchOutcome(intent_id, outcome)
+                raise RuntimeError(str(reason))
+            verified, reason = verify_postcondition(
+                adapters,
+                prop,
+                paths,
+                now_iso,
+                problem_types,
+                result=result,
+                sleep=postcondition_sleep,
+                deadline=deadline,
+            )
+            if not verified:
+                raise RuntimeError(reason)
+        except Exception as exc:  # noqa: BLE001 - contain and record, never crash the pass
+            # A preflight refusal (stale/hardened) never called apply_fn: it must
+            # never count against the execution-state circuit breaker (nothing
+            # was actually attempted) and must never trigger a rollback (there is
+            # nothing to roll back -- rollback_fn reverses a real actuation).
+            # actuator.NotAttemptedError is the honor path refusing an unresolvable
+            # target (placed on another node, no unit mapping) before anything ran.
+            preflight = isinstance(exc, (_PreflightRefusalError, actuator.NotAttemptedError))
+            if change_taken:
+                _close_out_change(itil, change.id, actor, "failed", str(exc)[:200], emit)
+            # The kill switch REFUSING is not a fault of the action and must not feed the
+            # circuit breaker. A genuine failure that merely coincides with a freeze is
+            # still a failure and still counts.
+            if execution_state is not None and not preflight and not is_freeze_refusal(exc):
+                try:
+                    execution_state.record(
+                        fingerprint, time.time(), success=False, reason=str(exc)
+                    )
+                except Exception as state_exc:  # noqa: BLE001 - see loop.py's identical rationale
+                    exc = RuntimeError(f"{exc}; state persistence failed: {state_exc}")
+            rollback_result: Any = None
+            rollback_error: Exception | None = None
+            if not preflight and rollback_fn is not None and prop.get("rollback"):
+                try:
+                    rollback_result = rollback_fn(prop, classification, result)
+                    rollback_performed = (
+                        rollback_result.get("performed")
+                        if isinstance(rollback_result, dict)
+                        else None
+                    )
+                    if rollback_performed is not True:
+                        raise RuntimeError("rollback omitted performed=True proof")
+                except Exception as rb_exc:  # noqa: BLE001 - contain rollback failure
+                    rollback_error = rb_exc
+            auto_change_id = getattr(exc, "change_id", None)
+            if auto_change_id is None and isinstance(result, dict):
+                auto_change_id = result.get("change_id")
+            fail_detail = {"reason": str(exc)}
+            if auto_change_id:
+                fail_detail["itil_change_id"] = auto_change_id
+            if preflight:
+                fail_detail["preflight_refusal"] = True
+            ledger.append(
+                intent_id,
+                action_ledger.ActionState.FAILED,
+                occurred_at=_event_dt(clock),
+                actor=actor,
+                detail=fail_detail,
+            )
+            if rollback_result is not None and rollback_error is None:
+                ledger.append(
+                    intent_id,
+                    action_ledger.ActionState.ROLLED_BACK,
+                    occurred_at=_event_dt(clock),
+                    actor=actor,
+                    detail={"result": rollback_result},
+                )
+                outcome = f"failed then rolled back: {exc}"
+            else:
+                ledger.append(
+                    intent_id,
+                    action_ledger.ActionState.ESCALATED,
+                    occurred_at=_event_dt(clock),
+                    actor=actor,
+                    detail={
+                        "decision_parked": decisions_dir is not None,
+                        "rollback_error": str(rollback_error) if rollback_error else None,
+                    },
+                )
+                if decisions_dir is not None:
+                    decisions.park(
+                        decisions_dir,
+                        [{**prop, "rationale": str(exc)}],
+                        decision_id=f"failed-{intent_id[3:15]}",
+                        created_iso=now_iso,
+                    )
+                outcome = f"escalated: {exc}" if preflight else f"failed: {exc}"
+            emit(f"dispatch: {outcome} ({intent_id})")
+            return DispatchOutcome(intent_id, outcome)
+
+        # The action ran AND its postcondition verified. From here on nothing is rolled back and
+        # nothing is treated as a failed action: a bookkeeping error (the ledger, the ITIL record)
+        # is recorded and alerted, because undoing a fix that worked would be worse than the error.
+        try:
+            if execution_state is not None:
+                execution_state.record(fingerprint, time.time(), success=True)
+            _close_out_change(itil, change.id, actor, "deployed", f"{intent_id} verified", emit)
+            auto_change_id = result.get("change_id") if isinstance(result, dict) else None
+            ledger.append(
+                intent_id,
+                action_ledger.ActionState.VERIFIED,
+                occurred_at=_event_dt(clock),
+                actor=actor,
+                detail={"itil_change_id": auto_change_id} if auto_change_id else {},
+            )
+        except Exception as exc:  # noqa: BLE001 - alert, never roll back a fix that worked
+            message = (
+                f"the action ran and verified but could not be recorded: {exc}; it is NOT rolled "
+                "back, a human must reconcile the ledger"
+            )
+            emit(f"dispatch: ALERT {intent_id} {message}")
+            return DispatchOutcome(intent_id, f"error: {message}", {"result": result})
+        emit(f"dispatch: verified {intent_id}")
+        return DispatchOutcome(intent_id, "verified", {"result": result})
 
 
 def run_dispatch_pass(
@@ -558,6 +1393,11 @@ def run_dispatch_pass(
     now_iso: str,
     actor: str = "dispatcher",
     emit: Callable[[str], Any] = lambda _m: None,
+    clock: Callable[[], datetime] | None = None,
+    max_evidence_age_s: float = evidence.DEFAULT_MAX_AGE_SECONDS,
+    target_known: Callable[[dict], bool] | None = None,
+    action_allowed: Callable[[dict], bool] | None = None,
+    executing_timeout_s: float = DEFAULT_EXECUTING_TIMEOUT_SECONDS,
 ) -> list[DispatchOutcome]:
     """Enumerate every PROPOSED, ITIL-bound ledger intent and dispatch each.
 
@@ -570,28 +1410,112 @@ def run_dispatch_pass(
     if not gate.allowed:
         emit(f"dispatch: pass refused, {gate.reason}")
         return []
-    outcomes = []
-    for intent_id in ledger.list_intents(state=action_ledger.ActionState.PROPOSED):
-        intent = ledger.read_intent(intent_id)
-        if not intent.itil_change_id:
-            continue  # invisible to the dispatcher forever, by design
-        outcomes.append(
-            dispatch_intent(
-                paths,
+    not_actuator = node_local.actuator_refusal()
+    if not_actuator is not None:
+        emit(f"dispatch: pass refused, {not_actuator}")
+        return []
+
+    def body() -> list[DispatchOutcome]:
+        return _dispatch_pass_body(
+            paths,
+            ledger,
+            itil,
+            adapters=adapters,
+            problem_types=problem_types,
+            apply_fn=apply_fn,
+            rollback_fn=rollback_fn,
+            execution_state=execution_state,
+            decisions_dir=decisions_dir,
+            now_iso=now_iso,
+            actor=actor,
+            emit=emit,
+            clock=clock,
+            max_evidence_age_s=max_evidence_age_s,
+            target_known=target_known,
+            action_allowed=action_allowed,
+            executing_timeout_s=executing_timeout_s,
+        )
+
+    # Single-flight, shared with ``loop.run_once``: a dispatch pass (``skoperator
+    # honor-pending``) must not overlap a loop pass or another dispatch pass. Raises
+    # ``RuntimeError("another Atlas operator pass is active")`` when one is running.
+    if execution_state is not None:
+        with execution_state.single_flight():
+            return body()
+    return body()
+
+
+def _dispatch_pass_body(
+    paths: FleetPaths,
+    ledger: action_ledger.ActionLedger,
+    itil: Any,
+    *,
+    adapters: dict[str, Callable[..., dict]],
+    problem_types: set[str],
+    apply_fn: Callable[[dict, dict], Any],
+    rollback_fn: Callable[[dict, dict, Any], Any] | None,
+    execution_state: safety.ExecutionState | None,
+    decisions_dir: str | None,
+    now_iso: str,
+    actor: str,
+    emit: Callable[[str], Any],
+    clock: Callable[[], datetime] | None,
+    max_evidence_age_s: float,
+    target_known: Callable[[dict], bool] | None,
+    action_allowed: Callable[[dict], bool] | None,
+    executing_timeout_s: float,
+) -> list[DispatchOutcome]:
+    outcomes: list[DispatchOutcome] = []
+    # First, leftovers of a killed loop, then anything a crash stranded mid-run: voided,
+    # escalated with an alert, never re-run.
+    try:
+        void_stale_auto_intents(ledger, itil, clock=clock, actor=actor, emit=emit)
+    except Exception as exc:  # noqa: BLE001 - never let the sweep stop the dispatch pass
+        emit(f"dispatch: stale auto-lane sweep failed: {exc}")
+    try:
+        outcomes.extend(
+            escalate_stranded(
                 ledger,
                 itil,
-                intent_id,
-                adapters=adapters,
-                problem_types=problem_types,
-                apply_fn=apply_fn,
-                rollback_fn=rollback_fn,
-                execution_state=execution_state,
-                decisions_dir=decisions_dir,
                 now_iso=now_iso,
+                clock=clock,
                 actor=actor,
+                decisions_dir=decisions_dir,
                 emit=emit,
+                executing_timeout_s=executing_timeout_s,
             )
         )
+    except Exception as exc:  # noqa: BLE001 - never let the sweep stop the dispatch pass
+        emit(f"dispatch: stranded-intent sweep failed: {exc}")
+    for intent_id in ledger.list_intents(state=action_ledger.ActionState.PROPOSED):
+        try:
+            intent = ledger.read_intent(intent_id)
+            if not intent.itil_change_id:
+                continue  # invisible to the dispatcher forever, by design
+            outcomes.append(
+                dispatch_intent(
+                    paths,
+                    ledger,
+                    itil,
+                    intent_id,
+                    adapters=adapters,
+                    problem_types=problem_types,
+                    apply_fn=apply_fn,
+                    rollback_fn=rollback_fn,
+                    execution_state=execution_state,
+                    decisions_dir=decisions_dir,
+                    now_iso=now_iso,
+                    actor=actor,
+                    emit=emit,
+                    clock=clock,
+                    max_evidence_age_s=max_evidence_age_s,
+                    target_known=target_known,
+                    action_allowed=action_allowed,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - one bad intent never crashes the pass
+            emit(f"dispatch: error dispatching {intent_id}: {exc}")
+            outcomes.append(DispatchOutcome(intent_id, f"error: {exc}"))
     return outcomes
 
 
@@ -600,7 +1524,24 @@ __all__ = [
     "DispatchOutcome",
     "condition_firing",
     "verify_postcondition",
+    "REPORT_ONLY_REFUSAL",
+    "ReportOnlyDecisionError",
+    "report_only_reason",
+    "qualifying_human_approval",
+    "MAX_POSTCONDITION_SETTLE_S",
     "resolve_decision",
     "dispatch_intent",
     "run_dispatch_pass",
+    "is_freeze_refusal",
+    "escalate_stranded",
+    "void_stale_auto_intents",
+    "close_episode",
+    "approval_refusal",
+    "human_approval_times",
+    "reobserve",
+    "stored_lane",
+    "change_bound_to",
+    "change_binding_tag",
+    "stored_evidence",
+    "void_proposed",
 ]

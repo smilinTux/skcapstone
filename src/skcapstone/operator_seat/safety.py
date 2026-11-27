@@ -33,10 +33,17 @@ class ExecutionState:
         *,
         cooldown_seconds: float = 900.0,
         retry_budget: int = 3,
+        lock_dir: str | Path | None = None,
+        verify_lock_dir: bool = False,
     ) -> None:
         self.root = Path(root)
         self.path = self.root / "execution-state.json"
-        self.lock_path = self.root / "operator.lock"
+        # The single-flight lock may live OUTSIDE the (synced) state root: an flock only
+        # orders processes on one kernel, so a node-local directory is the honest place.
+        self.lock_path = (Path(lock_dir) if lock_dir is not None else self.root) / "operator.lock"
+        # When True the lock directory must sit under the node-local state directory and the
+        # whole chain down to it is verified private on every acquisition (no symlink).
+        self.verify_lock_dir = verify_lock_dir
         self.cooldown_seconds = cooldown_seconds
         self.retry_budget = retry_budget
 
@@ -96,7 +103,20 @@ class ExecutionState:
     def single_flight(self) -> Iterator[None]:
         """Acquire the process-wide Atlas run lock without waiting."""
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        if self.verify_lock_dir:
+            from . import node_local
+
+            base = node_local.state_dir()
+            try:
+                relative = self.lock_path.parent.relative_to(base)
+            except ValueError as exc:
+                raise node_local.UnsafeDirectoryError(
+                    f"lock directory {self.lock_path.parent} is not under {base}"
+                ) from exc
+            node_local.private_chain(base, *relative.parts)
+        else:
+            self.lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
