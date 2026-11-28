@@ -5,6 +5,7 @@ Commands:
     skcapstone deploy apply      pre-flight, build, verify, switch, restart, smoke
     skcapstone deploy rollback   back to the previous release (or tools change)
     skcapstone deploy status     the release this node runs
+    skcapstone deploy prune      delete old releases (also runs after every apply)
     skcapstone deploy drift      editable installs, exec paths in git trees, version drift
 """
 
@@ -333,6 +334,35 @@ def register_deploy_commands(main: click.Group) -> None:
             "[red]the tools change was undone on disk, but restarting its units failed[/]"
             f" ({len(res.problems)} problem(s) above); fix those units, then restart them"
         )
+
+    @deploy.command("prune")
+    @click.option(
+        "--keep",
+        type=int,
+        default=None,
+        help="Newest releases to keep (default $SK_DEPLOY_KEEP_RELEASES, else 3).",
+    )
+    @click.option("--dry-run", is_flag=True, help="Show what would be removed.")
+    def prune_cmd(keep, dry_run) -> None:
+        """Delete old releases; keeps current, previous and in-use ones.
+
+        Runs on its own after every successful apply. Releases a running
+        process still uses (an MCP server started before the last deploy) are
+        kept until that process exits.
+        """
+        from ..deploy.rollout import keep_releases_from_env, prune_releases
+
+        n = keep if keep is not None else (keep_releases_from_env() or 3)
+        res = prune_releases(_paths(), keep=max(n, 1), dry_run=dry_run)
+        verb = "would remove" if dry_run else "removed"
+        for d in res.removed:
+            console.print(f"  {verb} {d.name}")
+        for name, why in sorted(res.kept.items()):
+            console.print(f"  [dim]kept {name}: {why}[/]")
+        for e in res.errors:
+            console.print(f"  [red]x[/] {e}")
+        console.print(f"{verb} {len(res.removed)} release(s), kept {len(res.kept)}")
+        sys.exit(1 if res.errors else 0)
 
     @deploy.command("status")
     def status_cmd() -> None:
